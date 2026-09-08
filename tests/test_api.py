@@ -139,3 +139,36 @@ async def test_list_decks(client):
     items = (await client.get("/api/decks")).json()
     assert [i["title"] for i in items] == ["Вторая", "Первая"]
     assert items[1]["slide_count"] == 1 and items[1]["status"] == "ready" and items[1]["has_build"] is False
+
+
+@requires_typst
+async def test_rename_materials_delete(client, fake_llm, png_bytes):
+    from typst_deck.model import Deck
+    store = client.app.state.store
+    d = store.create(Deck(title="Старое", slides=[{"type": "final"}]))
+    r = await client.patch(f"/api/decks/{d.id}", json={"title": "Новое"})
+    assert r.status_code == 200 and r.json()["deck"]["title"] == "Новое" and r.json()["version"] == 2
+    r = await client.post(f"/api/decks/{d.id}/uploads", files={"file": ("cat.png", png_bytes, "image/png")})
+    assert r.json()["kind"] == "image" and r.json()["asset_id"].endswith(".png")
+    r = await client.post(f"/api/decks/{d.id}/uploads", files={"file": ("notes.txt", "цифры".encode(), "text/plain")})
+    assert r.json() == {"name": "notes.txt", "kind": "text", "chars": 5}
+    assert store.list_uploads(d.id) == [("notes.txt", "цифры")]
+    assert (await client.post(f"/api/decks/{d.id}/uploads", files={"file": ("x.exe", b"MZ", "x")})).status_code == 422
+    assert (await client.delete(f"/api/decks/{d.id}")).status_code == 204
+    assert (await client.get(f"/api/decks/{d.id}")).status_code == 404
+    assert (await client.delete(f"/api/decks/{d.id}")).status_code == 404
+
+
+@requires_typst
+async def test_job_phase_and_changes_in_chat(client, fake_llm):
+    fake_llm._queue += [
+        Completion("", [ToolCall("c1", "set_deck", {"title": "T", "slides": [{"type": "title", "title": "A"}]})]),
+        Completion("", [ToolCall("c2", "finish", {"summary": "Готово"})]),
+    ]
+    r = await client.post("/api/decks", json={"brief": "x", "upload_ids": []})
+    job = await wait_job(client, r.json()["job_id"])
+    assert job["status"] == "done" and job["phase"] == "render" and job["created_at"]
+    chat = (await client.get(f"/api/decks/{r.json()['deck_id']}/chat")).json()
+    assert chat[-1]["changes"][0]["kind"] == "rebuilt" and chat[-1]["changes"][0]["count"] == 1
+    d = (await client.get(f"/api/decks/{r.json()['deck_id']}")).json()
+    assert d["job"] is None

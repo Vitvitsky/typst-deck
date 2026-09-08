@@ -37,6 +37,10 @@ class MessageBody(BaseModel):
     text: str
 
 
+class RenameBody(BaseModel):
+    title: str
+
+
 @router.post("", status_code=202)
 async def create(body: CreateBody, s: DeckService = Depends(svc)):
     files = []
@@ -57,6 +61,21 @@ async def list_decks(s: DeckService = Depends(svc)):
 @router.get("/{deck_id}")
 async def get(deck_id: str, s: DeckService = Depends(svc)):
     return s.deck_response(deck_id)
+
+
+@router.patch("/{deck_id}")
+async def rename(deck_id: str, body: RenameBody, s: DeckService = Depends(svc)):
+    return await s.rename(deck_id, body.title)
+
+
+@router.delete("/{deck_id}", status_code=204)
+async def delete(deck_id: str, s: DeckService = Depends(svc)):
+    s.delete_deck(deck_id)
+
+
+@router.post("/{deck_id}/uploads")
+async def add_material(deck_id: str, file: UploadFile, s: DeckService = Depends(svc)):
+    return s.add_material(deck_id, file.filename or "file", await file.read())
 
 
 @router.get("/{deck_id}/slides/{n}.svg")

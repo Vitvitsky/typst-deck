@@ -81,3 +81,11 @@ def test_list_decks_newest_first(store):
     a.title = "A2"
     store.save(a)
     assert [d.title for d in store.list_decks()] == ["A2", "B"]
+
+
+def test_delete_moves_to_trash(store):
+    d = store.create(Deck(title="X"))
+    dst = store.delete(d.id)
+    assert not store.exists(d.id) and dst.parent.name == "trash" and (dst / "deck.json").exists()
+    with pytest.raises(DeckNotFound):
+        store.delete(d.id)

@@ -97,3 +97,15 @@ async def test_empty_completion_gets_explanation():
     llm = FakeLLM([Completion("", [])])
     out = await run_agent(llm, Deck(), "x", files=[], history=[], assets=[])
     assert not out.changed and "не вернула" in out.reply
+
+
+def test_executor_records_changes():
+    ex = ToolExecutor(Deck())
+    ex.call("set_deck", {"title": "T", "slides": [{"type": "title", "title": "A"}, {"type": "final"}]})
+    sid = ex.deck.slides[0].id
+    ex.call("update_slide", {"slide_id": sid, "patch": {"title": "B", "subtitle": "s"}})
+    ex.call("remove_slide", {"slide_id": ex.deck.slides[1].id})
+    kinds = [c["kind"] for c in ex.changes]
+    assert kinds == ["rebuilt", "updated", "removed"]
+    assert ex.changes[1] == {"kind": "updated", "slide_id": sid, "type": "title", "title": "B", "fields": ["subtitle", "title"]}
+    assert ex.changes[2]["title"] == "Спасибо"

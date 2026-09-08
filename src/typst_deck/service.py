@@ -43,6 +43,7 @@ class DeckService:
         return {
             "deck": deck.model_dump(mode="json"),
             "status": status,
+            "job": active.public() if active else None,
             "version": deck.version,
             "slide_count": len(deck.slides),
             "pdf_url": f"{base}/api/decks/{deck_id}/deck.pdf",
@@ -145,21 +146,51 @@ class DeckService:
 
     async def generate(self, deck_id: str, message: str, first: bool) -> int:
         llm = self.require_llm()
+        job = self.jobs.active_for(deck_id)
         async with self.store.lock(deck_id):
+            if job:
+                job.phase = "reading"
             deck = self.store.load(deck_id)
             files = self.store.list_uploads(deck_id)  # исходники нужны и при правках: кеш промпта делает это дёшево
             history = [m for m in self.store.read_chat(deck_id) if m["role"] in ("user", "assistant")]
             self._chat(deck_id, "user", message, deck.version)
             try:
+                if job:
+                    job.phase = "model"
                 out = await run_agent(llm, deck, message, files, history, self.store.assets(deck_id))
                 if out.changed:
+                    if job:
+                        job.phase = "render"
                     self.store.save(out.deck)
                     self.render(out.deck)
             except Exception as e:
                 self._chat(deck_id, "error", f"{type(e).__name__}: {e}", deck.version)
                 raise
-            self._chat(deck_id, "assistant", out.reply, out.deck.version, ops=out.ops)
+            self._chat(deck_id, "assistant", out.reply, out.deck.version, ops=out.ops, changes=out.changes)
             return out.deck.version
+
+    # --- материалы, удаление, переименование
+    def add_material(self, deck_id: str, name: str, data: bytes) -> dict:
+        """Файл из чата: картинка становится ассетом, документ — материалом для модели."""
+        self.load(deck_id)
+        name, data, text = self.ingest_file(name, data)
+        if text is None:
+            aid = self.store.add_asset(deck_id, name, data)
+            self.store.add_upload(deck_id, name, data, None)
+            return {"name": name, "kind": "image", "asset_id": aid}
+        self.store.add_upload(deck_id, name, data, text)
+        return {"name": name, "kind": "text", "chars": len(text)}
+
+    def delete_deck(self, deck_id: str) -> None:
+        self.load(deck_id)
+        if self.jobs.active_for(deck_id):
+            raise ApiError(409, "conflict", "колода сейчас собирается; дождитесь окончания")
+        self.store.delete(deck_id)
+
+    async def rename(self, deck_id: str, title: str) -> dict:
+        def fn(d: Deck):
+            d.title = title
+        return await self.manual(deck_id, fn)
 
     def _chat(self, deck_id: str, role: str, content: str, version: int, **extra) -> None:
         self.store.append_chat(deck_id, {"role": role, "content": content, "version": version,

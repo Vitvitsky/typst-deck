@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..model import Deck, slide_schema
@@ -18,6 +18,7 @@ class Outcome:
     changed: bool
     ops: list[str]
     deck: Deck
+    changes: list[dict] = field(default_factory=list)
 
 
 def build_system_prompt(deck: Deck, assets: list[str]) -> str:
@@ -66,4 +67,4 @@ async def run_agent(
         reply = "Достигнут лимит шагов; применены правки: " + (", ".join(ex.ops) or "нет")
     if not reply:
         reply = "Готово." if ex.changed else "Модель не вернула ни правок, ни ответа. Попробуйте переформулировать запрос."
-    return Outcome(reply=reply, changed=ex.changed, ops=ex.ops, deck=ex.deck)
+    return Outcome(reply=reply, changed=ex.changed, ops=ex.ops, deck=ex.deck, changes=ex.changes)

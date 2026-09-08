@@ -84,6 +84,17 @@ class DeckStore:
         write_atomic(d / "deck.json", data)
         return deck
 
+    def delete(self, deck_id: str) -> Path:
+        """Переносит каталог колоды в data/trash/<id>-<время>; ничего не стирает."""
+        src = self.deck_dir(deck_id)
+        if not (src / "deck.json").exists():
+            raise DeckNotFound(deck_id)
+        trash = self.data_dir / "trash"
+        trash.mkdir(parents=True, exist_ok=True)
+        dst = trash / f"{deck_id}-{utcnow().strftime('%Y%m%dT%H%M%S')}"
+        os.rename(src, dst)
+        return dst
+
     def list_versions(self, deck_id: str) -> list[int]:
         return sorted(int(p.stem) for p in (self.deck_dir(deck_id) / "versions").glob("*.json"))
 

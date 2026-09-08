@@ -23,12 +23,14 @@ class Job:
     status: Literal["queued", "running", "done", "failed"] = "queued"
     error: str | None = None
     deck_version: int | None = None
+    phase: Literal["reading", "model", "render"] | None = None  # стадия для интерфейса
     created_at: datetime = field(default_factory=utcnow)
     done_event: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
 
     def public(self) -> dict:
-        return {"id": self.id, "deck_id": self.deck_id, "status": self.status,
-                "error": self.error, "deck_version": self.deck_version}
+        return {"id": self.id, "deck_id": self.deck_id, "status": self.status, "phase": self.phase,
+                "error": self.error, "deck_version": self.deck_version,
+                "created_at": self.created_at.isoformat()}
 
 
 class JobRegistry:
