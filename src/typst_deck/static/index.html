@@ -1,2 +1,29 @@
 <!doctype html>
-<html lang="ru"><head><meta charset="utf-8"><base href="./"><title>typst-deck</title></head><body>typst-deck</body></html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<base href="./">
+<title>typst-deck — новая презентация</title>
+<link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+<main class="create">
+  <h1>Новая презентация</h1>
+  <p class="muted">Опишите, что нужно, и приложите материалы: Word, Excel, CSV, текст, картинки. Слайды соберутся в корпоративном шаблоне, потом их можно править в чате или руками.</p>
+  <div class="row">
+    <textarea id="brief" placeholder="Например: презентация итогов квартала для руководства, 8–10 слайдов, с графиком выручки по месяцам из приложенной таблицы"></textarea>
+  </div>
+  <div class="row">
+    <input type="file" id="files" multiple accept=".txt,.md,.docx,.xlsx,.csv,.png,.jpg,.jpeg,.svg">
+    <ul class="files" id="filelist"></ul>
+  </div>
+  <div class="row">
+    <button class="primary" id="create">Создать презентацию</button>
+    <span class="status" id="status"></span>
+  </div>
+  <div class="error row" id="error"></div>
+</main>
+<script type="module" src="static/index.js"></script>
+</body>
+</html>

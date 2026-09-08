@@ -1,2 +1,44 @@
 <!doctype html>
-<html lang="ru"><head><meta charset="utf-8"><base href="../"><title>typst-deck</title></head><body>typst-deck</body></html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<base href="../">
+<title>typst-deck</title>
+<link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <header>
+      <a href="./" title="Новая презентация">＋</a>
+      <h1 id="title">…</h1>
+      <a id="pdf" href="#" download><button class="small">PDF</button></a>
+    </header>
+    <div class="messages" id="messages"></div>
+    <div class="composer">
+      <textarea id="input" placeholder="Что поправить? Например: на третьем слайде короче заголовок"></textarea>
+      <button class="primary" id="send">Отправить</button>
+    </div>
+    <div class="tools">
+      <select id="addtype">
+        <option value="title">Заглавный</option>
+        <option value="section">Раздел</option>
+        <option value="image" selected>Текст и картинка</option>
+        <option value="bar-chart">Бар-чарт</option>
+        <option value="chart">График</option>
+        <option value="final">Финальный</option>
+      </select>
+      <button id="add">Добавить слайд</button>
+      <button id="history">История</button>
+    </div>
+    <div class="versions hidden" id="versions"></div>
+  </aside>
+  <main class="main">
+    <div class="banner hidden" id="banner"></div>
+    <div id="pages"></div>
+  </main>
+</div>
+<script type="module" src="static/deck.js"></script>
+</body>
+</html>
