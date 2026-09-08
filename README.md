@@ -88,7 +88,7 @@ docker run -p 127.0.0.1:8088:8000 -v typst-deck-data:/data \
 
 ## HTTP API
 
-Для веб-интерфейса: `POST /api/uploads`, `POST /api/decks`,
+Для веб-интерфейса: `POST /api/uploads`, `GET /api/decks` (каталог), `POST /api/decks`,
 `GET /api/decks/{id}`, `…/slides/{n}.svg`, `…/deck.pdf`, `…/positions`,
 `PATCH …/slides/{sid}`, `POST …/slides`, `DELETE …/slides/{sid}`,
 `POST …/slides/{sid}/move`, `POST …/assets`, `GET …/versions`,
