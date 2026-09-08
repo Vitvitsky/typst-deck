@@ -21,3 +21,9 @@ async def test_section_pages(client):
     for path in ("/decks", "/history", "/templates"):
         r = await client.get(path)
         assert r.status_code == 200 and "typst-deck" in r.text, path
+
+
+async def test_static_and_pages_revalidate(client):
+    for path in ("/static/deck.js", "/", "/d/x"):
+        r = await client.get(path)
+        assert "no-cache" in r.headers.get("cache-control", ""), path

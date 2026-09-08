@@ -21,6 +21,16 @@ STATIC = Path(__file__).parent / "static"
 _UNSET = object()
 
 
+class RevalidatingStatic(StaticFiles):
+    """Статика без сборки и без хэшей в именах: браузер обязан перепроверять файл при каждой загрузке.
+    Иначе после деплоя новый HTML может подхватить старый deck.js или style.css из кэша."""
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return resp
+
+
 def create_app(settings: Settings | None = None, llm: LLM | None | object = _UNSET) -> FastAPI:
     settings = settings or get_settings()
     if llm is _UNSET:
@@ -47,21 +57,24 @@ def create_app(settings: Settings | None = None, llm: LLM | None | object = _UNS
 
     for r in (uploads.router, decks.router, jobs_api.router, agent_api.router, templates.router, history.router):
         app.include_router(r)
-    app.mount("/static", StaticFiles(directory=STATIC), name="static")
+    app.mount("/static", RevalidatingStatic(directory=STATIC), name="static")
 
     @app.get("/api/health")
     async def health():
         return {"ok": True, "llm": llm is not None, "model": settings.llm_model if llm is not None else None}
 
+    def page(name: str) -> FileResponse:
+        return FileResponse(STATIC / name, headers={"Cache-Control": "no-cache, must-revalidate"})
+
     @app.get("/")
     async def index():
-        return FileResponse(STATIC / "index.html")
+        return page("index.html")
 
     @app.get("/d/{deck_id}")
     async def deck_page(deck_id: str):
-        return FileResponse(STATIC / "deck.html")
+        return page("deck.html")
 
-    for route, page in (("/decks", "decks.html"), ("/history", "history.html"), ("/templates", "templates.html")):
-        app.add_api_route(route, (lambda page=page: (lambda: FileResponse(STATIC / page)))(), methods=["GET"])
+    for route, name in (("/decks", "decks.html"), ("/history", "history.html"), ("/templates", "templates.html")):
+        app.add_api_route(route, (lambda name=name: (lambda: page(name)))(), methods=["GET"])
 
     return app
