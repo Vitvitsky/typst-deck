@@ -70,3 +70,14 @@ def test_atomic_write_leaves_no_tmp(store):
 
 def test_lock_is_per_deck(store):
     assert store.lock("a") is store.lock("a") and store.lock("a") is not store.lock("b")
+
+
+def test_list_decks_newest_first(store):
+    a = store.create(Deck(title="A"))
+    b = store.create(Deck(title="B"))
+    (store.deck_dir("broken")).mkdir(parents=True)
+    (store.deck_dir("broken") / "deck.json").write_text("{not json")
+    assert [d.title for d in store.list_decks()] == ["B", "A"]
+    a.title = "A2"
+    store.save(a)
+    assert [d.title for d in store.list_decks()] == ["A2", "B"]

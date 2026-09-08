@@ -49,6 +49,11 @@ async def create(body: CreateBody, s: DeckService = Depends(svc)):
     return {"deck_id": deck.id, "job_id": job.id}
 
 
+@router.get("")
+async def list_decks(s: DeckService = Depends(svc)):
+    return s.list_decks()
+
+
 @router.get("/{deck_id}")
 async def get(deck_id: str, s: DeckService = Depends(svc)):
     return s.deck_response(deck_id)

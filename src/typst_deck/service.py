@@ -52,6 +52,18 @@ class DeckService:
             "has_build": (build / "deck.pdf").exists(),
         }
 
+    def list_decks(self) -> list[dict]:
+        out = []
+        for d in self.store.list_decks():
+            active, last = self.jobs.active_for(d.id), self.jobs.last_for(d.id)
+            status = "generating" if active else ("failed" if last and last.status == "failed" else "ready")
+            out.append({
+                "id": d.id, "title": d.title, "slide_count": len(d.slides), "version": d.version,
+                "created_at": d.created_at.isoformat(), "updated_at": d.updated_at.isoformat(),
+                "status": status, "has_build": (self.store.deck_dir(d.id) / "build" / "deck.pdf").exists(),
+            })
+        return out
+
     def outline(self, deck: Deck) -> list[dict]:
         return [{"n": i + 1, "type": s.type, "title": getattr(s, "title", "")} for i, s in enumerate(deck.slides)]
 

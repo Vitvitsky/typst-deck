@@ -20,8 +20,24 @@ textarea { min-height: 80px; resize: vertical; }
 .muted { color: var(--muted); }
 .hidden { display: none !important; }
 
-/* --- страница создания */
-.create { max-width: 720px; margin: 40px auto; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 28px; }
+/* --- главная: создание и каталог */
+.home { max-width: 960px; margin: 32px auto; padding: 0 16px; }
+.create { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 28px; }
+.catalog { margin-top: 32px; }
+.catalog h2 { font-size: 18px; margin: 0 0 12px; }
+.decks { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+.card { display: block; background: #fff; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; color: inherit; text-decoration: none; transition: box-shadow .15s, border-color .15s; }
+.card:hover { border-color: var(--accent); box-shadow: 0 4px 16px rgba(0,0,0,.08); }
+.thumb { aspect-ratio: 16 / 9; background: var(--bg); border-bottom: 1px solid var(--line); line-height: 0; }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.nothumb { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 12px; line-height: 1.4; }
+.meta { padding: 10px 12px; }
+.meta .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.meta .small { font-size: 12px; margin-top: 2px; }
+.meta .actions { margin-top: 8px; display: flex; gap: 12px; font-size: 13px; }
+.meta .actions .link, .meta .actions a { color: var(--accent); }
+.empty { padding: 20px; background: #fff; border: 1px dashed var(--line); border-radius: 10px; text-align: center; }
+.side header .back { color: var(--accent); text-decoration: none; white-space: nowrap; font-size: 13px; }
 .create h1 { margin: 0 0 6px; font-size: 22px; }
 .create .row { margin-top: 16px; }
 .create textarea { min-height: 160px; }

@@ -128,3 +128,14 @@ async def test_failed_generation_reports(client, fake_llm):
     assert d["status"] == "failed" and d["last_error"]
     chat = (await client.get(f"/api/decks/{r.json()['deck_id']}/chat")).json()
     assert chat[-1]["role"] == "error"
+
+
+async def test_list_decks(client):
+    assert (await client.get("/api/decks")).json() == []
+    from typst_deck.model import Deck
+    store = client.app.state.store
+    store.create(Deck(title="Первая", slides=[{"type": "final"}]))
+    store.create(Deck(title="Вторая"))
+    items = (await client.get("/api/decks")).json()
+    assert [i["title"] for i in items] == ["Вторая", "Первая"]
+    assert items[1]["slide_count"] == 1 and items[1]["status"] == "ready" and items[1]["has_build"] is False

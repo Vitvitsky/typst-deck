@@ -57,6 +57,17 @@ class DeckStore:
             (d / sub).mkdir(parents=True, exist_ok=True)
         return self.save(deck)
 
+    def list_decks(self) -> list[Deck]:
+        """Все колоды, свежие сверху; битые deck.json пропускаются."""
+        root = self.data_dir / "decks"
+        decks = []
+        for p in root.glob("*/deck.json") if root.is_dir() else []:
+            try:
+                decks.append(Deck.model_validate_json(p.read_text()))
+            except ValueError:
+                continue
+        return sorted(decks, key=lambda d: d.updated_at, reverse=True)
+
     def load(self, deck_id: str) -> Deck:
         p = self.deck_dir(deck_id) / "deck.json"
         if not p.exists():
