@@ -23,11 +23,18 @@
   body
 }
 
+// Заголовок слайда: если в 19pt не помещается в одну строку, уменьшается до 15pt.
 #let heading-block(title) = {
   block(width: 100%, inset: (bottom: 5pt), stroke: (bottom: 1.2pt + accent))[
-    #if title != none { text(size: 19pt, weight: "bold", title) } else { v(19pt) }
+    #if title == none { v(19pt) } else {
+      layout(sz => context {
+        let big = text(size: 19pt, weight: "bold", title)
+        let m = measure(width: sz.width, big)
+        if m.height > 19pt * 1.5 { text(size: 15pt, weight: "bold", title) } else { big }
+      })
+    }
   ]
-  v(0.35cm)
+  v(0.3cm)
 }
 
 #let slide-title(title: none, subtitle: none) = slide(
@@ -84,7 +91,7 @@
     )
   ]
   #if bullets == none { chart } else {
-    grid(columns: (2fr, 1fr), column-gutter: 0.6cm, chart, bullets)
+    grid(columns: (2fr, 1fr), column-gutter: 0.6cm, chart, text(size: 9.5pt, bullets))
   }
 ]
 
@@ -95,7 +102,7 @@
   #let lo = calc.min(0, ..all)
   #let chart = layout(sz => {
     let w = sz.width
-    let h = 3.8cm
+    let h = 3.4cm
     let pad = 1cm // чтобы крайние точки и подписи не обрезались
     let n = labels.len()
     let xstep = (w - 2 * pad) / calc.max(n - 1, 1)
@@ -126,9 +133,9 @@
     #if unit != none { text(size: 8pt, fill: muted, ", " + unit) }
   ]).join()
   #legend
-  #v(0.2cm)
+  #v(0.15cm)
   #if bullets == none { chart } else {
-    grid(columns: (2fr, 1fr), column-gutter: 0.6cm, chart, bullets)
+    grid(columns: (2fr, 1fr), column-gutter: 0.6cm, chart, text(size: 9.5pt, bullets))
   }
 ]
 
