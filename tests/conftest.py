@@ -31,7 +31,7 @@ def png_bytes() -> bytes:
 def settings(tmp_path):
     from typst_deck.config import Settings
 
-    return Settings(data_dir=tmp_path / "data", template_dir=TEMPLATE_DIR, public_base_url="http://t")
+    return Settings(data_dir=tmp_path / "data", template_dir=TEMPLATE_DIR, templates_dir=ROOT / "templates", public_base_url="http://t", llm_model="deepseek-chat")
 
 
 @pytest.fixture

@@ -4,48 +4,44 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <base href="./">
-<title>typst-deck — презентации</title>
+<title>typst-deck — новая презентация</title>
 <link rel="stylesheet" href="static/style.css">
 </head>
 <body>
-<main class="home">
-  <div class="home-head">
-    <h1>Презентации</h1>
-    <span class="muted small">Собираются в корпоративном шаблоне. Текст правится в чате или прямо на слайде.</span>
-  </div>
-  <div id="notice" class="notice warn hidden"></div>
-
-  <section class="create" aria-labelledby="create-h">
-    <div>
-      <h2 id="create-h">Новая презентация</h2>
-      <p class="muted small" style="margin:0 0 8px">Что за презентация, для кого, сколько слайдов, что показать графиком.</p>
-      <textarea id="brief" placeholder="Например: итоги квартала для руководства, 8–10 слайдов, график выручки по месяцам из приложенной таблицы, в конце выводы и следующие шаги"></textarea>
-      <div class="chips" id="examples"></div>
+<div class="shell">
+  <nav class="sidebar" id="sidebar" aria-label="Меню"></nav>
+  <main class="content"><div class="wrap">
+    <div class="page-head">
+      <h1>Новая презентация</h1>
+      <span class="muted small">Собирается в корпоративном шаблоне. Текст правится в чате или прямо на слайде.</span>
     </div>
-    <div>
-      <h2>Материалы</h2>
-      <p class="muted small" style="margin:0 0 8px">Word, Excel, CSV, текст — станут содержанием. Картинки — попадут на слайды.</p>
-      <div class="drop" id="drop" tabindex="0" role="button" aria-label="Добавить файлы">
-        <ul class="files" id="filelist"></ul>
-        <div class="hint" id="drophint">Перетащите файлы сюда или нажмите, чтобы выбрать</div>
+    <div id="notice" class="notice warn hidden"></div>
+    <section class="create" aria-label="Создание презентации">
+      <div>
+        <h2>О чём презентация</h2>
+        <p class="muted small" style="margin:0 0 8px">Для кого, сколько слайдов, что показать графиком.</p>
+        <textarea id="brief" placeholder="Например: итоги квартала для руководства, 8–10 слайдов, график выручки по месяцам из приложенной таблицы, в конце выводы и следующие шаги"></textarea>
+        <div class="chips" id="examples"></div>
+        <h2 style="margin-top:16px">Шаблон</h2>
+        <div class="tpl-pick" id="tpl-pick"></div>
       </div>
-      <input type="file" id="files" multiple hidden accept=".txt,.md,.docx,.xlsx,.csv,.png,.jpg,.jpeg,.svg">
-    </div>
-    <div class="create-actions">
-      <button class="primary" id="create">Создать презентацию</button>
-      <span class="muted small" id="status"></span>
-      <span class="error small" id="error"></span>
-    </div>
-  </section>
-
-  <section class="catalog">
-    <div class="catalog-head">
-      <h2>Мои презентации <span class="muted" id="count"></span></h2>
-      <input type="search" id="search" placeholder="Поиск по названию" aria-label="Поиск по названию">
-    </div>
-    <div id="decks" class="decks"></div>
-  </section>
-</main>
+      <div>
+        <h2>Материалы</h2>
+        <p class="muted small" style="margin:0 0 8px">Word, Excel, CSV, текст — станут содержанием. Картинки — попадут на слайды.</p>
+        <div class="drop" id="drop" tabindex="0" role="button" aria-label="Добавить файлы">
+          <ul class="files" id="filelist"></ul>
+          <div class="hint" id="drophint">Перетащите файлы сюда или нажмите, чтобы выбрать</div>
+        </div>
+        <input type="file" id="files" multiple hidden accept=".txt,.md,.docx,.xlsx,.csv,.png,.jpg,.jpeg,.svg">
+      </div>
+      <div class="create-actions">
+        <button class="primary" id="create">Создать презентацию</button>
+        <span class="muted small" id="status"></span>
+        <span class="error small" id="error"></span>
+      </div>
+    </section>
+  </div></main>
+</div>
 <script type="module" src="static/index.js"></script>
 </body>
 </html>

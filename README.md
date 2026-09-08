@@ -81,7 +81,14 @@ docker run -p 127.0.0.1:8088:8000 -v typst-deck-data:/data \
 - `api/` — маршруты; `static/` — интерфейс без сборки (ES-модули). Правила
   интерфейса — `DESIGN.md`, клиентские пути и требования —
   `docs/design/2026-09-08-ux-journeys.md`.
-- `template/` — заглушка корпоративного шаблона по контракту ниже.
+- `template/` — шаблон по умолчанию (id `default`); `templates/<id>/` —
+  дополнительные шаблоны с тем же контрактом и необязательным
+  `template.json` (`name`, `description`). Колода хранит `template`, выбор
+  на форме создания и в `POST /api/agent/create_deck`.
+- Страницы: `/` — новая презентация, `/decks` — каталог, `/history` —
+  все запросы к модели, `/templates` — шаблоны с превью, `/d/{id}` —
+  редактор. Общее боковое меню (`static/shell.js`) с недавними колодами и
+  статусом модели; на странице колоды свёрнуто по умолчанию.
 
 Кликабельные зоны на превью: сервис оборачивает каждое текстовое поле в
 маркер `field(slide, name, body)` из `typst/fields.typ`, который пишет в
@@ -90,7 +97,10 @@ docker run -p 127.0.0.1:8088:8000 -v typst-deck-data:/data \
 
 ## HTTP API
 
-Для веб-интерфейса: `POST /api/uploads`, `GET /api/decks` (каталог), `POST /api/decks`,
+Для веб-интерфейса: `POST /api/uploads`, `GET /api/decks` (каталог), `POST /api/decks`
+(с полем `template`), `PATCH /api/decks/{id}` (название), `DELETE /api/decks/{id}` (в корзину
+`data/trash/`), `POST …/uploads` (материалы из чата), `GET /api/templates`,
+`GET /api/templates/{id}/preview/{n}.svg`, `GET /api/history`,
 `GET /api/decks/{id}`, `…/slides/{n}.svg`, `…/deck.pdf`, `…/positions`,
 `PATCH …/slides/{sid}`, `POST …/slides`, `DELETE …/slides/{sid}`,
 `POST …/slides/{sid}/move`, `POST …/assets`, `GET …/versions`,

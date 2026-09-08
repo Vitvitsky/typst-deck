@@ -8,6 +8,8 @@
 <link rel="stylesheet" href="static/style.css">
 </head>
 <body>
+<div class="shell fixed">
+<nav class="sidebar" id="sidebar" aria-label="Меню"></nav>
 <div class="app">
   <aside class="rail" aria-label="Слайды">
     <div class="rail-list" id="rail"></div>
@@ -26,8 +28,9 @@
 
   <main class="main">
     <header class="topbar">
-      <a href="./" class="back">← Все презентации</a>
+      <a href="decks" class="back" title="Все презентации">← <span class="txt">Все презентации</span></a>
       <h1 id="title" title="Нажмите, чтобы переименовать">…</h1>
+      <span class="muted tiny" id="tplname" title="Шаблон"></span>
       <div class="actions">
         <button id="copylink" class="quiet" title="Скопировать ссылку на презентацию">Ссылка</button>
         <button id="history" class="quiet" title="История версий">История</button>
@@ -56,6 +59,7 @@
     </section>
     <section class="tab hidden" id="tab-slide"><div class="props" id="props"></div></section>
   </aside>
+</div>
 </div>
 <script type="module" src="static/deck.js"></script>
 </body>

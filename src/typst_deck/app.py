@@ -51,7 +51,7 @@ def create_app(settings: Settings | None = None, llm: LLM | None | object = _UNS
 
     @app.get("/api/health")
     async def health():
-        return {"ok": True, "llm": llm is not None}
+        return {"ok": True, "llm": llm is not None, "model": settings.llm_model if llm is not None else None}
 
     @app.get("/")
     async def index():

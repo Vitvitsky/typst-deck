@@ -1,6 +1,8 @@
 import { api, upload, waitJob, sleep, el, toast, armConfirm, TYPE_RU, FIELD_RU, SIZE_RU, fileKind, errorText, fmtDate, fmtElapsed } from "./api.js";
+import { mountShell } from "./shell.js";
 
 const deckId = location.pathname.split("/").filter(Boolean).pop();
+mountShell({ active: "decks", deckId, defaultCollapsed: true });
 const $ = (id) => document.getElementById(id);
 const NEW_SLIDE = {
   title: { type: "title", title: "Заголовок", subtitle: "" },
@@ -66,6 +68,7 @@ function renderTopbar() {
   const h = $("title");
   if (!h.querySelector("input")) h.textContent = deck.title;
   document.title = `${deck.title} — typst-deck`;
+  $("tplname").textContent = state.info.template ? `шаблон: ${state.info.template.name}` : "";
   const pdf = $("pdf");
   pdf.href = `api/decks/${deckId}/deck.pdf`;
   pdf.classList.toggle("hidden", !state.info.has_build);

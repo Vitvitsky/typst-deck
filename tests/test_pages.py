@@ -8,10 +8,13 @@ async def test_pages_and_static(client):
     assert (await client.get("/api/health")).json()["ok"] is True
 
 
-async def test_index_has_catalog(client):
+async def test_index_and_catalog_pages(client):
     r = await client.get("/")
-    assert 'id="decks"' in r.text and "Мои презентации" in r.text
-    assert "Все" in (await client.get("/d/x")).text
+    assert "Новая презентация" in r.text and 'id="sidebar"' in r.text
+    r = await client.get("/decks")
+    assert 'id="decks"' in r.text and 'id="sidebar"' in r.text
+    assert 'id="sidebar"' in (await client.get("/d/x")).text
+    assert (await client.get("/api/health")).json()["model"] == "deepseek-chat"
 
 
 async def test_section_pages(client):

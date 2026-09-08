@@ -32,7 +32,7 @@ async def test_create_without_llm_is_503(settings):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         r = await c.post("/api/decks", json={"brief": "x", "upload_ids": []})
         assert r.status_code == 503 and r.json()["error"]["code"] == "llm_unavailable"
-        assert (await c.get("/api/health")).json() == {"ok": True, "llm": False}
+        assert (await c.get("/api/health")).json() == {"ok": True, "llm": False, "model": None}
 
 
 @requires_typst

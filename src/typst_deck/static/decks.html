@@ -1,1 +1,23 @@
-<!doctype html><html lang="ru"><head><meta charset="utf-8"><base href="./"><title>typst-deck</title></head><body>typst-deck</body></html>
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<base href="./">
+<title>typst-deck — мои презентации</title>
+<link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+<div class="shell">
+  <nav class="sidebar" id="sidebar" aria-label="Меню"></nav>
+  <main class="content"><div class="wrap">
+    <div class="page-head">
+      <h1>Мои презентации <span class="muted" id="count"></span></h1>
+      <input type="search" id="search" placeholder="Поиск по названию" aria-label="Поиск по названию" style="max-width:280px">
+    </div>
+    <div id="decks" class="decks"></div>
+  </div></main>
+</div>
+<script type="module" src="static/decks.js"></script>
+</body>
+</html>
