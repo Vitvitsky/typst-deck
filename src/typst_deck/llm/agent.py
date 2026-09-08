@@ -1,0 +1,69 @@
+"""Цикл агента: сообщение пользователя → вызовы инструментов → новая колода и ответ."""
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+
+from ..model import Deck, slide_schema
+from .client import LLM
+from .tools import ToolExecutor, tool_specs
+
+PROMPT = (Path(__file__).parent / "prompt.md").read_text()
+
+
+@dataclass
+class Outcome:
+    reply: str
+    changed: bool
+    ops: list[str]
+    deck: Deck
+
+
+def build_system_prompt(deck: Deck, assets: list[str]) -> str:
+    return (
+        PROMPT
+        .replace("{{SCHEMA}}", json.dumps(slide_schema(), ensure_ascii=False))
+        .replace("{{ASSETS}}", ", ".join(assets) if assets else "(нет)")
+        .replace("{{DECK_JSON}}", deck.model_dump_json(include={"title", "slides"}))
+    )
+
+
+def _user_content(message: str, files: list[tuple[str, str]]) -> str:
+    parts = [message.strip() or "Сделай презентацию по приложенным материалам."]
+    for name, text in files:
+        parts.append(f"Файл «{name}»:\n```\n{text}\n```")
+    return "\n\n".join(parts)
+
+
+async def run_agent(
+    llm: LLM, deck: Deck, user_message: str, files: list[tuple[str, str]],
+    history: list[dict], assets: list[str], max_iter: int = 12,
+) -> Outcome:
+    ex = ToolExecutor(deck)
+    tools = tool_specs()
+    messages: list[dict] = [{"role": "system", "content": build_system_prompt(deck, assets)}]
+    messages += [{"role": m["role"], "content": m["content"]} for m in history]
+    messages.append({"role": "user", "content": _user_content(user_message, files)})
+
+    reply = ""
+    for _ in range(max_iter):
+        c = await llm.complete(messages, tools)
+        if not c.tool_calls:
+            reply = c.text.strip()
+            break
+        messages.append({"role": "assistant", "content": c.text or None, "tool_calls": [
+            {"id": tc.id, "type": "function",
+             "function": {"name": tc.name, "arguments": json.dumps(tc.arguments, ensure_ascii=False)}}
+            for tc in c.tool_calls
+        ]})
+        for tc in c.tool_calls:
+            messages.append({"role": "tool", "tool_call_id": tc.id, "content": ex.call(tc.name, tc.arguments)})
+        if ex.finished:
+            reply = ex.summary
+            break
+    else:
+        reply = "Достигнут лимит шагов; применены правки: " + (", ".join(ex.ops) or "нет")
+    if not reply:
+        reply = "Готово." if ex.changed else ""
+    return Outcome(reply=reply, changed=ex.changed, ops=ex.ops, deck=ex.deck)

@@ -1,6 +1,7 @@
 """Клиент к OpenAI-совместимому chat completions API и заглушка для тестов."""
 from __future__ import annotations
 
+import copy
 import json
 import re
 from dataclasses import dataclass, field
@@ -38,7 +39,7 @@ class FakeLLM:
         self.calls: list[list[dict]] = []
 
     async def complete(self, messages: list[dict], tools: list[dict]) -> Completion:
-        self.calls.append(messages)
+        self.calls.append(copy.deepcopy(messages))  # агент дописывает тот же список
         if not self._queue:
             raise LLMError("FakeLLM: ответы закончились")
         return self._queue.pop(0)
