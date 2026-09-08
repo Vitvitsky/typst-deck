@@ -25,3 +25,29 @@ def deck_dir(tmp_path: Path) -> Path:
 @pytest.fixture
 def png_bytes() -> bytes:
     return PNG_1PX
+
+
+@pytest.fixture
+def settings(tmp_path):
+    from typst_deck.config import Settings
+
+    return Settings(data_dir=tmp_path / "data", template_dir=TEMPLATE_DIR, public_base_url="http://t")
+
+
+@pytest.fixture
+def fake_llm():
+    from typst_deck.llm.client import FakeLLM
+
+    return FakeLLM([])
+
+
+@pytest.fixture
+async def client(settings, fake_llm):
+    import httpx
+
+    from typst_deck.app import create_app
+
+    app = create_app(settings, llm=fake_llm)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        c.app = app
+        yield c

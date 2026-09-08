@@ -1,0 +1,154 @@
+"""Операции над колодой, общие для веб-интерфейса и агентского API."""
+from __future__ import annotations
+
+import json
+from typing import Callable
+
+from pydantic import ValidationError
+
+from .api.common import ApiError, not_found
+from .config import Settings
+from .extract import UnsupportedFile, extract
+from .jobs import Job, JobConflict, JobRegistry
+from .llm.agent import run_agent
+from .llm.client import LLM
+from .llm.tools import format_validation
+from .model import Deck, utcnow
+from .render import CompileError, CompileResult, compile_deck
+from .store import DeckNotFound, DeckStore
+
+# (имя, байты, извлечённый текст или None для картинок)
+IngestedFile = tuple[str, bytes, str | None]
+
+
+class DeckService:
+    def __init__(self, store: DeckStore, jobs: JobRegistry, llm: LLM | None, settings: Settings):
+        self.store, self.jobs, self.llm, self.settings = store, jobs, llm, settings
+
+    # --- чтение
+    def load(self, deck_id: str) -> Deck:
+        try:
+            return self.store.load(deck_id)
+        except DeckNotFound:
+            raise not_found("колода")
+
+    def deck_response(self, deck_id: str) -> dict:
+        deck = self.load(deck_id)
+        active, last = self.jobs.active_for(deck_id), self.jobs.last_for(deck_id)
+        status = "generating" if active else ("failed" if last and last.status == "failed" else "ready")
+        build = self.store.deck_dir(deck_id) / "build"
+        wp = build / "warnings.json"
+        warnings = json.loads(wp.read_text()) if wp.exists() else []
+        base = self.settings.public_base_url.rstrip("/")
+        return {
+            "deck": deck.model_dump(mode="json"),
+            "status": status,
+            "version": deck.version,
+            "slide_count": len(deck.slides),
+            "pdf_url": f"{base}/api/decks/{deck_id}/deck.pdf",
+            "edit_url": f"{base}/d/{deck_id}",
+            "warnings": warnings,
+            "last_error": last.error if last else None,
+            "has_build": (build / "deck.pdf").exists(),
+        }
+
+    def outline(self, deck: Deck) -> list[dict]:
+        return [{"n": i + 1, "type": s.type, "title": getattr(s, "title", "")} for i, s in enumerate(deck.slides)]
+
+    def agent_response(self, deck_id: str) -> dict:
+        r = self.deck_response(deck_id)
+        replies = [m for m in self.store.read_chat(deck_id) if m["role"] == "assistant"]
+        return {
+            "deck_id": deck_id, "status": r["status"], "pdf_url": r["pdf_url"], "edit_url": r["edit_url"],
+            "outline": self.outline(self.load(deck_id)),
+            "reply": replies[-1]["content"] if replies else "",
+            "last_error": r["last_error"],
+        }
+
+    # --- рендер
+    def render(self, deck: Deck) -> CompileResult:
+        try:
+            return compile_deck(deck, self.store.deck_dir(deck.id), self.settings.template_dir, self.settings.typst_bin)
+        except CompileError as e:
+            raise ApiError(500, "render", f"{e}: {e.stderr[:2000]}")
+
+    # --- ручные правки
+    async def manual(self, deck_id: str, fn: Callable[[Deck], object]) -> dict:
+        """Под блокировкой: fn правит колоду, новая версия, рендер; при ошибке рендера — откат."""
+        async with self.store.lock(deck_id):
+            deck = self.load(deck_id)
+            prev = deck.version
+            try:
+                fn(deck)
+            except ValidationError as e:
+                raise ApiError(422, "validation", format_validation(e))
+            except KeyError as e:
+                raise not_found(str(e).strip("'"))
+            except ValueError as e:
+                raise ApiError(422, "validation", str(e))
+            self.store.save(deck)
+            try:
+                self.render(deck)
+            except ApiError:
+                self.store.revert(deck_id, prev)
+                raise
+        return self.deck_response(deck_id)
+
+    # --- файлы и генерация
+    def require_llm(self) -> LLM:
+        if self.llm is None:
+            raise ApiError(503, "llm_unavailable", "LLM не настроена: задайте TYPST_DECK_LLM_API_KEY")
+        return self.llm
+
+    def ingest_file(self, name: str, data: bytes) -> IngestedFile:
+        if len(data) > self.settings.max_upload_mb * 1024 * 1024:
+            raise ApiError(413, "too_large", f"файл {name} больше {self.settings.max_upload_mb} МБ")
+        try:
+            ex = extract(name, data)
+        except UnsupportedFile as e:
+            raise ApiError(422, "validation", str(e))
+        return name, data, (ex.text if ex.kind == "text" else None)
+
+    def new_deck_from_brief(self, brief: str, files: list[IngestedFile]) -> tuple[Deck, Job]:
+        self.require_llm()
+        first_line = (brief.strip().splitlines() or [""])[0].strip()
+        deck = self.store.create(Deck(title=first_line[:120] or "Презентация"))
+        for name, data, text in files:
+            if text is None:
+                self.store.add_asset(deck.id, name, data)
+            self.store.add_upload(deck.id, name, data, text)
+        job = self.jobs.create(deck.id)
+        self.jobs.start(job, lambda: self.generate(deck.id, brief, first=True))
+        return deck, job
+
+    def submit_message(self, deck_id: str, text: str) -> Job:
+        self.require_llm()
+        self.load(deck_id)
+        try:
+            job = self.jobs.create(deck_id)
+        except JobConflict as e:
+            raise ApiError(409, "conflict", str(e))
+        self.jobs.start(job, lambda: self.generate(deck_id, text, first=False))
+        return job
+
+    async def generate(self, deck_id: str, message: str, first: bool) -> int:
+        llm = self.require_llm()
+        async with self.store.lock(deck_id):
+            deck = self.store.load(deck_id)
+            files = self.store.list_uploads(deck_id) if first else []
+            history = [m for m in self.store.read_chat(deck_id) if m["role"] in ("user", "assistant")]
+            self._chat(deck_id, "user", message, deck.version)
+            try:
+                out = await run_agent(llm, deck, message, files, history, self.store.assets(deck_id))
+                if out.changed:
+                    self.store.save(out.deck)
+                    self.render(out.deck)
+            except Exception as e:
+                self._chat(deck_id, "error", f"{type(e).__name__}: {e}", deck.version)
+                raise
+            self._chat(deck_id, "assistant", out.reply, out.deck.version, ops=out.ops)
+            return out.deck.version
+
+    def _chat(self, deck_id: str, role: str, content: str, version: int, **extra) -> None:
+        self.store.append_chat(deck_id, {"role": role, "content": content, "version": version,
+                                         "ts": utcnow().isoformat(), **extra})
