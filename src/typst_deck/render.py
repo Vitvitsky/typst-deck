@@ -1,6 +1,13 @@
 """Порождение deck.typ из модели и компиляция через typst."""
 from __future__ import annotations
 
+import json
+import os
+import shutil
+import subprocess
+from dataclasses import dataclass, field
+from pathlib import Path
+
 from .model import (
     BarChartSlide,
     ChartSlide,
@@ -70,7 +77,7 @@ def render_typ(deck: Deck, assets: set[str]) -> tuple[str, list[str]]:
             img = "none"
             if s.image:
                 if s.image in assets:
-                    img = f'field({typ_str(sid)}, "image", image({typ_str("/assets/" + s.image)}))'
+                    img = f'field({typ_str(sid)}, "image", image({typ_str("/assets/" + s.image)}, width: 100%, height: 100%, fit: "contain"))'
                 else:
                     warnings.append(f"слайд {n}: картинка {s.image} не найдена")
             out.append(
@@ -99,3 +106,91 @@ def render_typ(deck: Deck, assets: set[str]) -> tuple[str, list[str]]:
         else:  # pragma: no cover
             raise TypeError(type(s))
     return "".join(out), warnings
+
+
+FIELDS_TYP = Path(__file__).parent / "typst" / "fields.typ"
+
+
+class CompileError(Exception):
+    def __init__(self, message: str, stderr: str = ""):
+        super().__init__(message)
+        self.stderr = stderr
+
+
+@dataclass
+class CompileResult:
+    pdf: Path
+    svgs: list[Path]
+    positions: list[dict]
+    warnings: list[str] = field(default_factory=list)
+    typ: str = ""
+
+
+def _run(cmd: list[str], timeout: int) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except FileNotFoundError as e:
+        raise CompileError(f"typst не найден: {cmd[0]}") from e
+    except subprocess.TimeoutExpired as e:
+        raise CompileError(f"typst не уложился в {timeout} с") from e
+
+
+def compile_deck(
+    deck: Deck, deck_dir: Path, template_dir: Path, typst_bin: str = "typst", timeout: int = 60
+) -> CompileResult:
+    """Собирает build/: deck.typ, deck.pdf, slide-N.svg, positions.json, warnings.json.
+
+    Сборка идёт в build.tmp/ и подменяет build/ целиком, чтобы превью
+    не читало полуготовые файлы.
+    """
+    assets_dir = deck_dir / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    assets = {p.name for p in assets_dir.iterdir() if p.is_file()}
+    typ, warnings = render_typ(deck, assets)
+
+    tmp = deck_dir / "build.tmp"
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir()
+    os.symlink(Path(template_dir).resolve(), tmp / "template")
+    os.symlink(assets_dir.resolve(), tmp / "assets")
+    shutil.copy(FIELDS_TYP, tmp / "fields.typ")
+    (tmp / "deck.typ").write_text(typ)
+
+    fonts = Path(template_dir) / "fonts"
+    font_args = ["--font-path", str(fonts)] if fonts.is_dir() else []
+    src = str(tmp / "deck.typ")
+    for target in ("deck.pdf", "slide-{p}.svg"):
+        r = _run([typst_bin, "compile", "--root", str(tmp), *font_args, src, str(tmp / target)], timeout)
+        if r.returncode != 0:
+            raise CompileError("ошибка компиляции", r.stderr)
+    svgs = sorted(tmp.glob("slide-*.svg"), key=lambda p: int(p.stem.split("-")[1]))
+    if len(svgs) != len(deck.slides):
+        raise CompileError(
+            f"страниц {len(svgs)}, слайдов {len(deck.slides)}: "
+            "шаблон нарушает контракт «одна функция — одна страница»"
+        )
+    r = _run(
+        [typst_bin, "eval", "query(<edit>).map(it => it.value)", "--root", str(tmp),
+         *font_args, "--in", src, "--format", "json"],
+        timeout,
+    )
+    if r.returncode != 0:
+        raise CompileError("ошибка запроса позиций", r.stderr)
+    positions = json.loads(r.stdout)
+    (tmp / "positions.json").write_text(json.dumps(positions, ensure_ascii=False))
+    (tmp / "warnings.json").write_text(json.dumps(warnings, ensure_ascii=False))
+
+    build = deck_dir / "build"
+    old = deck_dir / "build.old"
+    shutil.rmtree(old, ignore_errors=True)
+    if build.exists():
+        os.rename(build, old)
+    os.rename(tmp, build)
+    shutil.rmtree(old, ignore_errors=True)
+    return CompileResult(
+        pdf=build / "deck.pdf",
+        svgs=[build / p.name for p in svgs],
+        positions=positions,
+        warnings=warnings,
+        typ=typ,
+    )

@@ -1,0 +1,46 @@
+import json
+
+import pytest
+
+from tests.conftest import TEMPLATE_DIR, requires_typst
+from tests.test_render import full_deck
+from typst_deck.model import Deck
+from typst_deck.render import CompileError, compile_deck
+
+pytestmark = requires_typst
+
+
+def test_compile_full_deck(deck_dir, png_bytes):
+    (deck_dir / "assets" / "a000001.png").write_bytes(png_bytes)
+    r = compile_deck(full_deck(), deck_dir, TEMPLATE_DIR)
+    assert r.pdf.exists() and len(r.svgs) == 6
+    assert r.warnings == []
+    fields = {(p["slide"], p["field"]) for p in r.positions}
+    assert ("s000001", "title") in fields and ("s000003", "bullets") in fields
+    assert ("s000003", "image") in fields and ("s000006", "contact") in fields
+    p = next(p for p in r.positions if p["slide"] == "s000003" and p["field"] == "title")
+    assert p["page"] == 3 and p["w"] > 0 and p["h"] > 0
+    assert json.loads((deck_dir / "build" / "positions.json").read_text()) == r.positions
+    assert (deck_dir / "build" / "template").is_symlink()
+
+
+def test_compile_missing_image_is_warning(deck_dir):
+    r = compile_deck(full_deck(), deck_dir, TEMPLATE_DIR)
+    assert len(r.svgs) == 6 and r.warnings
+
+
+def test_compile_replaces_previous_build(deck_dir):
+    compile_deck(full_deck(), deck_dir, TEMPLATE_DIR)
+    r = compile_deck(Deck(slides=[{"type": "final"}]), deck_dir, TEMPLATE_DIR)
+    assert len(r.svgs) == 1
+    assert not (deck_dir / "build" / "slide-2.svg").exists()
+    assert not (deck_dir / "build.tmp").exists()
+
+
+def test_compile_error_surfaces_stderr(deck_dir, tmp_path):
+    bad_tpl = tmp_path / "tpl"
+    bad_tpl.mkdir()
+    (bad_tpl / "deck.typ").write_text("#let deck(title: none, body) = body\n")
+    with pytest.raises(CompileError) as e:
+        compile_deck(full_deck(), deck_dir, bad_tpl)
+    assert "slide-title" in e.value.stderr
