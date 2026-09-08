@@ -44,3 +44,16 @@ def test_compile_error_surfaces_stderr(deck_dir, tmp_path):
     with pytest.raises(CompileError) as e:
         compile_deck(full_deck(), deck_dir, bad_tpl)
     assert "slide-title" in e.value.stderr
+
+
+@pytest.mark.parametrize("tid", sorted(p.name for p in (TEMPLATE_DIR.parent / "templates").iterdir() if (p / "deck.typ").exists()))
+def test_every_template_honours_contract(deck_dir, png_bytes, tid):
+    """Каждый шаблон в templates/ собирает образец: 6 страниц и позиции полей."""
+    from typst_deck.templates import SAMPLE_DECK
+    (deck_dir / "assets" / "a000001.png").write_bytes(png_bytes)
+    deck = SAMPLE_DECK.model_copy(deep=True)
+    deck.slides[2].image = "a000001.png"
+    r = compile_deck(deck, deck_dir, TEMPLATE_DIR.parent / "templates" / tid)
+    assert len(r.svgs) == 6
+    fields = {(p["slide"], p["field"]) for p in r.positions}
+    assert ("s000001", "title") in fields and ("s000003", "bullets") in fields and ("s000006", "title") in fields
