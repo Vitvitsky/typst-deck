@@ -69,3 +69,12 @@ async def test_http_error():
     llm = OpenAICompatLLM("https://llm.test/v1", "k", "m")
     with pytest.raises(LLMError):
         await llm.complete([{"role": "user", "content": "x"}], TOOLS)
+
+
+@respx.mock
+async def test_length_cutoff_is_error():
+    respx.post(URL).mock(return_value=httpx.Response(200, json={
+        "choices": [{"finish_reason": "length", "message": {"content": "", "reasoning_content": "думаю…"}}]}))
+    llm = OpenAICompatLLM("https://llm.test/v1", "k", "m", max_tokens=10)
+    with pytest.raises(LLMError, match="max_tokens=10"):
+        await llm.complete([{"role": "user", "content": "x"}], TOOLS)

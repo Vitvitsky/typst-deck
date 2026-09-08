@@ -135,7 +135,7 @@ class DeckService:
         llm = self.require_llm()
         async with self.store.lock(deck_id):
             deck = self.store.load(deck_id)
-            files = self.store.list_uploads(deck_id) if first else []
+            files = self.store.list_uploads(deck_id)  # исходники нужны и при правках: кеш промпта делает это дёшево
             history = [m for m in self.store.read_chat(deck_id) if m["role"] in ("user", "assistant")]
             self._chat(deck_id, "user", message, deck.version)
             try:

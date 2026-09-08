@@ -91,3 +91,9 @@ async def test_run_agent_uses_history():
     history = [{"role": "user", "content": "раньше"}, {"role": "assistant", "content": "ответ"}]
     await run_agent(llm, Deck(), "ещё", files=[], history=history, assets=[])
     assert [m["role"] for m in llm.calls[0]] == ["system", "user", "assistant", "user"]
+
+
+async def test_empty_completion_gets_explanation():
+    llm = FakeLLM([Completion("", [])])
+    out = await run_agent(llm, Deck(), "x", files=[], history=[], assets=[])
+    assert not out.changed and "не вернула" in out.reply

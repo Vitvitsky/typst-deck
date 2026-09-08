@@ -95,9 +95,15 @@ class OpenAICompatLLM:
         if r.status_code != 200:
             raise LLMError(f"LLM вернула {r.status_code}: {r.text[:500]}")
         try:
-            msg = r.json()["choices"][0]["message"]
+            choice = r.json()["choices"][0]
+            msg = choice["message"]
         except (ValueError, KeyError, IndexError) as e:
             raise LLMError(f"неожиданный ответ LLM: {r.text[:500]}") from e
+        if choice.get("finish_reason") == "length":
+            raise LLMError(
+                f"ответ модели обрезан по лимиту max_tokens={self.max_tokens}; "
+                "увеличьте TYPST_DECK_LLM_MAX_TOKENS (рассуждающие модели тратят лимит на рассуждение)"
+            )
         if self.tool_mode == "json":
             return self._parse_json_mode(msg.get("content") or "")
         calls = [

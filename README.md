@@ -45,7 +45,7 @@ scripts/dev.sh               # http://127.0.0.1:8000, ключ DeepSeek берё
 
 Переменные окружения (префикс `TYPST_DECK_`): `DATA_DIR`, `TEMPLATE_DIR`,
 `TYPST_BIN`, `PUBLIC_BASE_URL`, `LLM_API_BASE`, `LLM_API_KEY`, `LLM_MODEL`,
-`LLM_MAX_TOKENS`, `LLM_TOOL_MODE` (`tools` | `json`), `MAX_UPLOAD_MB`.
+`LLM_MAX_TOKENS` (по умолчанию 16384: рассуждающим моделям вроде deepseek-v4-flash нужен запас на рассуждение), `LLM_TOOL_MODE` (`tools` | `json`), `MAX_UPLOAD_MB`.
 `DEEPSEEK_API_KEY`, `DEEPSEEK_API_BASE`, `DEEPSEEK_MODEL` принимаются как
 синонимы. Без ключа сервис стартует, работает ручная правка, генерация
 отвечает 503.

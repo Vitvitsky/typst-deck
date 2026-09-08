@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     llm_api_base: str = ""
     llm_api_key: str = ""
     llm_model: str = ""
-    llm_max_tokens: int = 4096
+    llm_max_tokens: int = 16384  # рассуждающим моделям 4096 не хватает даже на рассуждение
     llm_tool_mode: Literal["tools", "json"] = "tools"
     max_upload_mb: int = 20
 

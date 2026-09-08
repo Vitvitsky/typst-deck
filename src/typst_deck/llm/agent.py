@@ -65,5 +65,5 @@ async def run_agent(
     else:
         reply = "Достигнут лимит шагов; применены правки: " + (", ".join(ex.ops) or "нет")
     if not reply:
-        reply = "Готово." if ex.changed else ""
+        reply = "Готово." if ex.changed else "Модель не вернула ни правок, ни ответа. Попробуйте переформулировать запрос."
     return Outcome(reply=reply, changed=ex.changed, ops=ex.ops, deck=ex.deck)

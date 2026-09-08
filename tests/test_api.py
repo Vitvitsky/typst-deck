@@ -115,6 +115,8 @@ async def test_full_flow(client, fake_llm, png_bytes):
     d = (await client.get(f"/api/decks/{deck_id}")).json()
     assert d["deck"]["slides"][1]["title"] == "Через чат"
     assert sid in fake_llm.calls[-1][0]["content"]
+    users = [m["content"] for m in fake_llm.calls[-1] if m["role"] == "user"]
+    assert any("данные" in u for u in users)  # файлы видны и при правке
 
 
 @requires_typst
