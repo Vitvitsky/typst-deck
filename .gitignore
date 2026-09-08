@@ -5,3 +5,6 @@ __pycache__/
 data/
 build.tmp/
 *.pdf
+
+# Корпоративный шаблон Lemana Tech: подтягивается scripts/sync-lmru-template.sh из закрытого репозитория, в git не хранится
+templates/lmru-hr/
