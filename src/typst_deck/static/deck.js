@@ -1,37 +1,41 @@
-import { api, upload, waitJob, sleep, el } from "./api.js";
+import { api, upload, waitJob, sleep, el, toast, armConfirm, TYPE_RU, FIELD_RU, SIZE_RU, fileKind, errorText, fmtDate, fmtElapsed } from "./api.js";
 
 const deckId = location.pathname.split("/").filter(Boolean).pop();
 const $ = (id) => document.getElementById(id);
-const TEXT_FIELDS = new Set(["title", "subtitle", "caption", "contact", "unit", "notes"]);
-const LINE_FIELDS = new Set(["bullets", "labels"]);
-const JSON_FIELDS = new Set(["data", "series"]);
 const NEW_SLIDE = {
   title: { type: "title", title: "Заголовок", subtitle: "" },
   section: { type: "section", title: "Раздел" },
-  image: { type: "image", title: "Заголовок", bullets: ["Тезис"] },
+  image: { type: "image", title: "Заголовок", bullets: ["Первый тезис"] },
   "bar-chart": { type: "bar-chart", title: "Диаграмма", data: [{ label: "A", value: 1 }, { label: "B", value: 2 }] },
-  chart: { type: "chart", title: "График", labels: ["1", "2", "3"], series: [{ name: "Ряд", values: [1, 2, 3] }] },
+  chart: { type: "chart", title: "График", labels: ["Q1", "Q2", "Q3"], series: [{ name: "Ряд", values: [1, 2, 3] }] },
   final: { type: "final" },
 };
+const CHIPS = ["Сократи текст на всех слайдах", "Добавь слайд с выводами в конце", "Разбей на разделы", "Сделай заголовки короче"];
+const PHASES = [["reading", "Читаю материалы"], ["model", "Собираю структуру"], ["render", "Верстаю слайды"]];
 
-const state = { info: null, positions: [], page: { w: 453.54, h: 255.12 }, polling: false };
+const state = { info: null, positions: [], page: { w: 453.54, h: 255.12 }, selected: null, changed: new Set(), tab: "chat", polling: false, timer: null, lastUser: "" };
 
-// --- загрузка и отрисовка
+// ============ загрузка
 async function refresh() {
   const info = await api(`api/decks/${deckId}`);
+  const prevVersion = state.info && state.info.version;
   state.info = info;
-  $("title").textContent = info.deck.title;
-  document.title = `${info.deck.title} — typst-deck`;
-  $("pdf").href = `api/decks/${deckId}/deck.pdf`;
-  showBanner(info);
+  renderTopbar();
   if (info.status === "generating") {
+    renderGenerating();
     if (!state.polling) pollUntilReady();
-    if (!info.has_build) return;
+    return;
   }
-  if (!info.has_build) { $("pages").replaceChildren(); return; }
-  state.positions = await api(`api/decks/${deckId}/positions`);
-  await readPageSize();
-  renderPages();
+  stopTimer();
+  if (info.has_build) {
+    state.positions = await api(`api/decks/${deckId}/positions`);
+    if (prevVersion !== info.version) await readPageSize();
+  }
+  if (state.selected && !info.deck.slides.some((s) => s.id === state.selected)) state.selected = null;
+  renderStage();
+  renderRail();
+  if (state.tab === "slide") renderProps();
+  setLock(false);
 }
 
 async function pollUntilReady() {
@@ -40,29 +44,12 @@ async function pollUntilReady() {
     for (;;) {
       await sleep(1000);
       const info = await api(`api/decks/${deckId}`);
+      state.info = info;
       if (info.status !== "generating") break;
+      renderProgressOnly();
     }
-  } finally {
-    state.polling = false;
-  }
+  } finally { state.polling = false; }
   await Promise.all([refresh(), loadChat()]);
-}
-
-function showBanner(info) {
-  const b = $("banner");
-  b.className = "banner";
-  if (info.status === "generating") {
-    b.classList.add("busy");
-    b.replaceChildren(el("span", { class: "spinner" }), "Модель работает над слайдами…");
-  } else if (info.status === "failed" && info.last_error) {
-    b.replaceChildren(`Последняя генерация не удалась: ${info.last_error}`);
-  } else if (info.warnings && info.warnings.length) {
-    b.replaceChildren(info.warnings.join("; "));
-  } else if (!info.slide_count) {
-    b.replaceChildren("Слайдов пока нет. Опишите презентацию в чате или добавьте слайд кнопкой слева.");
-  } else {
-    b.classList.add("hidden");
-  }
 }
 
 async function readPageSize() {
@@ -70,113 +57,203 @@ async function readPageSize() {
     const r = await fetch(`api/decks/${deckId}/slides/1.svg?v=${state.info.version}`);
     const m = /viewBox="0 0 ([\d.]+) ([\d.]+)"/.exec(await r.text());
     if (m) state.page = { w: +m[1], h: +m[2] };
-  } catch { /* остаётся размер по умолчанию */ }
+  } catch { /* размер по умолчанию */ }
 }
 
-function renderPages() {
-  const { deck, version } = state.info;
-  const wraps = deck.slides.map((slide, i) => {
-    const n = i + 1;
-    const overlay = el("div", { class: "overlay", onclick: (e) => { if (e.target === overlay) openSlidePanel(slide, page); } });
-    for (const p of state.positions.filter((p) => p.page === n)) {
-      const z = el("div", {
-        class: "zone", title: `Изменить: ${p.field}`,
-        style: `left:${(p.x / state.page.w) * 100}%;top:${(p.y / state.page.h) * 100}%;width:${(p.w / state.page.w) * 100}%;height:${(p.h / state.page.h) * 100}%`,
-        onclick: () => openFieldEditor(slide, p.field, z, page),
-      });
-      overlay.append(z);
+// ============ шапка
+function renderTopbar() {
+  const { deck } = state.info;
+  const h = $("title");
+  if (!h.querySelector("input")) h.textContent = deck.title;
+  document.title = `${deck.title} — typst-deck`;
+  const pdf = $("pdf");
+  pdf.href = `api/decks/${deckId}/deck.pdf`;
+  pdf.classList.toggle("hidden", !state.info.has_build);
+}
+
+$("title").addEventListener("click", () => {
+  const h = $("title");
+  if (h.querySelector("input")) return;
+  const input = el("input", { type: "text", value: state.info.deck.title, "aria-label": "Название презентации" });
+  h.replaceChildren(input);
+  input.focus(); input.select();
+  const done = async (save) => {
+    const v = input.value.trim();
+    if (save && v && v !== state.info.deck.title) {
+      try { await applyResult(api(`api/decks/${deckId}`, { method: "PATCH", json: { title: v } })); toast("Название сохранено"); }
+      catch (e) { toast(e.message, { error: true }); }
     }
-    const page = el("div", { class: "page" },
-      el("img", { src: `api/decks/${deckId}/slides/${n}.svg?v=${version}`, alt: `Слайд ${n}` }), overlay);
-    const bar = el("div", { class: "pagebar" },
-      `${n}. ${slide.type}`, el("span", { class: "sp" }),
-      el("button", { class: "small", title: "Выше", onclick: () => move(slide.id, i - 1), disabled: i === 0 ? "" : null }, "↑"),
-      el("button", { class: "small", title: "Ниже", onclick: () => move(slide.id, i + 1), disabled: i === deck.slides.length - 1 ? "" : null }, "↓"),
-      el("button", { class: "small", title: "Удалить слайд", onclick: () => removeSlide(slide) }, "✕"));
-    return el("div", { class: "pagewrap", id: `slide-${slide.id}` }, bar, page);
-  });
-  $("pages").replaceChildren(...wraps);
+    h.textContent = state.info.deck.title;
+  };
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") done(true); if (e.key === "Escape") done(false); });
+  input.addEventListener("blur", () => done(true));
+});
+
+$("copylink").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(location.href); toast("Ссылка скопирована"); }
+  catch { toast(location.href); }
+});
+
+$("history").addEventListener("click", async () => {
+  const box = $("versions");
+  if (!box.classList.contains("hidden")) { box.classList.add("hidden"); return; }
+  const versions = (await api(`api/decks/${deckId}/versions`)).reverse();
+  box.replaceChildren(...versions.map((v) => el("div", { class: "v" },
+    el("span", { class: "num" }, `Версия ${v.version}`),
+    el("span", { class: "muted" }, `${v.slide_count} сл. · ${fmtDate(v.updated_at)}`),
+    el("span", { class: "sp" }),
+    v.version === state.info.version ? el("span", { class: "muted tiny" }, "текущая")
+      : el("button", { class: "sm", onclick: async () => {
+          try { await applyResult(api(`api/decks/${deckId}/revert`, { json: { version: v.version } })); box.classList.add("hidden"); toast(`Возвращена версия ${v.version}`); }
+          catch (e) { toast(e.message, { error: true }); }
+        } }, "Вернуть"))));
+  box.classList.remove("hidden");
+});
+
+// ============ сцена: сборка / пусто / слайды
+function renderGenerating() {
+  const inner = $("stage-inner");
+  inner.replaceChildren(progressCard(), el("div", { class: "skeleton" }), el("div", { class: "skeleton" }), el("div", { class: "skeleton" }));
+  $("rail").replaceChildren(el("div", { class: "muted tiny", style: "padding:6px" }, "Слайды появятся после сборки"));
+  setLock(true, "Дождитесь окончания сборки, потом можно продолжить в чате.");
+  startTimer();
 }
 
-// --- правки
-async function applyResult(promise) {
-  try {
-    state.info = await promise;
-    state.positions = await api(`api/decks/${deckId}/positions`);
-    showBanner(state.info);
-    renderPages();
-  } catch (e) {
-    alert(e.message);
+function progressCard() {
+  const job = state.info.job || {};
+  const idx = Math.max(0, PHASES.findIndex(([k]) => k === job.phase));
+  return el("div", { class: "progress", id: "progress" },
+    el("div", { class: "steps" }, ...PHASES.map(([k, label], i) => el("div", { class: `step ${i < idx ? "done" : i === idx ? "now" : ""}` },
+      i < idx ? el("span", { class: "mark" }, "✓") : i === idx ? el("span", { class: "spinner" }) : el("span", { class: "mark" }), label))),
+    el("span", { class: "time", id: "elapsed" }, job.created_at ? fmtElapsed(job.created_at) : ""));
+}
+
+function renderProgressOnly() {
+  const old = $("progress");
+  if (old) old.replaceWith(progressCard());
+}
+
+function startTimer() {
+  stopTimer();
+  state.timer = setInterval(() => { const e = $("elapsed"); const job = state.info && state.info.job; if (e && job) e.textContent = fmtElapsed(job.created_at); }, 1000);
+}
+function stopTimer() { if (state.timer) clearInterval(state.timer); state.timer = null; }
+
+function renderStage() {
+  const { deck, version, warnings, status, last_error } = state.info;
+  const inner = $("stage-inner");
+  const parts = [];
+  if (status === "failed" && last_error && !deck.slides.length) {
+    parts.push(el("div", { class: "notice err inline" }, `Не удалось собрать: ${errorText(last_error)}`));
   }
+  if (warnings && warnings.length) parts.push(el("div", { class: "notice warn inline" }, warnings.join("; ")));
+  if (!deck.slides.length) {
+    parts.push(el("div", { class: "empty-stage" },
+      el("p", {}, "Слайдов пока нет."),
+      el("div", { class: "row" },
+        el("button", { class: "primary", onclick: () => { switchTab("chat"); $("input").focus(); } }, "Описать в чате"),
+        el("button", { onclick: () => $("add").click() }, "Добавить слайд вручную"))));
+    inner.replaceChildren(...parts);
+    return;
+  }
+  deck.slides.forEach((slide, i) => {
+    const n = i + 1;
+    const overlay = el("div", { class: "overlay" });
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) { select(slide.id); switchTab("slide"); } });
+    for (const p of state.positions.filter((p) => p.page === n)) {
+      overlay.append(el("button", {
+        class: "zone", type: "button", "aria-label": `Изменить: ${FIELD_RU[p.field] || p.field}, слайд ${n}`,
+        style: `left:${(p.x / state.page.w) * 100}%;top:${(p.y / state.page.h) * 100}%;width:${(p.w / state.page.w) * 100}%;height:${(p.h / state.page.h) * 100}%`,
+        onclick: (e) => { e.stopPropagation(); select(slide.id); openFieldEditor(slide, n, p.field, e.currentTarget, page); },
+      }));
+    }
+    const page = el("div", { class: "page" }, el("img", { src: `api/decks/${deckId}/slides/${n}.svg?v=${version}`, alt: `Слайд ${n}` }), overlay);
+    parts.push(el("div", { class: `pagewrap${state.selected === slide.id ? " selected" : ""}`, id: `slide-${slide.id}` },
+      el("div", { class: "pagebar" }, el("span", { class: "n num" }, n), el("span", {}, TYPE_RU[slide.type]),
+        el("span", { class: "hint" }, "Нажмите на текст, чтобы изменить")),
+      page));
+  });
+  inner.replaceChildren(...parts);
 }
 
+// ============ лента миниатюр
+function renderRail() {
+  const { deck, version } = state.info;
+  const rail = $("rail");
+  if (!deck.slides.length) { rail.replaceChildren(el("div", { class: "muted tiny", style: "padding:6px" }, "Слайдов нет")); return; }
+  rail.replaceChildren(...deck.slides.map((slide, i) => {
+    const item = el("div", { class: `thumb-item${state.selected === slide.id ? " selected" : ""}`, role: "button", tabindex: 0,
+      "aria-label": `Слайд ${i + 1}: ${slide.title || TYPE_RU[slide.type]}` },
+      state.info.has_build ? el("img", { src: `api/decks/${deckId}/slides/${i + 1}.svg?v=${version}`, alt: "" }) : el("div", { class: "skeleton" }),
+      el("div", { class: "cap" }, el("span", { class: "n num" }, i + 1), el("span", { class: "t" }, slide.title || TYPE_RU[slide.type])),
+      state.changed.has(slide.id) ? el("span", { class: "dot", title: "Изменён моделью" }) : null,
+      el("div", { class: "ops" },
+        el("button", { title: "Выше", disabled: i === 0, onclick: (e) => { e.stopPropagation(); move(slide.id, i - 1); } }, "↑"),
+        el("button", { title: "Ниже", disabled: i === deck.slides.length - 1, onclick: (e) => { e.stopPropagation(); move(slide.id, i + 1); } }, "↓"),
+        el("button", { title: "Удалить", class: "danger", onclick: (e) => { e.stopPropagation(); removeSlide(slide); } }, "✕")));
+    const go = () => { select(slide.id); const t = $(`slide-${slide.id}`); if (t) t.scrollIntoView({ behavior: "smooth", block: "start" }); };
+    item.addEventListener("click", go);
+    item.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
+    return item;
+  }));
+}
+
+function select(id) {
+  state.selected = id;
+  document.querySelectorAll(".pagewrap").forEach((p) => p.classList.toggle("selected", p.id === `slide-${id}`));
+  document.querySelectorAll(".thumb-item").forEach((t, i) => t.classList.toggle("selected", state.info.deck.slides[i] && state.info.deck.slides[i].id === id));
+  if (state.tab === "slide") renderProps();
+}
+
+// ============ правки
+async function applyResult(promise) {
+  const info = await promise;
+  const prevVersion = state.info.version;
+  state.info = info;
+  if (info.has_build) {
+    state.positions = await api(`api/decks/${deckId}/positions`);
+    if (prevVersion !== info.version) await readPageSize();
+  }
+  renderTopbar(); renderStage(); renderRail();
+  if (state.tab === "slide") renderProps();
+  return info;
+}
 const patchSlide = (id, patch) => api(`api/decks/${deckId}/slides/${id}`, { method: "PATCH", json: { patch } });
-const move = (id, to) => applyResult(api(`api/decks/${deckId}/slides/${id}/move`, { json: { to_index: to } }));
-
+async function move(id, to) { try { await applyResult(api(`api/decks/${deckId}/slides/${id}/move`, { json: { to_index: to } })); } catch (e) { toast(e.message, { error: true }); } }
 async function removeSlide(slide) {
-  if (!confirm(`Удалить слайд «${slide.title || slide.type}»?`)) return;
-  await applyResult(api(`api/decks/${deckId}/slides/${slide.id}`, { method: "DELETE" }));
+  const n = state.info.deck.slides.findIndex((s) => s.id === slide.id) + 1;
+  const snapshot = state.info.version;
+  try {
+    await applyResult(api(`api/decks/${deckId}/slides/${slide.id}`, { method: "DELETE" }));
+    toast(`Слайд ${n} удалён`, { action: "Вернуть", onAction: () => applyResult(api(`api/decks/${deckId}/revert`, { json: { version: snapshot } })).catch((e) => toast(e.message, { error: true })) });
+  } catch (e) { toast(e.message, { error: true }); }
 }
+$("add").addEventListener("click", async () => {
+  const slide = JSON.parse(JSON.stringify(NEW_SLIDE[$("addtype").value]));
+  try {
+    const info = await applyResult(api(`api/decks/${deckId}/slides`, { json: { slide, after: state.selected } }));
+    const idx = state.selected ? info.deck.slides.findIndex((s) => s.id === state.selected) + 1 : info.deck.slides.length - 1;
+    const added = info.deck.slides[idx];
+    if (added) { select(added.id); const t = $(`slide-${added.id}`); if (t) t.scrollIntoView({ behavior: "smooth", block: "start" }); switchTab("slide"); }
+  } catch (e) { toast(e.message, { error: true }); }
+});
 
+// --- редактор поля на слайде
 function closeEditors() {
   document.querySelectorAll(".editor").forEach((e) => e.remove());
   document.querySelectorAll(".zone.active").forEach((z) => z.classList.remove("active"));
 }
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeEditors(); });
 
-function placeEditor(editor, page, anchor) {
+function openFieldEditor(slide, n, field, zone, page) {
   closeEditors();
-  page.append(editor);
-  const top = anchor ? anchor.offsetTop + anchor.offsetHeight + 4 : 12;
-  const left = anchor ? Math.min(anchor.offsetLeft, page.clientWidth - editor.offsetWidth - 8) : 12;
-  editor.style.top = `${top}px`;
-  editor.style.left = `${Math.max(8, left)}px`;
-  if (anchor) anchor.classList.add("active");
-  const first = editor.querySelector("input, textarea, select");
-  if (first) first.focus();
-}
-
-function fieldControl(slide, field) {
-  const v = slide[field];
-  if (LINE_FIELDS.has(field)) return el("textarea", { name: field, placeholder: "По одному пункту на строку" }, (v || []).join("\n"));
-  if (JSON_FIELDS.has(field)) return el("textarea", { name: field }, JSON.stringify(v, null, 1));
-  if (field === "image_size") {
-    const s = el("select", { name: field }, ...["small", "medium", "large"].map((o) => el("option", { value: o, selected: v === o ? "" : null }, o)));
-    return s;
-  }
-  if (field === "notes") return el("textarea", { name: field }, v || "");
-  return el("input", { type: "text", name: field, value: v ?? "" });
-}
-
-function readControl(field, control) {
-  const raw = control.value;
-  if (LINE_FIELDS.has(field)) return raw.split("\n").map((s) => s.trim()).filter(Boolean);
-  if (JSON_FIELDS.has(field)) return JSON.parse(raw);
-  return raw;
-}
-
-function imageControls(slide, patch) {
-  const box = el("div", {});
-  box.append(el("label", {}, "Размер картинки"), fieldControl(slide, "image_size"));
-  const file = el("input", { type: "file", accept: ".png,.jpg,.jpeg,.svg" });
-  box.append(el("label", {}, slide.image ? `Картинка: ${slide.image}` : "Картинки нет"), file);
-  if (slide.image) box.append(el("div", {}, el("button", { class: "small", type: "button", onclick: () => { patch.image = null; box.querySelector("label:nth-of-type(2)").textContent = "Картинка будет убрана"; } }, "Убрать картинку")));
-  box.collect = async () => {
-    patch.image_size = box.querySelector("select").value;
-    if (file.files[0]) patch.image = (await upload(`api/decks/${deckId}/assets`, file.files[0])).asset_id;
-  };
-  return box;
-}
-
-function openFieldEditor(slide, field, zone, page) {
   const patch = {};
-  const form = el("form", { class: "editor" }, el("div", { class: "head" }, `Слайд: ${field}`));
+  const form = el("form", { class: "editor" }, el("div", { class: "head" }, el("span", {}, `${FIELD_RU[field] || field} · слайд ${n}`), el("span", { class: "tiny" }, "Enter — сохранить, Esc — отмена")));
   let control = null, img = null;
   if (field === "image") { img = imageControls(slide, patch); form.append(img); }
   else { control = fieldControl(slide, field); form.append(control); }
-  const err = el("div", { class: "error" });
-  form.append(err, el("div", { class: "actions" },
-    el("button", { type: "button", onclick: closeEditors }, "Отмена"),
-    el("button", { class: "primary", type: "submit" }, "Сохранить")));
+  const err = el("div", { class: "error small" });
+  form.append(err, el("div", { class: "actions" }, el("button", { type: "button", onclick: closeEditors }, "Отмена"), el("button", { class: "primary", type: "submit" }, "Сохранить")));
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     try {
@@ -185,95 +262,214 @@ function openFieldEditor(slide, field, zone, page) {
       const result = await patchSlide(slide.id, patch);
       closeEditors();
       await applyResult(Promise.resolve(result));
+      toast("Сохранено");
     } catch (ex) { err.textContent = ex.message; }
   });
-  form.addEventListener("keydown", (e) => { if (e.key === "Escape") closeEditors(); if (e.key === "Enter" && e.target.tagName === "INPUT") form.requestSubmit(); });
-  placeEditor(form, page, zone);
+  form.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.tagName === "INPUT") { e.preventDefault(); form.requestSubmit(); } });
+  page.append(form);
+  const top = zone.offsetTop + zone.offsetHeight + 6;
+  const left = Math.max(8, Math.min(zone.offsetLeft, page.clientWidth - form.offsetWidth - 8));
+  form.style.top = `${top}px`; form.style.left = `${left}px`;
+  zone.classList.add("active");
+  const first = form.querySelector("input, textarea, select");
+  if (first) first.focus();
 }
 
-function openSlidePanel(slide, page) {
+function fieldControl(slide, field) {
+  const v = slide[field];
+  if (field === "bullets" || field === "labels") return el("textarea", { name: field, placeholder: "По одному на строку" }, (v || []).join("\n"));
+  if (field === "notes") return el("textarea", { name: field }, v || "");
+  if (field === "image_size") return el("select", { name: field }, ...Object.entries(SIZE_RU).map(([k, l]) => el("option", { value: k, selected: v === k }, l)));
+  return el("input", { type: "text", name: field, value: v ?? "" });
+}
+function readControl(field, control) {
+  if (field === "bullets" || field === "labels") return control.value.split("\n").map((s) => s.trim()).filter(Boolean);
+  return control.value;
+}
+
+// картинка: размер, загрузка, удаление
+function imageControls(slide, patch) {
+  const box = el("div", { class: "image-box" });
+  const size = fieldControl(slide, "image_size");
+  const file = el("input", { type: "file", accept: ".png,.jpg,.jpeg,.svg", "aria-label": "Загрузить картинку" });
+  const status = el("div", { class: "muted tiny" }, slide.image ? "Картинка на слайде" : "Картинки нет — загрузите файл");
+  const remove = slide.image ? el("button", { type: "button", class: "sm danger", onclick: () => { patch.image = null; status.textContent = "Картинка будет убрана после сохранения"; } }, "Убрать картинку") : null;
+  box.append(el("label", { class: "f" }, "Размер"), size, el("label", { class: "f" }, slide.image ? "Заменить" : "Загрузить"), file, status);
+  if (remove) box.append(remove);
+  box.collect = async () => {
+    patch.image_size = size.value;
+    if (file.files[0]) patch.image = (await upload(`api/decks/${deckId}/assets`, file.files[0])).asset_id;
+  };
+  return box;
+}
+
+// ============ панель свойств выбранного слайда
+function switchTab(tab) {
+  state.tab = tab;
+  document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+  $("tab-chat").classList.toggle("hidden", tab !== "chat");
+  $("tab-slide").classList.toggle("hidden", tab !== "slide");
+  if (tab === "slide") renderProps();
+}
+document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => switchTab(b.dataset.tab)));
+
+function renderProps() {
+  const box = $("props");
+  const slide = state.info && state.info.deck.slides.find((s) => s.id === state.selected);
+  if (!slide) { box.replaceChildren(el("p", { class: "muted small" }, "Выберите слайд: нажмите на него в центре или в ленте слева.")); return; }
+  const n = state.info.deck.slides.indexOf(slide) + 1;
   const patch = {};
-  const form = el("form", { class: "editor" }, el("div", { class: "head" }, `Все поля слайда (${slide.type})`));
-  const controls = {};
-  let img = null;
-  for (const [k, v] of Object.entries(slide)) {
-    if (k === "id" || k === "type" || k === "image" || k === "image_size") continue;
-    form.append(el("label", {}, k));
-    controls[k] = fieldControl(slide, k);
-    form.append(controls[k]);
+  const form = el("form", {}, el("h3", {}, `Слайд ${n} · ${TYPE_RU[slide.type]}`), el("div", { class: "sub" }, "Меняются только поля — оформление задаёт корпоративный шаблон."));
+  const readers = [];
+  const ORDER = ["title", "subtitle", "bullets", "caption", "contact", "unit", "labels", "series", "data", "notes"];
+  const keys = Object.keys(slide).filter((k) => !["id", "type", "image", "image_size"].includes(k))
+    .sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
+  for (const k of keys) {
+    if (k === "data") { const t = dataTable(slide.data); form.append(el("label", { class: "f" }, FIELD_RU.data), t); readers.push(() => { const v = t.read(); if (JSON.stringify(v) !== JSON.stringify(slide.data)) patch.data = v; }); continue; }
+    if (k === "series") { const t = seriesTable(slide.series, slide.labels.length); form.append(el("label", { class: "f" }, FIELD_RU.series), t); readers.push(() => { const v = t.read(); if (JSON.stringify(v) !== JSON.stringify(slide.series)) patch.series = v; }); continue; }
+    const c = fieldControl(slide, k);
+    form.append(el("label", { class: "f" }, FIELD_RU[k] || k), c);
+    readers.push(() => { const v = readControl(k, c); if (JSON.stringify(v) !== JSON.stringify(slide[k])) patch[k] = v; });
   }
-  if ("image" in slide) { img = imageControls(slide, patch); form.append(img); }
-  const err = el("div", { class: "error" });
-  form.append(err, el("div", { class: "actions" },
-    el("button", { type: "button", class: "del", onclick: () => removeSlide(slide) }, "Удалить слайд"),
-    el("button", { type: "button", onclick: closeEditors }, "Отмена"),
-    el("button", { class: "primary", type: "submit" }, "Сохранить")));
+  let img = null;
+  if ("image" in slide) { img = imageControls(slide, patch); form.append(el("label", { class: "f" }, FIELD_RU.image), img); }
+  const err = el("div", { class: "error small" });
+  const del = el("button", { type: "button", class: "danger" }, "Удалить слайд");
+  del.addEventListener("click", () => armConfirm(del, "Точно удалить?", () => removeSlide(slide)));
+  form.append(err, el("div", { class: "actions" }, del, el("span", { class: "sp" }), el("button", { class: "primary", type: "submit" }, "Сохранить")));
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     try {
-      for (const [k, c] of Object.entries(controls)) {
-        const val = readControl(k, c);
-        if (JSON.stringify(val) !== JSON.stringify(slide[k])) patch[k] = val;
-      }
+      readers.forEach((r) => r());
       if (img) await img.collect();
-      const result = await patchSlide(slide.id, patch);
-      closeEditors();
-      await applyResult(Promise.resolve(result));
+      if (!Object.keys(patch).length) { toast("Изменений нет"); return; }
+      await applyResult(patchSlide(slide.id, patch));
+      toast("Сохранено");
     } catch (ex) { err.textContent = ex.message; }
   });
-  form.addEventListener("keydown", (e) => { if (e.key === "Escape") closeEditors(); });
-  placeEditor(form, page, null);
+  box.replaceChildren(form);
 }
 
-$("add").addEventListener("click", () => {
-  const slide = { ...NEW_SLIDE[$("addtype").value] };
-  applyResult(api(`api/decks/${deckId}/slides`, { json: { slide, after: null } })).then(() => {
-    const last = document.querySelector(".pagewrap:last-child");
-    if (last) last.scrollIntoView({ behavior: "smooth" });
+function dataTable(rows) {
+  const box = el("div", { class: "grid-table" });
+  const render = (items) => {
+    box.replaceChildren(...items.map((r, i) => el("div", { class: "r" },
+      el("input", { type: "text", value: r.label, placeholder: "Подпись", "aria-label": "Подпись" }),
+      el("input", { type: "number", step: "any", value: r.value, "aria-label": "Значение" }),
+      el("button", { type: "button", class: "quiet icon sm", title: "Убрать строку", onclick: () => { const cur = box.read(); cur.splice(i, 1); render(cur); } }, "✕"))),
+      el("button", { type: "button", class: "sm", onclick: () => render([...box.read(), { label: "", value: 0 }]) }, "＋ Строка"));
+  };
+  box.read = () => [...box.querySelectorAll(".r")].map((r) => { const [l, v] = r.querySelectorAll("input"); return { label: l.value, value: Number(v.value) }; });
+  render(rows);
+  return box;
+}
+
+function seriesTable(series, nLabels) {
+  const box = el("div", { class: "grid-table" });
+  const render = (items) => {
+    box.replaceChildren(...items.map((s, i) => el("div", { class: "r series" },
+      el("div", {},
+        el("input", { type: "text", value: s.name, placeholder: "Название ряда", "aria-label": "Название ряда" }),
+        el("input", { type: "text", value: s.values.join(", "), placeholder: `${nLabels} значений через запятую`, "aria-label": "Значения", style: "margin-top:4px" })),
+      el("button", { type: "button", class: "quiet icon sm", title: "Убрать ряд", onclick: () => { const cur = box.read(); cur.splice(i, 1); render(cur); } }, "✕"))),
+      el("button", { type: "button", class: "sm", onclick: () => render([...box.read(), { name: "", values: Array(nLabels).fill(0) }]) }, "＋ Ряд"));
+  };
+  box.read = () => [...box.querySelectorAll(".r")].map((r) => { const [n, v] = r.querySelectorAll("input"); return { name: n.value, values: v.value.split(/[,;\s]+/).filter(Boolean).map(Number) }; });
+  render(series);
+  return box;
+}
+
+// ============ чат
+function changesText(changes) {
+  if (!changes || !changes.length) return null;
+  const slides = state.info ? state.info.deck.slides : [];
+  const num = (id) => { const i = slides.findIndex((s) => s.id === id); return i >= 0 ? `слайд ${i + 1}` : "слайд"; };
+  const parts = changes.map((c) => {
+    const name = c.title ? ` «${c.title}»` : "";
+    if (c.kind === "rebuilt") return `собрано ${c.count} слайдов`;
+    if (c.kind === "updated") return `изменён ${num(c.slide_id)}${name}${c.fields ? ` (${c.fields.map((f) => (FIELD_RU[f] || f).toLowerCase()).join(", ")})` : ""}`;
+    if (c.kind === "added") return `добавлен ${num(c.slide_id)}${name}`;
+    if (c.kind === "removed") return `удалён слайд${name}`;
+    if (c.kind === "moved") return `перемещён ${num(c.slide_id)}${name}`;
+    return c.kind;
   });
-});
+  return el("span", { class: "changes" }, el("b", {}, "Правки: "), parts.join("; "));
+}
 
-// --- версии
-$("history").addEventListener("click", async () => {
-  const box = $("versions");
-  if (!box.classList.contains("hidden")) { box.classList.add("hidden"); return; }
-  const versions = await api(`api/decks/${deckId}/versions`);
-  box.replaceChildren(...versions.reverse().map((v) => el("div", {},
-    el("span", {}, `v${v.version} · ${v.slide_count} сл. · ${new Date(v.updated_at).toLocaleTimeString()}`,
-      v.version === state.info.version ? el("span", { class: "muted" }, " (текущая)") : null),
-    v.version === state.info.version ? null :
-      el("button", { class: "small", onclick: async () => { await applyResult(api(`api/decks/${deckId}/revert`, { json: { version: v.version } })); box.classList.add("hidden"); } }, "Вернуть"))));
-  box.classList.remove("hidden");
-});
-
-// --- чат
 async function loadChat() {
   const chat = await api(`api/decks/${deckId}/chat`);
   const box = $("messages");
-  box.replaceChildren(...chat.map((m) => el("div", { class: `msg ${m.role}` }, m.content,
-    m.ops && m.ops.length ? el("span", { class: "ops" }, `правки: ${m.ops.join(", ")}`) : null)));
+  const items = [];
+  chat.forEach((m, i) => {
+    if (m.role === "assistant" && !m.content && !(m.changes && m.changes.length)) return;
+    if (m.role === "error") {
+      const prevUser = [...chat.slice(0, i)].reverse().find((x) => x.role === "user");
+      items.push(el("div", { class: "msg error" }, el("div", { class: "title" }, "Не удалось выполнить"), errorText(m.content),
+        prevUser ? el("div", {}, el("button", { class: "sm", onclick: () => send(prevUser.content) }, "Повторить")) : null));
+      return;
+    }
+    items.push(el("div", { class: `msg ${m.role}` }, m.content || "Готово.", m.role === "assistant" ? changesText(m.changes) : null));
+  });
+  if (!items.length) items.push(el("div", { class: "chat-empty" }, "Напишите, что собрать или поправить. Модель меняет только содержание, оформление остаётся корпоративным."));
+  const last = chat[chat.length - 1];
+  if (last && last.role === "assistant" && last.changes) {
+    state.changed = new Set(last.changes.map((c) => c.slide_id).filter(Boolean));
+    setTimeout(() => { state.changed.clear(); if (state.info && state.info.status !== "generating") renderRail(); }, 10000);
+    if (state.info && state.info.status !== "generating") renderRail();
+  }
+  if (state.info && state.info.status === "generating") items.push(el("div", { class: "msg pending" }, el("span", { class: "spinner" }), "Модель работает…"));
+  box.replaceChildren(...items);
   box.scrollTop = box.scrollHeight;
 }
 
-async function send() {
-  const text = $("input").value.trim();
+function setLock(locked, text) {
+  $("input").disabled = locked; $("send").disabled = locked; $("attach-btn").disabled = locked;
+  $("lock").classList.toggle("hidden", !locked);
+  $("chips").classList.toggle("hidden", locked);
+  if (text) $("lock").textContent = text;
+}
+
+async function send(textArg) {
+  const text = (textArg ?? $("input").value).trim();
   if (!text) return;
-  $("send").disabled = true;
+  state.lastUser = text;
+  setLock(true, "Модель работает над ответом…");
   try {
     const { job_id } = await api(`api/decks/${deckId}/messages`, { json: { text } });
-    $("input").value = "";
-    $("messages").append(el("div", { class: "msg user" }, text));
-    showBanner({ status: "generating" });
+    $("input").value = ""; $("input").style.height = "";
+    $("messages").append(el("div", { class: "msg user" }, text), el("div", { class: "msg pending" }, el("span", { class: "spinner" }), "Модель работает…"));
+    $("messages").scrollTop = $("messages").scrollHeight;
     await waitJob(job_id);
-    await Promise.all([loadChat(), refresh()]);
+    await Promise.all([refresh(), loadChat()]);
   } catch (e) {
-    $("messages").append(el("div", { class: "msg error" }, e.message));
-  } finally {
-    $("send").disabled = false;
-    $("input").focus();
+    toast(errorText(e), { error: true });
+    setLock(false);
   }
 }
-$("send").addEventListener("click", send);
+$("send").addEventListener("click", () => send());
 $("input").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+$("input").addEventListener("input", (e) => { e.target.style.height = "auto"; e.target.style.height = `${Math.min(160, e.target.scrollHeight)}px`; });
+$("chips").replaceChildren(...CHIPS.map((t) => el("button", { class: "chip", type: "button", onclick: () => { $("input").value = t; $("input").focus(); } }, t)));
 
-refresh().then(loadChat).catch((e) => { $("banner").className = "banner"; $("banner").textContent = e.message; });
+// вложения: картинка → ассет, документ → материалы
+$("attach-btn").addEventListener("click", () => $("attach").click());
+$("attach").addEventListener("change", async (e) => {
+  const f = e.target.files[0]; e.target.value = "";
+  if (!f) return;
+  if (fileKind(f.name) === "bad") { toast(`Формат ${f.name} не поддерживается`, { error: true }); return; }
+  try {
+    const r = await upload(`api/decks/${deckId}/uploads`, f);
+    const input = $("input");
+    if (r.kind === "image") {
+      input.value = `${input.value ? input.value + " " : ""}Поставь картинку ${r.asset_id} на слайд ${state.selected ? state.info.deck.slides.findIndex((s) => s.id === state.selected) + 1 : "…"}`;
+      toast(`Картинка «${r.name}» загружена. Скажите модели, куда её поставить`);
+    } else {
+      toast(`«${r.name}» добавлен к материалам. Модель увидит его при следующем запросе`);
+      if (!input.value) input.value = `Учти материал «${r.name}» и `;
+    }
+    input.focus();
+  } catch (err) { toast(err.message, { error: true }); }
+});
+
+// ============ старт
+refresh().then(loadChat).catch((e) => { $("stage-inner").replaceChildren(el("div", { class: "notice err inline" }, e.status === 404 ? "Презентация не найдена. Возможно, её удалили." : e.message)); });

@@ -9,25 +9,40 @@
 </head>
 <body>
 <main class="home">
-  <section class="create">
-    <h1>Новая презентация</h1>
-    <p class="muted">Опишите, что нужно, и приложите материалы: Word, Excel, CSV, текст, картинки. Слайды соберутся в корпоративном шаблоне, потом их можно править в чате или руками прямо на слайде.</p>
-    <div class="row">
-      <textarea id="brief" placeholder="Например: презентация итогов квартала для руководства, 8–10 слайдов, с графиком выручки по месяцам из приложенной таблицы"></textarea>
+  <div class="home-head">
+    <h1>Презентации</h1>
+    <span class="muted small">Собираются в корпоративном шаблоне. Текст правится в чате или прямо на слайде.</span>
+  </div>
+  <div id="notice" class="notice warn hidden"></div>
+
+  <section class="create" aria-labelledby="create-h">
+    <div>
+      <h2 id="create-h">Новая презентация</h2>
+      <p class="muted small" style="margin:0 0 8px">Что за презентация, для кого, сколько слайдов, что показать графиком.</p>
+      <textarea id="brief" placeholder="Например: итоги квартала для руководства, 8–10 слайдов, график выручки по месяцам из приложенной таблицы, в конце выводы и следующие шаги"></textarea>
+      <div class="chips" id="examples"></div>
     </div>
-    <div class="row">
-      <input type="file" id="files" multiple accept=".txt,.md,.docx,.xlsx,.csv,.png,.jpg,.jpeg,.svg">
-      <ul class="files" id="filelist"></ul>
+    <div>
+      <h2>Материалы</h2>
+      <p class="muted small" style="margin:0 0 8px">Word, Excel, CSV, текст — станут содержанием. Картинки — попадут на слайды.</p>
+      <div class="drop" id="drop" tabindex="0" role="button" aria-label="Добавить файлы">
+        <ul class="files" id="filelist"></ul>
+        <div class="hint" id="drophint">Перетащите файлы сюда или нажмите, чтобы выбрать</div>
+      </div>
+      <input type="file" id="files" multiple hidden accept=".txt,.md,.docx,.xlsx,.csv,.png,.jpg,.jpeg,.svg">
     </div>
-    <div class="row">
+    <div class="create-actions">
       <button class="primary" id="create">Создать презентацию</button>
-      <span class="status" id="status"></span>
+      <span class="muted small" id="status"></span>
+      <span class="error small" id="error"></span>
     </div>
-    <div class="error row" id="error"></div>
   </section>
 
   <section class="catalog">
-    <h2>Мои презентации <span class="muted" id="count"></span></h2>
+    <div class="catalog-head">
+      <h2>Мои презентации <span class="muted" id="count"></span></h2>
+      <input type="search" id="search" placeholder="Поиск по названию" aria-label="Поиск по названию">
+    </div>
     <div id="decks" class="decks"></div>
   </section>
 </main>

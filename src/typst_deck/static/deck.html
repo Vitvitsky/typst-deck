@@ -9,35 +9,53 @@
 </head>
 <body>
 <div class="app">
-  <aside class="side">
-    <header>
-      <a href="./" class="back" title="Ко всем презентациям">← Все</a>
-      <h1 id="title">…</h1>
-      <a id="pdf" href="#" download><button class="small">PDF</button></a>
-    </header>
-    <div class="messages" id="messages"></div>
-    <div class="composer">
-      <textarea id="input" placeholder="Что поправить? Например: на третьем слайде короче заголовок"></textarea>
-      <button class="primary" id="send">Отправить</button>
-    </div>
-    <div class="tools">
-      <select id="addtype">
+  <aside class="rail" aria-label="Слайды">
+    <div class="rail-list" id="rail"></div>
+    <div class="rail-add">
+      <select id="addtype" aria-label="Тип нового слайда">
+        <option value="image" selected>Текст и картинка</option>
         <option value="title">Заглавный</option>
         <option value="section">Раздел</option>
-        <option value="image" selected>Текст и картинка</option>
-        <option value="bar-chart">Бар-чарт</option>
+        <option value="bar-chart">Диаграмма</option>
         <option value="chart">График</option>
         <option value="final">Финальный</option>
       </select>
-      <button id="add">Добавить слайд</button>
-      <button id="history">История</button>
+      <button id="add" class="sm">＋ Добавить слайд</button>
     </div>
-    <div class="versions hidden" id="versions"></div>
   </aside>
+
   <main class="main">
-    <div class="banner hidden" id="banner"></div>
-    <div id="pages"></div>
+    <header class="topbar">
+      <a href="./" class="back">← Все презентации</a>
+      <h1 id="title" title="Нажмите, чтобы переименовать">…</h1>
+      <div class="actions">
+        <button id="copylink" class="quiet" title="Скопировать ссылку на презентацию">Ссылка</button>
+        <button id="history" class="quiet" title="История версий">История</button>
+        <a id="pdf" class="btn primary" href="#" download>Скачать PDF</a>
+      </div>
+    </header>
+    <div id="versions" class="versions hidden"></div>
+    <div class="stage" id="stage"><div class="stage-inner" id="stage-inner"></div></div>
   </main>
+
+  <aside class="panel" aria-label="Чат и свойства слайда">
+    <div class="tabs" role="tablist">
+      <button class="active" data-tab="chat" role="tab">Чат</button>
+      <button data-tab="slide" role="tab">Слайд</button>
+    </div>
+    <section class="tab" id="tab-chat">
+      <div class="messages" id="messages"></div>
+      <div class="chips" id="chips"></div>
+      <div class="lock hidden" id="lock"></div>
+      <div class="composer">
+        <input type="file" id="attach" hidden accept=".txt,.md,.docx,.xlsx,.csv,.png,.jpg,.jpeg,.svg">
+        <button id="attach-btn" class="icon quiet" title="Прикрепить файл или картинку" aria-label="Прикрепить файл">📎</button>
+        <textarea id="input" rows="1" placeholder="Что поправить? Например: на третьем слайде короче заголовок"></textarea>
+        <button id="send" class="primary icon" title="Отправить" aria-label="Отправить">→</button>
+      </div>
+    </section>
+    <section class="tab hidden" id="tab-slide"><div class="props" id="props"></div></section>
+  </aside>
 </div>
 <script type="module" src="static/deck.js"></script>
 </body>
