@@ -11,8 +11,9 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 COPY src ./src
 COPY template ./template
+COPY templates ./templates
 RUN uv sync --frozen --no-dev
-ENV TYPST_DECK_DATA_DIR=/data TYPST_DECK_TEMPLATE_DIR=/app/template PATH="/app/.venv/bin:$PATH"
+ENV TYPST_DECK_DATA_DIR=/data TYPST_DECK_TEMPLATE_DIR=/app/template TYPST_DECK_TEMPLATES_DIR=/app/templates PATH="/app/.venv/bin:$PATH"
 VOLUME /data
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
