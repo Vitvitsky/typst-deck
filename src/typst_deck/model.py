@@ -111,6 +111,7 @@ def slide_schema() -> dict:
 class Deck(_Strict):
     id: str = Field(default_factory=lambda: new_id("", 12))
     title: Title = "Презентация"
+    template: str = Field(default="default", pattern=r"^[a-z0-9][a-z0-9_-]{0,40}$")
     slides: list[Slide] = Field(default_factory=list)
     version: int = 0
     created_at: datetime = Field(default_factory=utcnow)

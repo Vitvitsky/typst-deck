@@ -12,3 +12,9 @@ async def test_index_has_catalog(client):
     r = await client.get("/")
     assert 'id="decks"' in r.text and "Мои презентации" in r.text
     assert "Все" in (await client.get("/d/x")).text
+
+
+async def test_section_pages(client):
+    for path in ("/decks", "/history", "/templates"):
+        r = await client.get(path)
+        assert r.status_code == 200 and "typst-deck" in r.text, path

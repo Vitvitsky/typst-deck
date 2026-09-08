@@ -172,3 +172,27 @@ async def test_job_phase_and_changes_in_chat(client, fake_llm):
     assert chat[-1]["changes"][0]["kind"] == "rebuilt" and chat[-1]["changes"][0]["count"] == 1
     d = (await client.get(f"/api/decks/{r.json()['deck_id']}")).json()
     assert d["job"] is None
+
+
+@requires_typst
+async def test_templates_history_and_template_choice(client, fake_llm):
+    ts = (await client.get("/api/templates")).json()
+    assert [t["id"] for t in ts] == ["default", "dark"] and ts[1]["name"] == "Тёмный"
+    svg = await client.get("/api/templates/dark/preview/1.svg")
+    assert svg.status_code == 200 and svg.headers["content-type"].startswith("image/svg+xml")
+    assert (await client.get("/api/templates/dark/preview/9.svg")).status_code == 404
+    assert (await client.get("/api/templates/nope/preview/1.svg")).status_code == 422
+
+    fake_llm._queue += [
+        Completion("", [ToolCall("c1", "set_deck", {"title": "T", "slides": [{"type": "title", "title": "A"}]})]),
+        Completion("", [ToolCall("c2", "finish", {"summary": "ok"})]),
+    ]
+    r = await client.post("/api/decks", json={"brief": "тёмная", "upload_ids": [], "template": "dark"})
+    assert r.status_code == 202
+    await wait_job(client, r.json()["job_id"])
+    d = (await client.get(f"/api/decks/{r.json()['deck_id']}")).json()
+    assert d["deck"]["template"] == "dark" and d["template"]["name"] == "Тёмный" and d["has_build"]
+    assert (await client.post("/api/decks", json={"brief": "x", "upload_ids": [], "template": "nope"})).status_code == 422
+
+    h = (await client.get("/api/history")).json()
+    assert h[0]["text"] == "тёмная" and h[0]["deck_id"] == r.json()["deck_id"] and h[0]["deck_title"] == "T"

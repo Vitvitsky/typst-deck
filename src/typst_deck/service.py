@@ -16,6 +16,7 @@ from .llm.tools import format_validation
 from .model import Deck, utcnow
 from .render import CompileError, CompileResult, compile_deck
 from .store import DeckNotFound, DeckStore
+from .templates import SAMPLE_DECK, TemplateNotFound, TemplateRegistry
 
 # (имя, байты, извлечённый текст или None для картинок)
 IngestedFile = tuple[str, bytes, str | None]
@@ -24,6 +25,43 @@ IngestedFile = tuple[str, bytes, str | None]
 class DeckService:
     def __init__(self, store: DeckStore, jobs: JobRegistry, llm: LLM | None, settings: Settings):
         self.store, self.jobs, self.llm, self.settings = store, jobs, llm, settings
+        self.templates = TemplateRegistry(settings.template_dir, settings.templates_dir)
+
+    # --- шаблоны
+    def template_dir(self, tid: str):
+        try:
+            return self.templates.dir_for(tid)
+        except TemplateNotFound:
+            raise ApiError(422, "validation", f"шаблон «{tid}» не найден")
+
+    def template_preview(self, tid: str, n: int):
+        """SVG n-й страницы образца в шаблоне; рендер кешируется в data/template-previews/<id>/."""
+        tdir = self.template_dir(tid)
+        out = self.settings.data_dir / "template-previews" / tid
+        stamp = out / "build" / "stamp.txt"
+        newest = max((p.stat().st_mtime for p in tdir.rglob("*") if p.is_file()), default=0)
+        if not stamp.exists() or stamp.read_text() != str(newest):
+            out.mkdir(parents=True, exist_ok=True)
+            try:
+                compile_deck(SAMPLE_DECK.model_copy(update={"template": tid}), out, tdir, self.settings.typst_bin)
+            except CompileError as e:
+                raise ApiError(500, "render", f"шаблон «{tid}» не собрался: {e.stderr[:1500]}")
+            stamp.write_text(str(newest))
+        p = out / "build" / f"slide-{n}.svg"
+        if not p.exists():
+            raise not_found("страница образца")
+        return p
+
+    # --- история обращений по всем колодам
+    def history(self, limit: int = 200) -> list[dict]:
+        items = []
+        for d in self.store.list_decks():
+            for m in self.store.read_chat(d.id):
+                if m.get("role") == "user":
+                    items.append({"deck_id": d.id, "deck_title": d.title, "text": m["content"], "ts": m.get("ts", ""),
+                                  "version": m.get("version")})
+        items.sort(key=lambda x: x["ts"], reverse=True)
+        return items[:limit]
 
     # --- чтение
     def load(self, deck_id: str) -> Deck:
@@ -40,8 +78,13 @@ class DeckService:
         wp = build / "warnings.json"
         warnings = json.loads(wp.read_text()) if wp.exists() else []
         base = self.settings.public_base_url.rstrip("/")
+        try:
+            template = self.templates.get(deck.template).public()
+        except TemplateNotFound:
+            template = {"id": deck.template, "name": deck.template, "description": "шаблон не найден"}
         return {
             "deck": deck.model_dump(mode="json"),
+            "template": template,
             "status": status,
             "job": active.public() if active else None,
             "version": deck.version,
@@ -81,7 +124,7 @@ class DeckService:
     # --- рендер
     def render(self, deck: Deck) -> CompileResult:
         try:
-            return compile_deck(deck, self.store.deck_dir(deck.id), self.settings.template_dir, self.settings.typst_bin)
+            return compile_deck(deck, self.store.deck_dir(deck.id), self.template_dir(deck.template), self.settings.typst_bin)
         except CompileError as e:
             raise ApiError(500, "render", f"{e}: {e.stderr[:2000]}")
 
@@ -122,10 +165,11 @@ class DeckService:
             raise ApiError(422, "validation", str(e))
         return name, data, (ex.text if ex.kind == "text" else None)
 
-    def new_deck_from_brief(self, brief: str, files: list[IngestedFile]) -> tuple[Deck, Job]:
+    def new_deck_from_brief(self, brief: str, files: list[IngestedFile], template: str = "default") -> tuple[Deck, Job]:
         self.require_llm()
+        self.template_dir(template)
         first_line = (brief.strip().splitlines() or [""])[0].strip()
-        deck = self.store.create(Deck(title=first_line[:120] or "Презентация"))
+        deck = self.store.create(Deck(title=first_line[:120] or "Презентация", template=template))
         for name, data, text in files:
             if text is None:
                 self.store.add_asset(deck.id, name, data)

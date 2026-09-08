@@ -10,7 +10,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="TYPST_DECK_", env_file=".env", extra="ignore")
 
     data_dir: Path = Path("data")
-    template_dir: Path = Path("template")
+    template_dir: Path = Path("template")      # шаблон по умолчанию (id "default")
+    templates_dir: Path = Path("templates")    # дополнительные шаблоны: templates/<id>/deck.typ
     typst_bin: str = "typst"
     public_base_url: str = ""
     llm_api_base: str = ""

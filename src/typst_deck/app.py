@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api import agent as agent_api
-from .api import decks, uploads
+from .api import decks, history, templates, uploads
 from .api import jobs as jobs_api
 from .config import Settings, get_settings
 from .jobs import JobRegistry
@@ -45,7 +45,7 @@ def create_app(settings: Settings | None = None, llm: LLM | None | object = _UNS
         msg = "; ".join(f"{'.'.join(str(x) for x in e['loc'])}: {e['msg']}" for e in exc.errors())
         return JSONResponse({"error": {"code": "validation", "message": msg}}, status_code=422)
 
-    for r in (uploads.router, decks.router, jobs_api.router, agent_api.router):
+    for r in (uploads.router, decks.router, jobs_api.router, agent_api.router, templates.router, history.router):
         app.include_router(r)
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
@@ -60,5 +60,8 @@ def create_app(settings: Settings | None = None, llm: LLM | None | object = _UNS
     @app.get("/d/{deck_id}")
     async def deck_page(deck_id: str):
         return FileResponse(STATIC / "deck.html")
+
+    for route, page in (("/decks", "decks.html"), ("/history", "history.html"), ("/templates", "templates.html")):
+        app.add_api_route(route, (lambda page=page: (lambda: FileResponse(STATIC / page)))(), methods=["GET"])
 
     return app

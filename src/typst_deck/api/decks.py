@@ -14,6 +14,7 @@ router = APIRouter(prefix="/api/decks")
 class CreateBody(BaseModel):
     brief: str = ""
     upload_ids: list[str] = []
+    template: str = "default"
 
 
 class PatchBody(BaseModel):
@@ -49,7 +50,7 @@ async def create(body: CreateBody, s: DeckService = Depends(svc)):
             files.append(s.store.take_upload(uid))
         except KeyError:
             raise not_found(f"загрузка {uid}")
-    deck, job = s.new_deck_from_brief(body.brief, files)
+    deck, job = s.new_deck_from_brief(body.brief, files, body.template)
     return {"deck_id": deck.id, "job_id": job.id}
 
 
