@@ -3,5 +3,5 @@ __pycache__/
 .venv/
 .env
 data/
-build/
+build.tmp/
 *.pdf
