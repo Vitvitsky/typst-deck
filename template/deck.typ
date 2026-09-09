@@ -6,6 +6,7 @@
 #let accent = rgb("#3b6ea5")
 #let ink = rgb("#1f2a37")
 #let muted = rgb("#6b7280")
+#let negative = rgb("#c0392b") // падение на графиках: читается иначе, чем рост
 #let palette = (accent, rgb("#e07a1f"), rgb("#2f9e6f"), rgb("#8e44ad"))
 
 // Страница слайда: тело обрезается по границам, переполнение не создаёт
@@ -73,22 +74,43 @@
   }
 ]
 
+// Столбчатая диаграмма со знаком: общая нулевая линия, рост вверх цветом
+// accent, падение вниз цветом negative. Подписи значений — с внешней стороны
+// столбца, подписи категорий — единой строкой под всей зоной графика.
 #let slide-bar-chart(title: none, data: (), unit: none, bullets: none) = slide[
   #heading-block(title)
-  #let maxv = calc.max(1, ..data.map(d => d.value))
-  #let chart = box(width: 100%, height: 4.6cm)[
-    #grid(
-      columns: data.map(_ => 1fr), column-gutter: 0.35cm, align: bottom + center,
-      ..data.map(d => {
-        let h = 3.4cm * d.value / maxv
-        stack(
-          dir: btt, spacing: 3pt,
-          text(size: 8pt, fill: muted, d.label),
-          rect(width: 100%, height: calc.max(h, 1pt), fill: accent, radius: (top: 2pt)),
-          text(size: 8pt, str(d.value) + if unit != none { " " + unit } else { "" }),
-        )
-      }),
-    )
+  #let vals = data.map(d => d.value)
+  #let hi = calc.max(0, ..vals)
+  #let lo = calc.min(0, ..vals)
+  #let span = calc.max(hi - lo, 0.000001) // все значения нулевые — делить не на что
+  #let full = 3.4cm                       // высота зоны столбцов на оба знака
+  #let lab = 0.42cm                       // полоса под подпись значения над/под столбцом
+  #let up = full * hi / span
+  #let down = full * (-lo) / span
+  #let cols = data.map(_ => 1fr)
+  #let value-label(d) = text(size: 8pt, str(d.value) + if unit != none { " " + unit } else { "" })
+  #let bar(d) = {
+    let h = calc.max(full * calc.abs(d.value) / span, 1pt)
+    box(width: 100%, height: lab + up + down + lab)[
+      #if d.value >= 0 {
+        place(bottom + center, dy: -lab - down,
+          rect(width: 100%, height: h, fill: accent, radius: (top: 2pt)))
+        place(bottom + center, dy: -lab - down - h - 3pt, value-label(d))
+      } else {
+        place(top + center, dy: lab + up,
+          rect(width: 100%, height: h, fill: negative, radius: (bottom: 2pt)))
+        place(top + center, dy: lab + up + h + 3pt, value-label(d))
+      }
+    ]
+  }
+  #let chart = [
+    #box(width: 100%)[
+      #grid(columns: cols, column-gutter: 0.35cm, ..data.map(bar))
+      #place(top + left, dy: lab + up,
+        line(start: (0pt, 0pt), end: (100%, 0pt), stroke: 0.5pt + muted))
+    ]
+    #grid(columns: cols, column-gutter: 0.35cm, align: center,
+      ..data.map(d => text(size: 8pt, fill: muted, d.label)))
   ]
   #if bullets == none { chart } else {
     grid(columns: (2fr, 1fr), column-gutter: 0.6cm, chart, text(size: 9.5pt, bullets))
@@ -108,7 +130,7 @@
     let xstep = (w - 2 * pad) / calc.max(n - 1, 1)
     let y(v) = h - h * ((v - lo) / (hi - lo))
     box(width: w, height: h + 0.6cm)[
-      #place(top + left, line(start: (0pt, h), end: (w, h), stroke: 0.5pt + muted))
+      #place(top + left, line(start: (0pt, y(0)), end: (w, y(0)), stroke: 0.5pt + muted))
       #for (i, s) in series.enumerate() {
         let color = palette.at(calc.rem(i, palette.len()))
         let pts = s.values.enumerate().map(((j, v)) => (pad + xstep * j, y(v)))

@@ -21,9 +21,18 @@
 // Тело слайда: обрезанный box фиксированной высоты — переполнение не создаёт вторую страницу.
 #let body-box(content) = box(width: 100%, height: body-height, clip: true, content)
 
-#let slide-title(title: none, subtitle: none) = title-slide(
-  title: or-empty(title), subtitle: or-empty(subtitle), author: "", department: "",
-)
+// Канонический title-slide: пустые строки между блоками текста (title, subtitle,
+// department, author, date) — это параграф-брейки, раздувающие вертикальный
+// интервал пропорционально кеглю (после 80pt заголовка ~33mm). Длинный заголовок
+// в паре с ними переполняет страницу → ghost-страница → нарушение контракта
+// «страниц == слайдов». Здесь параграфы не нужны (отступы заданы явными v()),
+// поэтому для вызова title-slide отключаем межпараграфный интервал.
+#let slide-title(title: none, subtitle: none) = {
+  set par(spacing: 0pt)
+  title-slide(
+    title: or-empty(title), subtitle: or-empty(subtitle), author: "", department: "",
+  )
+}
 
 #let slide-section(title: none, subtitle: none) = divider-slide-black(
   title: or-empty(title), subtitle: or-empty(subtitle),
@@ -49,21 +58,41 @@
 }
 
 // Диаграмма средствами Typst в фирменных цветах (канонический chart-slide ждёт файл графика).
+// Столбчатая диаграмма со знаком: общая нулевая линия, рост вверх фирменным
+// жёлтым, падение вниз красным (lm-red канона). Подписи значений — с внешней
+// стороны столбца, подписи категорий — строкой под всей зоной.
 #let bar-chart(data, unit) = {
-  let maxv = calc.max(1, ..data.map(d => d.value))
+  let vals = data.map(d => d.value)
+  let hi = calc.max(0, ..vals)
+  let lo = calc.min(0, ..vals)
+  let span = calc.max(hi - lo, 0.000001) // все значения нулевые — делить не на что
+  let full = 150mm                       // зона столбцов на оба знака
+  let lab = 14mm                         // полоса под подпись значения
+  let up = full * hi / span
+  let down = full * (-lo) / span
+  let cols = data.map(_ => 1fr)
+  let value-label(d) = text(size: size-caption, weight: "bold",
+    str(d.value) + if unit != none { " " + unit } else { "" })
+  let bar(d) = {
+    let h = calc.max(full * calc.abs(d.value) / span, 2mm)
+    box(width: 100%, height: lab + up + down + lab)[
+      #if d.value >= 0 {
+        place(bottom + center, dy: -lab - down, rect(width: 100%, height: h, fill: lm-yellow))
+        place(bottom + center, dy: -lab - down - h - 3mm, value-label(d))
+      } else {
+        place(top + center, dy: lab + up, rect(width: 100%, height: h, fill: lm-red))
+        place(top + center, dy: lab + up + h + 3mm, value-label(d))
+      }
+    ]
+  }
   box(width: 100%, height: 200mm)[
-    #grid(
-      columns: data.map(_ => 1fr), column-gutter: 10mm, align: bottom + center,
-      ..data.map(d => {
-        let h = 150mm * d.value / maxv
-        stack(
-          dir: btt, spacing: 4mm,
-          text(size: size-caption, fill: lm-gray, d.label),
-          rect(width: 100%, height: calc.max(h, 2mm), fill: lm-yellow),
-          text(size: size-caption, weight: "bold", str(d.value) + if unit != none { " " + unit } else { "" }),
-        )
-      }),
-    )
+    #box(width: 100%)[
+      #grid(columns: cols, column-gutter: 10mm, ..data.map(bar))
+      #place(top + left, dy: lab + up,
+        line(start: (0pt, 0pt), end: (100%, 0pt), stroke: 1.5pt + lm-gray))
+    ]
+    #grid(columns: cols, column-gutter: 10mm, align: center,
+      ..data.map(d => text(size: size-caption, fill: lm-gray, d.label)))
   ]
 }
 
@@ -78,7 +107,7 @@
   let xstep = (w - 2 * pad) / calc.max(n - 1, 1)
   let y(v) = h - h * ((v - lo) / (hi - lo))
   box(width: w, height: h + 22mm)[
-    #place(top + left, line(start: (0pt, h), end: (w, h), stroke: 1.5pt + lm-gray))
+    #place(top + left, line(start: (0pt, y(0)), end: (w, y(0)), stroke: 1.5pt + lm-gray))
     #for (i, s) in series.enumerate() {
       let color = chart-palette.at(calc.rem(i, chart-palette.len()))
       let pts = s.values.enumerate().map(((j, v)) => (pad + xstep * j, y(v)))
