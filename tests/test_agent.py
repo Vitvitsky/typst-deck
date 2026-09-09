@@ -161,3 +161,50 @@ def test_executor_records_changes():
     assert kinds == ["rebuilt", "updated", "removed"]
     assert ex.changes[1] == {"kind": "updated", "slide_id": sid, "type": "title", "title": "B", "fields": ["subtitle", "title"]}
     assert ex.changes[2]["title"] == "Спасибо"
+
+
+async def test_run_agent_sums_tokens_across_iterations():
+    llm = FakeLLM([
+        Completion("", [ToolCall("c1", "update_slide", {"n": 1, "patch": {"title": "A"}})],
+                   tokens_in=1000, tokens_out=200, tokens_cached=800),
+        Completion("", [ToolCall("c2", "finish", {"summary": "готово"})],
+                   tokens_in=1500, tokens_out=90, tokens_cached=1400),
+    ])
+    deck = Deck(slides=[{"type": "title", "title": "T"}])
+    out = await run_agent(llm, deck, "поправь", [], [], [])
+    assert out.tokens_in == 2500
+    assert out.tokens_out == 290
+    assert out.tokens_cached == 2200
+    assert out.iterations == 2
+
+
+async def test_run_agent_counts_single_reply_iteration():
+    out = await run_agent(FakeLLM([Completion("ответ", [], tokens_in=40, tokens_out=7)]),
+                          Deck(), "привет", [], [], [])
+    assert (out.tokens_in, out.tokens_out, out.tokens_cached) == (40, 7, 0)
+    assert out.iterations == 1
+
+
+async def test_run_agent_reports_llm_time():
+    out = await run_agent(FakeLLM([Completion("ответ", [])]), Deck(), "привет", [], [], [])
+    assert out.llm_ms >= 0
+
+
+def test_outcome_defaults_to_zero_tokens():
+    o = Outcome(reply="x", changed=False, ops=[], deck=Deck())
+    assert (o.tokens_in, o.tokens_out, o.tokens_cached, o.iterations, o.llm_ms) == (0, 0, 0, 0, 0)
+
+
+async def test_run_agent_logs_each_llm_call(caplog):
+    caplog.set_level("INFO", logger="typst_deck.llm.agent")
+    llm = FakeLLM([
+        Completion("", [ToolCall("c1", "finish", {"summary": "готово"})],
+                   tokens_in=1000, tokens_out=200, tokens_cached=800),
+    ])
+    await run_agent(llm, Deck(), "поправь", [], [], [])
+    done = [r for r in caplog.records if r.msg == "llm.done"]
+    assert len(done) == 1
+    assert done[0].fields["tok_in"] == 1000
+    assert done[0].fields["tok_out"] == 200
+    assert done[0].fields["cached"] == 800
+    assert done[0].fields["iter"] == 1

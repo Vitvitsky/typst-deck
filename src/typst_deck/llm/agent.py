@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..logs import log_event
 from ..model import Deck, slide_schema
 from .client import LLM
 from .tools import ToolExecutor, tool_specs
 
 PROMPT = (Path(__file__).parent / "prompt.md").read_text()
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -19,6 +23,12 @@ class Outcome:
     ops: list[str]
     deck: Deck
     changes: list[dict] = field(default_factory=list)
+    # один запрос пользователя — до max_iter вызовов модели, поэтому токены суммарные
+    tokens_in: int = 0
+    tokens_out: int = 0
+    tokens_cached: int = 0
+    iterations: int = 0
+    llm_ms: int = 0
 
 
 def _template_list(templates: list[dict] | None) -> str:
@@ -57,8 +67,18 @@ async def run_agent(
     messages.append({"role": "user", "content": _user_content(user_message, files)})
 
     reply = ""
+    tokens_in = tokens_out = tokens_cached = iterations = 0
+    llm_ns = 0
     for _ in range(max_iter):
+        t0 = time.perf_counter_ns()
         c = await llm.complete(messages, tools)
+        llm_ns += time.perf_counter_ns() - t0
+        iterations += 1
+        tokens_in += c.tokens_in
+        tokens_out += c.tokens_out
+        tokens_cached += c.tokens_cached
+        log_event(log, "llm.done", iter=iterations, tok_in=c.tokens_in, tok_out=c.tokens_out,
+                  cached=c.tokens_cached, calls=len(c.tool_calls))
         if not c.tool_calls:
             reply = c.text.strip()
             break
@@ -76,4 +96,6 @@ async def run_agent(
         reply = "Достигнут лимит шагов; применены правки: " + (", ".join(ex.ops) or "нет")
     if not reply:
         reply = "Готово." if ex.changed else "Модель не вернула ни правок, ни ответа. Попробуйте переформулировать запрос."
-    return Outcome(reply=reply, changed=ex.changed, ops=ex.ops, deck=ex.deck, changes=ex.changes)
+    return Outcome(reply=reply, changed=ex.changed, ops=ex.ops, deck=ex.deck, changes=ex.changes,
+                   tokens_in=tokens_in, tokens_out=tokens_out, tokens_cached=tokens_cached,
+                   iterations=iterations, llm_ms=llm_ns // 1_000_000)

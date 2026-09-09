@@ -1,6 +1,8 @@
 """Сборка FastAPI-приложения: API, статика, страницы."""
 from __future__ import annotations
 
+import logging
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -14,11 +16,16 @@ from .api import jobs as jobs_api
 from .config import Settings, get_settings
 from .jobs import JobRegistry
 from .llm.client import LLM, OpenAICompatLLM
+from .logs import log_event, setup_logging
 from .service import DeckService
 from .store import DeckStore
 
 STATIC = Path(__file__).parent / "static"
 _UNSET = object()
+# health дёргает Docker каждые 30 с — в логе это 80% строк и ноль пользы
+QUIET_PATHS = {"/api/health"}
+
+log = logging.getLogger(__name__)
 
 
 class RevalidatingStatic(StaticFiles):
@@ -33,6 +40,7 @@ class RevalidatingStatic(StaticFiles):
 
 def create_app(settings: Settings | None = None, llm: LLM | None | object = _UNSET) -> FastAPI:
     settings = settings or get_settings()
+    setup_logging(settings.log_level, settings.log_format)
     if llm is _UNSET:
         llm = (
             OpenAICompatLLM(settings.llm_api_base, settings.llm_api_key, settings.llm_model,
@@ -44,6 +52,15 @@ def create_app(settings: Settings | None = None, llm: LLM | None | object = _UNS
     jobs = JobRegistry()
     app.state.settings, app.state.store, app.state.jobs, app.state.llm = settings, store, jobs, llm
     app.state.service = DeckService(store, jobs, llm, settings)  # type: ignore[arg-type]
+
+    @app.middleware("http")
+    async def _timing(request: Request, call_next):
+        t0 = time.perf_counter_ns()
+        response = await call_next(request)
+        if request.url.path not in QUIET_PATHS:
+            log_event(log, "http", method=request.method, path=request.url.path,
+                      status=response.status_code, ms=(time.perf_counter_ns() - t0) // 1_000_000)
+        return response
 
     @app.exception_handler(HTTPException)
     async def _http_error(request: Request, exc: HTTPException):
@@ -61,7 +78,10 @@ def create_app(settings: Settings | None = None, llm: LLM | None | object = _UNS
 
     @app.get("/api/health")
     async def health():
-        return {"ok": True, "llm": llm is not None, "model": settings.llm_model if llm is not None else None}
+        meter = app.state.service.meter
+        return {"ok": True, "llm": llm is not None,
+                "model": settings.llm_model if llm is not None else None,
+                "tokens": meter.public(), "since": meter.since.isoformat()}
 
     def page(name: str) -> FileResponse:
         return FileResponse(STATIC / name, headers={"Cache-Control": "no-cache, must-revalidate"})

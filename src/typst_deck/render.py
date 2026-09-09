@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .logs import log_event
 from .model import (
     BarChartSlide,
     ChartSlide,
@@ -19,6 +22,7 @@ from .model import (
 )
 
 HEADER = '#import "/template/deck.typ": *\n#import "/fields.typ": field\n'
+log = logging.getLogger(__name__)
 
 
 def typ_str(s: str) -> str:
@@ -124,15 +128,19 @@ class CompileResult:
     positions: list[dict]
     warnings: list[str] = field(default_factory=list)
     typ: str = ""
+    timings: dict[str, int] = field(default_factory=dict)  # pdf_ms, svg_ms, query_ms, ms
 
 
-def _run(cmd: list[str], timeout: int) -> subprocess.CompletedProcess:
+def _run(cmd: list[str], timeout: int) -> tuple[subprocess.CompletedProcess, int]:
+    """Запуск typst; возвращает результат и потраченные миллисекунды."""
+    t0 = time.perf_counter_ns()
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except FileNotFoundError as e:
         raise CompileError(f"typst не найден: {cmd[0]}") from e
     except subprocess.TimeoutExpired as e:
         raise CompileError(f"typst не уложился в {timeout} с") from e
+    return r, (time.perf_counter_ns() - t0) // 1_000_000
 
 
 def compile_deck(
@@ -159,8 +167,12 @@ def compile_deck(
     fonts = Path(template_dir) / "fonts"
     font_args = ["--font-path", str(fonts)] if fonts.is_dir() else []
     src = str(tmp / "deck.typ")
-    for target in ("deck.pdf", "slide-{p}.svg"):
-        r = _run([typst_bin, "compile", "--root", str(tmp), *font_args, src, str(tmp / target)], timeout)
+    t_all = time.perf_counter_ns()
+    timings: dict[str, int] = {}
+    for target, key in (("deck.pdf", "pdf_ms"), ("slide-{p}.svg", "svg_ms")):
+        r, timings[key] = _run(
+            [typst_bin, "compile", "--root", str(tmp), *font_args, src, str(tmp / target)], timeout
+        )
         if r.returncode != 0:
             raise CompileError("ошибка компиляции", r.stderr)
     svgs = sorted(tmp.glob("slide-*.svg"), key=lambda p: int(p.stem.split("-")[1]))
@@ -169,7 +181,7 @@ def compile_deck(
             f"страниц {len(svgs)}, слайдов {len(deck.slides)}: "
             "шаблон нарушает контракт «одна функция — одна страница»"
         )
-    r = _run(
+    r, timings["query_ms"] = _run(
         [typst_bin, "eval", "query(<edit>).map(it => it.value)", "--root", str(tmp),
          *font_args, "--in", src, "--format", "json"],
         timeout,
@@ -187,10 +199,17 @@ def compile_deck(
         os.rename(build, old)
     os.rename(tmp, build)
     shutil.rmtree(old, ignore_errors=True)
+    out_svgs = [build / p.name for p in svgs]
+    timings["ms"] = (time.perf_counter_ns() - t_all) // 1_000_000
+    svg_kb = sum(p.stat().st_size for p in out_svgs) // 1024
+    log_event(log, "render.done", deck=deck.id, slides=len(out_svgs), svg_kb=svg_kb,
+              pdf_ms=timings["pdf_ms"], svg_ms=timings["svg_ms"], query_ms=timings["query_ms"],
+              ms=timings["ms"])
     return CompileResult(
         pdf=build / "deck.pdf",
-        svgs=[build / p.name for p in svgs],
+        svgs=out_svgs,
         positions=positions,
         warnings=warnings,
         typ=typ,
+        timings=timings,
     )

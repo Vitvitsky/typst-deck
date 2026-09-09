@@ -1,4 +1,4 @@
-import { api, upload, waitJob, sleep, el, toast, armConfirm, TYPE_RU, FIELD_RU, SIZE_RU, fileKind, errorText, fmtDate, fmtElapsed } from "./api.js";
+import { api, upload, waitJob, sleep, el, toast, armConfirm, TYPE_RU, FIELD_RU, SIZE_RU, fileKind, errorText, fmtDate, fmtElapsed, fmtTokens } from "./api.js";
 import { mountShell } from "./shell.js";
 
 const deckId = location.pathname.split("/").filter(Boolean).pop();
@@ -447,6 +447,16 @@ function changesText(changes) {
   return el("span", { class: "changes" }, el("b", {}, "Правки: "), parts.join("; "));
 }
 
+// расход модели под ответом: старые записи в chat.jsonl полей не имеют — тогда строки нет
+function tokensText(m) {
+  if (!m.tokens_in && !m.tokens_out) return null;
+  const parts = [`${fmtTokens(m.tokens_in)} → ${fmtTokens(m.tokens_out)} тк`];
+  if (m.tokens_cached) parts.push(`кэш ${Math.round((m.tokens_cached / m.tokens_in) * 100)}%`);
+  if (m.llm_ms) parts.push(`${(m.llm_ms / 1000).toFixed(1)} с`);
+  if (m.iterations > 1) parts.push(`модель ×${m.iterations}`);
+  return el("div", { class: "tokens", title: "Расход модели на этот запрос" }, parts.join(" · "));
+}
+
 async function loadChat() {
   const chat = await api(`api/decks/${deckId}/chat`);
   const box = $("messages");
@@ -459,7 +469,9 @@ async function loadChat() {
         prevUser ? el("div", {}, el("button", { class: "sm", onclick: () => send(prevUser.content) }, "Повторить")) : null));
       return;
     }
-    items.push(el("div", { class: `msg ${m.role}` }, m.content || "Готово.", m.role === "assistant" ? changesText(m.changes) : null));
+    items.push(el("div", { class: `msg ${m.role}` }, m.content || "Готово.",
+      m.role === "assistant" ? changesText(m.changes) : null,
+      m.role === "assistant" ? tokensText(m) : null));
   });
   if (!items.length) items.push(el("div", { class: "chat-empty" }, "Напишите, что собрать или поправить, или попросите сменить оформление. Модель меняет только содержание — шаблон можно выбрать вверху."));
   const last = chat[chat.length - 1];

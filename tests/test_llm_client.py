@@ -78,3 +78,35 @@ async def test_length_cutoff_is_error():
     llm = OpenAICompatLLM("https://llm.test/v1", "k", "m", max_tokens=10)
     with pytest.raises(LLMError, match="max_tokens=10"):
         await llm.complete([{"role": "user", "content": "x"}], TOOLS)
+
+
+@respx.mock
+async def test_usage_is_parsed_into_completion():
+    respx.post(URL).mock(return_value=httpx.Response(200, json={
+        "choices": [{"message": {"content": "готово"}}],
+        "usage": {"prompt_tokens": 1240, "completion_tokens": 890, "total_tokens": 2130,
+                  "prompt_cache_hit_tokens": 968, "prompt_cache_miss_tokens": 272}}))
+    c = await OpenAICompatLLM("https://llm.test/v1", "k", "m").complete([{"role": "user", "content": "x"}], TOOLS)
+    assert (c.tokens_in, c.tokens_out, c.tokens_cached) == (1240, 890, 968)
+
+
+@respx.mock
+async def test_usage_absent_gives_zeros():
+    respx.post(URL).mock(return_value=httpx.Response(200, json={
+        "choices": [{"message": {"content": "готово"}}]}))
+    c = await OpenAICompatLLM("https://llm.test/v1", "k", "m").complete([{"role": "user", "content": "x"}], TOOLS)
+    assert (c.tokens_in, c.tokens_out, c.tokens_cached) == (0, 0, 0)
+
+
+@respx.mock
+async def test_usage_without_cache_fields():
+    respx.post(URL).mock(return_value=httpx.Response(200, json={
+        "choices": [{"message": {"content": "готово"}}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 4}}))
+    c = await OpenAICompatLLM("https://llm.test/v1", "k", "m").complete([{"role": "user", "content": "x"}], TOOLS)
+    assert (c.tokens_in, c.tokens_out, c.tokens_cached) == (10, 4, 0)
+
+
+def test_completion_defaults_to_zero_tokens():
+    c = Completion("текст", [])
+    assert (c.tokens_in, c.tokens_out, c.tokens_cached) == (0, 0, 0)

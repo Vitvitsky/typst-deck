@@ -46,10 +46,46 @@ scripts/dev.sh               # http://127.0.0.1:8000, ключ DeepSeek берё
 Переменные окружения (префикс `TYPST_DECK_`): `DATA_DIR`, `TEMPLATE_DIR`,
 `TEMPLATES_DIR` (корни дополнительных шаблонов, несколько — через `:` как
 PATH; при совпадении id побеждает первый), `TYPST_BIN`, `PUBLIC_BASE_URL`, `LLM_API_BASE`, `LLM_API_KEY`, `LLM_MODEL`,
-`LLM_MAX_TOKENS` (по умолчанию 16384: рассуждающим моделям вроде deepseek-v4-flash нужен запас на рассуждение), `LLM_TOOL_MODE` (`tools` | `json`), `MAX_UPLOAD_MB`.
+`LLM_MAX_TOKENS` (по умолчанию 16384: рассуждающим моделям вроде deepseek-v4-flash нужен запас на рассуждение), `LLM_TOOL_MODE` (`tools` | `json`), `MAX_UPLOAD_MB`,
+`LOG_LEVEL` (по умолчанию `INFO`), `LOG_FORMAT` (`text` | `json`).
 `DEEPSEEK_API_KEY`, `DEEPSEEK_API_BASE`, `DEEPSEEK_MODEL` принимаются как
 синонимы. Без ключа сервис стартует, работает ручная правка, генерация
 отвечает 503.
+
+## Что видно в логах
+
+Каждый этап пишет одно событие с длительностью, так что по `docker logs` видно,
+куда ушло время: чтение материалов, каждый вызов модели, компиляция typst
+(отдельно PDF, SVG и запрос позиций), итог задачи, ручные правки и все
+HTTP-запросы. `/api/health` в лог не попадает — иначе Docker HEALTHCHECK
+занимает 80% строк.
+
+```
+job.start      deck=3a7d4cn2 job=jfcddeur first=True
+stage.reading  deck=3a7d4cn2 job=jfcddeur files=2 chars=8412 history=4 ms=18
+llm.done       iter=1 tok_in=8421 tok_out=1204 cached=0 calls=1
+llm.done       iter=2 tok_in=9980 tok_out=142 cached=8320 calls=1
+render.done    deck=3a7d4cn2 slides=3 svg_kb=39 pdf_ms=65 svg_ms=47 query_ms=43 ms=157
+job.done       deck=3a7d4cn2 job=jfcddeur v=2 slides=3 tok_in=18401 tok_out=1346 cached=8320 iter=2 ms=177
+http           method=POST path=/api/decks status=202 ms=247
+```
+
+`TYPST_DECK_LOG_FORMAT=json` даёт те же события построчным JSON для сборщика
+логов. `httpx` и `uvicorn.access` приглушены до WARNING: они дублируют
+`llm.done` и `http`, но без токенов и без времени ответа.
+
+## Счётчик токенов
+
+Один запрос пользователя — это до 12 вызовов модели, поэтому считается сумма по
+всем итерациям агента. Цифры берутся из поля `usage` ответа провайдера, не
+оцениваются.
+
+- **В чате** под каждым ответом модели: `18 401 → 1 346 тк · кэш 45% · 23.1 с · модель ×2`.
+  Хранится в `chat.jsonl` рядом с `ops` и `changes`; у записей, сделанных до
+  этой версии, полей нет — тогда строка не показывается.
+- **В `/api/health`** — сумма за время жизни процесса (при рестарте
+  обнуляется, поэтому рядом отдаётся `since`):
+  `"tokens": {"in": 18401, "out": 1346, "cached": 8320, "requests": 2}`.
 
 Docker:
 

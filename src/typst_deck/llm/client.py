@@ -25,6 +25,9 @@ class ToolCall:
 class Completion:
     text: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
+    tokens_in: int = 0
+    tokens_out: int = 0
+    tokens_cached: int = 0  # сколько промпта попало в кеш провайдера
 
 
 class LLM(Protocol):
@@ -51,6 +54,14 @@ JSON_MODE_HINT = (
     'или {"reply": "<текст>"} чтобы ответить. '
     "Доступные инструменты (JSON Schema):\n"
 )
+
+
+def _with_usage(c: Completion, usage: dict) -> Completion:
+    """Токены из ответа провайдера; поля кеша есть не у всех — тогда 0."""
+    c.tokens_in = usage.get("prompt_tokens") or 0
+    c.tokens_out = usage.get("completion_tokens") or 0
+    c.tokens_cached = usage.get("prompt_cache_hit_tokens") or 0
+    return c
 
 
 def _args(raw) -> dict:
@@ -95,22 +106,24 @@ class OpenAICompatLLM:
         if r.status_code != 200:
             raise LLMError(f"LLM вернула {r.status_code}: {r.text[:500]}")
         try:
-            choice = r.json()["choices"][0]
+            body_out = r.json()
+            choice = body_out["choices"][0]
             msg = choice["message"]
         except (ValueError, KeyError, IndexError) as e:
             raise LLMError(f"неожиданный ответ LLM: {r.text[:500]}") from e
+        usage = body_out.get("usage") or {}
         if choice.get("finish_reason") == "length":
             raise LLMError(
                 f"ответ модели обрезан по лимиту max_tokens={self.max_tokens}; "
                 "увеличьте TYPST_DECK_LLM_MAX_TOKENS (рассуждающие модели тратят лимит на рассуждение)"
             )
         if self.tool_mode == "json":
-            return self._parse_json_mode(msg.get("content") or "")
+            return _with_usage(self._parse_json_mode(msg.get("content") or ""), usage)
         calls = [
             ToolCall(tc["id"], tc["function"]["name"], _args(tc["function"].get("arguments")))
             for tc in msg.get("tool_calls") or []
         ]
-        return Completion(msg.get("content") or "", calls)
+        return _with_usage(Completion(msg.get("content") or "", calls), usage)
 
     @staticmethod
     def _rewrite_for_json(messages: list[dict], tools: list[dict]) -> list[dict]:

@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 16384  # рассуждающим моделям 4096 не хватает даже на рассуждение
     llm_tool_mode: Literal["tools", "json"] = "tools"
     max_upload_mb: int = 20
+    log_level: str = "INFO"
+    log_format: Literal["text", "json"] = "text"
 
     @property
     def templates_dirs(self) -> list[Path]:

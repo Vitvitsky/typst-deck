@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from typing import Callable
 
 from pydantic import ValidationError
 
 from .api.common import ApiError, not_found
 from .config import Settings
+from .logs import log_event
 from .extract import UnsupportedFile, extract
 from .jobs import Job, JobConflict, JobRegistry
 from .llm.agent import run_agent
@@ -21,11 +24,37 @@ from .templates import SAMPLE_DECK, TemplateNotFound, TemplateRegistry
 # (имя, байты, извлечённый текст или None для картинок)
 IngestedFile = tuple[str, bytes, str | None]
 
+log = logging.getLogger(__name__)
+
+
+def _ms(started_ns: int) -> int:
+    return (time.perf_counter_ns() - started_ns) // 1_000_000
+
+
+class TokenMeter:
+    """Расход токенов за время жизни процесса; при рестарте обнуляется.
+    Полная история лежит в chat.jsonl каждой колоды."""
+
+    def __init__(self):
+        self.tokens_in = self.tokens_out = self.tokens_cached = self.requests = 0
+        self.since = utcnow()
+
+    def add(self, tokens_in: int, tokens_out: int, tokens_cached: int, requests: int) -> None:
+        self.tokens_in += tokens_in
+        self.tokens_out += tokens_out
+        self.tokens_cached += tokens_cached
+        self.requests += requests
+
+    def public(self) -> dict:
+        return {"in": self.tokens_in, "out": self.tokens_out,
+                "cached": self.tokens_cached, "requests": self.requests}
+
 
 class DeckService:
     def __init__(self, store: DeckStore, jobs: JobRegistry, llm: LLM | None, settings: Settings):
         self.store, self.jobs, self.llm, self.settings = store, jobs, llm, settings
         self.templates = TemplateRegistry(settings.template_dir, settings.templates_dirs)
+        self.meter = TokenMeter()
 
     # --- шаблоны
     def template_dir(self, tid: str):
@@ -131,6 +160,7 @@ class DeckService:
     # --- ручные правки
     async def manual(self, deck_id: str, fn: Callable[[Deck], object]) -> dict:
         """Под блокировкой: fn правит колоду, новая версия, рендер; при ошибке рендера — откат."""
+        t0 = time.perf_counter_ns()
         async with self.store.lock(deck_id):
             deck = self.load(deck_id)
             prev = deck.version
@@ -147,7 +177,9 @@ class DeckService:
                 self.render(deck)
             except ApiError:
                 self.store.revert(deck_id, prev)
+                log_event(log, "manual.failed", deck=deck_id, v=prev, ms=_ms(t0), level=logging.WARNING)
                 raise
+        log_event(log, "manual.done", deck=deck_id, v=deck.version, slides=len(deck.slides), ms=_ms(t0))
         return self.deck_response(deck_id)
 
     # --- файлы и генерация
@@ -191,14 +223,20 @@ class DeckService:
     async def generate(self, deck_id: str, message: str, first: bool) -> int:
         llm = self.require_llm()
         job = self.jobs.active_for(deck_id)
+        job_id = job.id if job else None
+        t0 = time.perf_counter_ns()
+        log_event(log, "job.start", deck=deck_id, job=job_id, first=first)
         async with self.store.lock(deck_id):
             if job:
                 job.phase = "reading"
+            t_read = time.perf_counter_ns()
             deck = self.store.load(deck_id)
             prev = deck.version  # агент правит эту же колоду на месте, а save поднимет version
             files = self.store.list_uploads(deck_id)  # исходники нужны и при правках: кеш промпта делает это дёшево
             history = [m for m in self.store.read_chat(deck_id) if m["role"] in ("user", "assistant")]
             self._chat(deck_id, "user", message, deck.version)
+            log_event(log, "stage.reading", deck=deck_id, job=job_id, files=len(files),
+                      chars=sum(len(t) for _, t in files), history=len(history), ms=_ms(t_read))
             try:
                 if job:
                     job.phase = "model"
@@ -216,8 +254,16 @@ class DeckService:
                         raise
             except Exception as e:
                 self._chat(deck_id, "error", f"{type(e).__name__}: {e}", deck.version)
+                log_event(log, "job.failed", deck=deck_id, job=job_id, err=f"{type(e).__name__}: {e}",
+                          ms=_ms(t0), level=logging.ERROR)
                 raise
-            self._chat(deck_id, "assistant", out.reply, out.deck.version, ops=out.ops, changes=out.changes)
+            self.meter.add(out.tokens_in, out.tokens_out, out.tokens_cached, out.iterations)
+            self._chat(deck_id, "assistant", out.reply, out.deck.version, ops=out.ops, changes=out.changes,
+                       tokens_in=out.tokens_in, tokens_out=out.tokens_out, tokens_cached=out.tokens_cached,
+                       iterations=out.iterations, llm_ms=out.llm_ms)
+            log_event(log, "job.done", deck=deck_id, job=job_id, v=out.deck.version,
+                      slides=len(out.deck.slides), tok_in=out.tokens_in, tok_out=out.tokens_out,
+                      cached=out.tokens_cached, iter=out.iterations, ms=_ms(t0))
             return out.deck.version
 
     # --- материалы, удаление, переименование

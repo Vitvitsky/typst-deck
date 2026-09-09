@@ -34,3 +34,19 @@ def test_templates_dirs_is_path_like(monkeypatch):
     assert [str(p) for p in get_settings().templates_dirs] == ["/app/templates", "/private"]
     monkeypatch.delenv("TYPST_DECK_TEMPLATES_DIR")
     assert [str(p) for p in get_settings().templates_dirs] == ["templates"]
+
+
+def test_logging_defaults(monkeypatch):
+    monkeypatch.delenv("TYPST_DECK_LOG_LEVEL", raising=False)
+    monkeypatch.delenv("TYPST_DECK_LOG_FORMAT", raising=False)
+    s = get_settings()
+    assert s.log_level == "INFO"
+    assert s.log_format == "text"
+
+
+def test_logging_from_env(monkeypatch):
+    monkeypatch.setenv("TYPST_DECK_LOG_LEVEL", "DEBUG")
+    monkeypatch.setenv("TYPST_DECK_LOG_FORMAT", "json")
+    s = get_settings()
+    assert s.log_level == "DEBUG"
+    assert s.log_format == "json"

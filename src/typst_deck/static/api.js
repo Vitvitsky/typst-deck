@@ -85,6 +85,7 @@ export const SIZE_RU = { small: "маленькая", medium: "средняя", 
 export const fileKind = (name) => /\.(png|jpe?g|svg)$/i.test(name) ? "image" : /\.(xlsx|csv)$/i.test(name) ? "table" : /\.(txt|md|docx)$/i.test(name) ? "text" : "bad";
 export const KIND_ICON = { image: "▨", table: "▦", text: "Т", bad: "?" };
 export const fmtSize = (b) => b < 1024 * 1024 ? `${Math.max(1, Math.round(b / 1024))} КБ` : `${(b / 1024 / 1024).toFixed(1)} МБ`;
+export const fmtTokens = (n) => Number(n || 0).toLocaleString("ru-RU");
 export const fmtDate = (iso) => new Date(iso).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
 export const fmtElapsed = (fromIso) => { const s = Math.max(0, Math.floor((Date.now() - new Date(fromIso)) / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
 export const errorText = (e) => {

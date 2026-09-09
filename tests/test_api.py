@@ -32,7 +32,8 @@ async def test_create_without_llm_is_503(settings):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         r = await c.post("/api/decks", json={"brief": "x", "upload_ids": []})
         assert r.status_code == 503 and r.json()["error"]["code"] == "llm_unavailable"
-        assert (await c.get("/api/health")).json() == {"ok": True, "llm": False, "model": None}
+        h = (await c.get("/api/health")).json()
+        assert h["ok"] is True and h["llm"] is False and h["model"] is None
 
 
 @requires_typst
@@ -260,3 +261,115 @@ async def test_failed_template_change_keeps_working_template(client, fake_llm, m
     _render_boom(monkeypatch)
     assert (await client.post(f"/api/decks/{deck_id}/template", json={"template": "dark"})).status_code == 500
     assert (await client.get(f"/api/decks/{deck_id}")).json()["deck"]["template"] == "default"
+
+
+@requires_typst
+async def test_generate_records_tokens_in_chat(client, fake_llm):
+    fake_llm._queue += [
+        Completion("", [ToolCall("c1", "set_deck", {"title": "T", "slides": [{"type": "title", "title": "A"}]})],
+                   tokens_in=1000, tokens_out=200, tokens_cached=800),
+        Completion("", [ToolCall("c2", "finish", {"summary": "Готово"})],
+                   tokens_in=1500, tokens_out=90, tokens_cached=1400),
+    ]
+    r = await client.post("/api/decks", json={"brief": "x", "upload_ids": []})
+    assert (await wait_job(client, r.json()["job_id"]))["status"] == "done"
+    reply = (await client.get(f"/api/decks/{r.json()['deck_id']}/chat")).json()[-1]
+    assert reply["role"] == "assistant"
+    assert reply["tokens_in"] == 2500 and reply["tokens_out"] == 290
+    assert reply["tokens_cached"] == 2200 and reply["iterations"] == 2
+    assert reply["llm_ms"] >= 0
+
+
+@requires_typst
+async def test_generate_logs_stages_with_deck_and_job(client, fake_llm, caplog):
+    caplog.set_level("INFO", logger="typst_deck.service")
+    fake_llm._queue += [
+        Completion("", [ToolCall("c1", "set_deck", {"title": "T", "slides": [{"type": "title", "title": "A"}]})]),
+        Completion("", [ToolCall("c2", "finish", {"summary": "Готово"})]),
+    ]
+    r = await client.post("/api/decks", json={"brief": "x", "upload_ids": []})
+    deck_id, job_id = r.json()["deck_id"], r.json()["job_id"]
+    assert (await wait_job(client, job_id))["status"] == "done"
+    events = {rec.msg: rec.fields for rec in caplog.records if hasattr(rec, "fields")}
+    assert {"job.start", "stage.reading", "job.done"} <= set(events)
+    assert events["job.start"]["deck"] == deck_id and events["job.start"]["job"] == job_id
+    assert events["stage.reading"]["files"] == 0
+    assert events["job.done"]["v"] == 2 and events["job.done"]["slides"] == 1
+    assert events["job.done"]["tok_in"] == 0 and events["job.done"]["ms"] >= 0
+
+
+@requires_typst
+async def test_failed_generation_logs_job_failed(client, fake_llm, caplog):
+    caplog.set_level("INFO", logger="typst_deck.service")
+    r = await client.post("/api/decks", json={"brief": "x", "upload_ids": []})
+    assert (await wait_job(client, r.json()["job_id"]))["status"] == "failed"
+    failed = [rec for rec in caplog.records if rec.msg == "job.failed"]
+    assert len(failed) == 1
+    assert failed[0].fields["deck"] == r.json()["deck_id"]
+    assert "LLMError" in failed[0].fields["err"]
+
+
+@requires_typst
+async def test_manual_edit_logs_op(client, fake_llm, caplog):
+    fake_llm._queue += [
+        Completion("", [ToolCall("c1", "set_deck", {"title": "T", "slides": [{"type": "title", "title": "A"}]})]),
+        Completion("", [ToolCall("c2", "finish", {"summary": "Готово"})]),
+    ]
+    r = await client.post("/api/decks", json={"brief": "x", "upload_ids": []})
+    deck_id = r.json()["deck_id"]
+    await wait_job(client, r.json()["job_id"])
+    caplog.set_level("INFO", logger="typst_deck.service")
+    assert (await client.patch(f"/api/decks/{deck_id}", json={"title": "Новое"})).status_code == 200
+    done = [x for x in caplog.records if x.msg == "manual.done"]
+    assert len(done) == 1
+    assert done[0].fields["deck"] == deck_id and done[0].fields["v"] == 3 and done[0].fields["ms"] >= 0
+
+
+async def test_health_reports_zero_tokens_before_any_call(client):
+    h = (await client.get("/api/health")).json()
+    assert h["tokens"] == {"in": 0, "out": 0, "cached": 0, "requests": 0}
+    assert h["since"]
+
+
+@requires_typst
+async def test_health_accumulates_tokens_across_generations(client, fake_llm):
+    fake_llm._queue += [
+        Completion("", [ToolCall("c1", "set_deck", {"title": "T", "slides": [{"type": "title", "title": "A"}]})],
+                   tokens_in=1000, tokens_out=200, tokens_cached=800),
+        Completion("", [ToolCall("c2", "finish", {"summary": "Готово"})],
+                   tokens_in=1500, tokens_out=90, tokens_cached=1400),
+    ]
+    r = await client.post("/api/decks", json={"brief": "x", "upload_ids": []})
+    await wait_job(client, r.json()["job_id"])
+    h = (await client.get("/api/health")).json()
+    assert h["tokens"] == {"in": 2500, "out": 290, "cached": 2200, "requests": 2}
+
+
+async def test_request_timing_is_logged(client, caplog):
+    caplog.set_level("INFO", logger="typst_deck.app")
+    await client.get("/api/decks")
+    http = [r for r in caplog.records if r.msg == "http"]
+    assert len(http) == 1
+    assert http[0].fields["method"] == "GET"
+    assert http[0].fields["path"] == "/api/decks"
+    assert http[0].fields["status"] == 200
+    assert http[0].fields["ms"] >= 0
+
+
+async def test_health_requests_are_not_logged(client, caplog):
+    caplog.set_level("INFO", logger="typst_deck.app")
+    await client.get("/api/health")
+    assert [r for r in caplog.records if r.msg == "http"] == []
+
+
+async def test_create_app_installs_log_handler(settings):
+    import logging as _logging
+
+    from typst_deck.app import create_app
+    from typst_deck.logs import HANDLER_MARK
+
+    for h in list(_logging.getLogger().handlers):
+        if getattr(h, HANDLER_MARK, False):
+            _logging.getLogger().removeHandler(h)
+    create_app(settings, llm=None)
+    assert any(getattr(h, HANDLER_MARK, False) for h in _logging.getLogger().handlers)

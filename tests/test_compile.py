@@ -57,3 +57,21 @@ def test_every_template_honours_contract(deck_dir, png_bytes, tid):
     assert len(r.svgs) == 6
     fields = {(p["slide"], p["field"]) for p in r.positions}
     assert ("s000001", "title") in fields and ("s000003", "bullets") in fields and ("s000006", "title") in fields
+
+
+def test_compile_reports_per_command_timings(deck_dir):
+    r = compile_deck(full_deck(), deck_dir, TEMPLATE_DIR)
+    assert set(r.timings) == {"pdf_ms", "svg_ms", "query_ms", "ms"}
+    assert all(isinstance(v, int) and v >= 0 for v in r.timings.values())
+    assert r.timings["ms"] >= max(r.timings["pdf_ms"], r.timings["svg_ms"], r.timings["query_ms"])
+
+
+def test_compile_logs_render_done(deck_dir, caplog):
+    caplog.set_level("INFO", logger="typst_deck.render")
+    deck = full_deck()
+    compile_deck(deck, deck_dir, TEMPLATE_DIR)
+    rec = next(r for r in caplog.records if r.msg == "render.done")
+    assert rec.fields["deck"] == deck.id
+    assert rec.fields["slides"] == 6
+    assert rec.fields["svg_kb"] > 0
+    assert rec.fields["ms"] >= 0
