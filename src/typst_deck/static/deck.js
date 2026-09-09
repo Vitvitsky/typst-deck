@@ -15,7 +15,7 @@ const NEW_SLIDE = {
 const CHIPS = ["Сократи текст на всех слайдах", "Добавь слайд с выводами в конце", "Разбей на разделы", "Сделай заголовки короче"];
 const PHASES = [["reading", "Читаю материалы"], ["model", "Собираю структуру"], ["render", "Верстаю слайды"]];
 
-const state = { info: null, positions: [], page: { w: 453.54, h: 255.12 }, selected: null, changed: new Set(), tab: "chat", polling: false, timer: null, lastUser: "" };
+const state = { info: null, positions: [], page: { w: 453.54, h: 255.12 }, selected: null, changed: new Set(), tab: "chat", polling: false, timer: null, lastUser: "", templates: [] };
 
 // ============ загрузка
 async function refresh() {
@@ -63,16 +63,63 @@ async function readPageSize() {
 }
 
 // ============ шапка
+async function ensureTemplates() {
+  if (state.templates.length || state.templatesLoading) return;
+  state.templatesLoading = true;
+  // при ошибке список остаётся пустым, флаг снимается — следующий refresh попробует снова
+  try { state.templates = await api("api/templates"); } catch { state.templates = []; }
+  finally { state.templatesLoading = false; }
+  renderTplSelect();
+}
+
+function currentTemplateId() {
+  return state.info && state.info.deck ? state.info.deck.template : "";
+}
+
+function renderTplSelect() {
+  const sel = $("tplname");
+  const cur = currentTemplateId();
+  let known = state.templates.find((t) => t.id === cur);
+  // Шаблона колоды может не быть в списке: закрытый корень не примонтирован или
+  // GET /api/templates упал. Без запасного пункта select оказался бы пустым и
+  // пользователь перестал бы видеть даже текущее оформление — берём его из payload.
+  if (!known && cur) known = { id: cur, name: (state.info && state.info.template && state.info.template.name) || cur };
+  const opts = known && !state.templates.some((t) => t.id === cur) ? [...state.templates, known] : state.templates;
+  sel.replaceChildren(...opts.map((t) => el("option", { value: t.id }, t.name)));
+  sel.value = cur;
+  sel.title = cur && known ? `Шаблон оформления: ${known.name}` : "Шаблон оформления";
+  sel.disabled = state.info ? state.info.status === "generating" : false;
+}
+
+async function changeTemplate(tid) {
+  const prev = currentTemplateId();
+  if (!tid || tid === prev) { renderTplSelect(); return; }
+  const sel = $("tplname");
+  sel.disabled = true;
+  try {
+    await applyResult(api(`api/decks/${deckId}/template`, { json: { template: tid } }));
+    toast(`Шаблон сменён на «${(state.templates.find((t) => t.id === tid) || {}).name || tid}»`);
+  } catch (e) {
+    toast(e.message, { error: true });
+    renderTplSelect();
+  }
+  sel.disabled = false;
+}
+
 function renderTopbar() {
   const { deck } = state.info;
   const h = $("title");
   if (!h.querySelector("input")) h.textContent = deck.title;
   document.title = `${deck.title} — typst-deck`;
-  $("tplname").textContent = state.info.template ? `шаблон: ${state.info.template.name}` : "";
+  ensureTemplates();  // повторная попытка, если первая загрузка списка не удалась
+  renderTplSelect();
   const pdf = $("pdf");
   pdf.href = `api/decks/${deckId}/deck.pdf`;
   pdf.classList.toggle("hidden", !state.info.has_build);
 }
+
+$("tplname").addEventListener("change", (e) => changeTemplate(e.target.value));
+ensureTemplates();
 
 $("title").addEventListener("click", () => {
   const h = $("title");
@@ -322,7 +369,7 @@ function renderProps() {
   if (!slide) { box.replaceChildren(el("p", { class: "muted small" }, "Выберите слайд: нажмите на него в центре или в ленте слева.")); return; }
   const n = state.info.deck.slides.indexOf(slide) + 1;
   const patch = {};
-  const form = el("form", {}, el("h3", {}, `Слайд ${n} · ${TYPE_RU[slide.type]}`), el("div", { class: "sub" }, "Меняются только поля — оформление задаёт корпоративный шаблон."));
+  const form = el("form", {}, el("h3", {}, `Слайд ${n} · ${TYPE_RU[slide.type]}`), el("div", { class: "sub" }, "Меняются только поля — оформление задаёт шаблон колоды (его можно сменить вверху)."));
   const readers = [];
   const ORDER = ["title", "subtitle", "bullets", "caption", "contact", "unit", "labels", "series", "data", "notes"];
   const keys = Object.keys(slide).filter((k) => !["id", "type", "image", "image_size"].includes(k))
@@ -394,6 +441,7 @@ function changesText(changes) {
     if (c.kind === "added") return `добавлен ${num(c.slide_id)}${name}`;
     if (c.kind === "removed") return `удалён слайд${name}`;
     if (c.kind === "moved") return `перемещён ${num(c.slide_id)}${name}`;
+    if (c.kind === "template") return `сменён шаблон на «${(state.templates.find((t) => t.id === c.template_id) || {}).name || c.template_id}»`;
     return c.kind;
   });
   return el("span", { class: "changes" }, el("b", {}, "Правки: "), parts.join("; "));
@@ -413,7 +461,7 @@ async function loadChat() {
     }
     items.push(el("div", { class: `msg ${m.role}` }, m.content || "Готово.", m.role === "assistant" ? changesText(m.changes) : null));
   });
-  if (!items.length) items.push(el("div", { class: "chat-empty" }, "Напишите, что собрать или поправить. Модель меняет только содержание, оформление остаётся корпоративным."));
+  if (!items.length) items.push(el("div", { class: "chat-empty" }, "Напишите, что собрать или поправить, или попросите сменить оформление. Модель меняет только содержание — шаблон можно выбрать вверху."));
   const last = chat[chat.length - 1];
   if (last && last.role === "assistant" && last.changes) {
     state.changed = new Set(last.changes.map((c) => c.slide_id).filter(Boolean));

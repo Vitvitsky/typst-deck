@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
 TITLE_MAX = 120
 BULLET_MAX = 200
+TEMPLATE_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,40}$"
 
 
 def new_id(prefix: str = "", n: int = 6) -> str:
@@ -111,7 +112,7 @@ def slide_schema() -> dict:
 class Deck(_Strict):
     id: str = Field(default_factory=lambda: new_id("", 12))
     title: Title = "Презентация"
-    template: str = Field(default="default", pattern=r"^[a-z0-9][a-z0-9_-]{0,40}$")
+    template: str = Field(default="default", pattern=TEMPLATE_PATTERN)
     slides: list[Slide] = Field(default_factory=list)
     version: int = 0
     created_at: datetime = Field(default_factory=utcnow)

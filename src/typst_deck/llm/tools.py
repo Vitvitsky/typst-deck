@@ -1,17 +1,19 @@
 """Инструменты, которыми LLM правит колоду. Каждый вызов — валидируемый патч."""
 from __future__ import annotations
 
+import re
+
 from pydantic import ValidationError
 
-from ..model import Deck, slide_schema
+from ..model import TEMPLATE_PATTERN, Deck, slide_schema
 
 
 def _fn(name: str, description: str, params: dict) -> dict:
     return {"type": "function", "function": {"name": name, "description": description, "parameters": params}}
 
 
-def tool_specs() -> list[dict]:
-    """Схемы шести инструментов в формате OpenAI function calling."""
+def tool_specs(template_ids: list[str] | None = None) -> list[dict]:
+    """Схемы инструментов в формате OpenAI function calling; set_template ограничен списком шаблонов, если он есть."""
     schema = slide_schema()
     defs = schema.pop("$defs", {})
     defs["Slide"] = schema
@@ -20,6 +22,9 @@ def tool_specs() -> list[dict]:
     def obj(props: dict, required: list[str]) -> dict:
         return {"type": "object", "properties": props, "required": required, "$defs": defs}
 
+    template_param: dict = {"type": "string", "description": "id шаблона из списка доступных в системном промпте"}
+    if template_ids:
+        template_param["enum"] = template_ids
     return [
         _fn("set_deck",
             "Полностью задать презентацию: название и все слайды по порядку. Использовать при создании с нуля.",
@@ -32,6 +37,8 @@ def tool_specs() -> list[dict]:
         _fn("remove_slide", "Удалить слайд.", obj({"slide_id": {"type": "string"}}, ["slide_id"])),
         _fn("move_slide", "Переставить слайд на позицию to_index (нумерация с нуля).",
             obj({"slide_id": {"type": "string"}, "to_index": {"type": "integer"}}, ["slide_id", "to_index"])),
+        _fn("set_template", "Сменить оформление колоды: выбрать шаблон по его id из списка в системном промпте.",
+            obj({"template": template_param}, ["template"])),
         _fn("finish", "Завершить работу и кратко сказать пользователю, что сделано.",
             obj({"summary": {"type": "string"}}, ["summary"])),
     ]
@@ -44,8 +51,9 @@ def format_validation(e: ValidationError) -> str:
 class ToolExecutor:
     """Применяет вызовы инструментов к колоде; ошибки возвращает текстом, не исключением."""
 
-    def __init__(self, deck: Deck):
+    def __init__(self, deck: Deck, template_ids: list[str] | None = None):
         self.deck = deck
+        self.template_ids = template_ids
         self.changed = False
         self.ops: list[str] = []
         self.changes: list[dict] = []  # для интерфейса: что и с каким слайдом случилось
@@ -92,6 +100,15 @@ class ToolExecutor:
         self.deck.move_slide(slide_id, to_index)
         self._done(f"move_slide {slide_id}", self._ref("moved", self.deck.find(slide_id)))
         return f"OK: слайд {slide_id} теперь на позиции {self.deck.index_of(slide_id) + 1}"
+
+    def _set_template(self, template: str) -> str:
+        if self.template_ids and template not in self.template_ids:
+            return f"ERROR: шаблон «{template}» не найден; доступны: {', '.join(self.template_ids)}"
+        if not re.fullmatch(TEMPLATE_PATTERN, template):
+            raise ValueError(f"некорректный id шаблона «{template}»")
+        self.deck.template = template
+        self._done(f"set_template {template}", {"kind": "template", "template_id": template})
+        return f"OK: шаблон сменён на «{template}»"
 
     def _finish(self, summary: str = "") -> str:
         self.finished, self.summary = True, summary

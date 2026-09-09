@@ -9,9 +9,34 @@ from typst_deck.model import Deck
 def test_tool_specs_shape():
     specs = tool_specs()
     names = [s["function"]["name"] for s in specs]
-    assert names == ["set_deck", "update_slide", "add_slide", "remove_slide", "move_slide", "finish"]
+    assert names == ["set_deck", "update_slide", "add_slide", "remove_slide", "move_slide", "set_template", "finish"]
     assert all(s["type"] == "function" and "parameters" in s["function"] for s in specs)
     assert "bar-chart" in json.dumps(specs)
+
+
+def test_tool_specs_set_template_enum():
+    names = [s["function"]["name"] for s in tool_specs(["default", "dark", "lmru-hr"])]
+    assert names == ["set_deck", "update_slide", "add_slide", "remove_slide", "move_slide", "set_template", "finish"]
+    st = next(s for s in tool_specs(["default", "dark", "lmru-hr"]) if s["function"]["name"] == "set_template")
+    assert st["function"]["parameters"]["properties"]["template"]["enum"] == ["default", "dark", "lmru-hr"]
+
+
+def test_executor_set_template():
+    ex = ToolExecutor(Deck(), template_ids=["default", "dark", "lmru-hr"])
+    r = ex.call("set_template", {"template": "dark"})
+    assert r.startswith("OK") and ex.changed and ex.deck.template == "dark"
+    assert ex.ops == ["set_template dark"]
+    assert ex.changes == [{"kind": "template", "template_id": "dark"}]
+    r = ex.call("set_template", {"template": "nope"})
+    assert r.startswith("ERROR") and "nope" in r and "dark" in r
+    assert ex.deck.template == "dark" and len(ex.ops) == 1
+
+
+def test_executor_set_template_unknown_ok_without_whitelist():
+    ex = ToolExecutor(Deck())
+    assert ex.call("set_template", {"template": "lmru-hr"}).startswith("OK")
+    assert ex.deck.template == "lmru-hr"
+    assert ex.call("set_template", {"template": "Bad/Name"}).startswith("ERROR")
 
 
 def test_executor_set_and_update():
@@ -44,6 +69,33 @@ def test_system_prompt_mentions_schema_deck_assets():
     d = Deck(title="T", slides=[{"type": "final"}])
     p = build_system_prompt(d, ["a1.png"])
     assert "bar-chart" in p and '"T"' in p and "a1.png" in p and d.slides[0].id in p
+
+
+def test_system_prompt_lists_templates():
+    templates = [
+        {"id": "default", "name": "Корпоративный", "description": ""},
+        {"id": "dark", "name": "Тёмный", "description": ""},
+    ]
+    d = Deck(title="T", slides=[{"type": "final"}])
+    p = build_system_prompt(d, [], templates=templates)
+    assert "default" in p and "Корпоративный" in p and "dark" in p and "Тёмный" in p
+    assert '"template":"default"' in p
+
+
+async def test_run_agent_set_template_flow():
+    d = Deck(title="T", slides=[{"type": "final"}])
+    llm = FakeLLM([
+        Completion("", [ToolCall("c1", "set_template", {"template": "dark"})]),
+        Completion("", [ToolCall("c2", "finish", {"summary": "Сменил шаблон"})]),
+    ])
+    out = await run_agent(llm, d, "сделай тёмной", files=[], history=[], assets=[],
+                          templates=[{"id": "default", "name": "Корпоративный"},
+                                     {"id": "dark", "name": "Тёмный"}])
+    assert out.changed and out.reply == "Сменил шаблон"
+    assert out.deck.template == "dark" and out.ops == ["set_template dark"]
+    assert out.changes == [{"kind": "template", "template_id": "dark"}]
+    sysmsg = llm.calls[0][0]["content"]
+    assert "Тёмный" in sysmsg and '"template":"default"' in sysmsg
 
 
 async def test_run_agent_create_flow():

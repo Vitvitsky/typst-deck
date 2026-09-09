@@ -25,7 +25,7 @@ IngestedFile = tuple[str, bytes, str | None]
 class DeckService:
     def __init__(self, store: DeckStore, jobs: JobRegistry, llm: LLM | None, settings: Settings):
         self.store, self.jobs, self.llm, self.settings = store, jobs, llm, settings
-        self.templates = TemplateRegistry(settings.template_dir, settings.templates_dir)
+        self.templates = TemplateRegistry(settings.template_dir, settings.templates_dirs)
 
     # --- шаблоны
     def template_dir(self, tid: str):
@@ -202,7 +202,8 @@ class DeckService:
             try:
                 if job:
                     job.phase = "model"
-                out = await run_agent(llm, deck, message, files, history, self.store.assets(deck_id))
+                out = await run_agent(llm, deck, message, files, history, self.store.assets(deck_id),
+                                      templates=[t.public() for t in self.templates.list()])
                 if out.changed:
                     if job:
                         job.phase = "render"
@@ -241,6 +242,11 @@ class DeckService:
         def fn(d: Deck):
             d.title = title
         return await self.manual(deck_id, fn)
+
+    async def change_template(self, deck_id: str, template: str) -> dict:
+        """Сменить шаблон колоды; рендер и откат при ошибке — как в manual."""
+        self.template_dir(template)
+        return await self.manual(deck_id, lambda d: setattr(d, "template", template))
 
     def _chat(self, deck_id: str, role: str, content: str, version: int, **extra) -> None:
         self.store.append_chat(deck_id, {"role": role, "content": content, "version": version,

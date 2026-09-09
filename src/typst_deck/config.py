@@ -11,7 +11,7 @@ class Settings(BaseSettings):
 
     data_dir: Path = Path("data")
     template_dir: Path = Path("template")      # шаблон по умолчанию (id "default")
-    templates_dir: Path = Path("templates")    # дополнительные шаблоны: templates/<id>/deck.typ
+    templates_dir: str = "templates"           # корни дополнительных шаблонов <корень>/<id>/deck.typ; несколько — через ":" как PATH
     typst_bin: str = "typst"
     public_base_url: str = ""
     llm_api_base: str = ""
@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 16384  # рассуждающим моделям 4096 не хватает даже на рассуждение
     llm_tool_mode: Literal["tools", "json"] = "tools"
     max_upload_mb: int = 20
+
+    @property
+    def templates_dirs(self) -> list[Path]:
+        return [Path(p) for p in self.templates_dir.split(os.pathsep) if p]
 
 
 def get_settings() -> Settings:

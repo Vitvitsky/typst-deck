@@ -42,6 +42,10 @@ class RenameBody(BaseModel):
     title: str
 
 
+class TemplateBody(BaseModel):
+    template: str
+
+
 @router.post("", status_code=202)
 async def create(body: CreateBody, s: DeckService = Depends(svc)):
     files = []
@@ -67,6 +71,11 @@ async def get(deck_id: str, s: DeckService = Depends(svc)):
 @router.patch("/{deck_id}")
 async def rename(deck_id: str, body: RenameBody, s: DeckService = Depends(svc)):
     return await s.rename(deck_id, body.title)
+
+
+@router.post("/{deck_id}/template")
+async def change_template(deck_id: str, body: TemplateBody, s: DeckService = Depends(svc)):
+    return await s.change_template(deck_id, body.template)
 
 
 @router.delete("/{deck_id}", status_code=204)

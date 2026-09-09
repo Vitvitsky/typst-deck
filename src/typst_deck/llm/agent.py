@@ -21,12 +21,19 @@ class Outcome:
     changes: list[dict] = field(default_factory=list)
 
 
-def build_system_prompt(deck: Deck, assets: list[str]) -> str:
+def _template_list(templates: list[dict] | None) -> str:
+    if not templates:
+        return "(шаблоны не переданы)"
+    return "\n".join(f"- {t['id']} — {t['name']}" for t in templates)
+
+
+def build_system_prompt(deck: Deck, assets: list[str], templates: list[dict] | None = None) -> str:
     return (
         PROMPT
         .replace("{{SCHEMA}}", json.dumps(slide_schema(), ensure_ascii=False))
         .replace("{{ASSETS}}", ", ".join(assets) if assets else "(нет)")
-        .replace("{{DECK_JSON}}", deck.model_dump_json(include={"title", "slides"}))
+        .replace("{{TEMPLATES}}", _template_list(templates))
+        .replace("{{DECK_JSON}}", deck.model_dump_json(include={"title", "template", "slides"}))
     )
 
 
@@ -39,11 +46,13 @@ def _user_content(message: str, files: list[tuple[str, str]]) -> str:
 
 async def run_agent(
     llm: LLM, deck: Deck, user_message: str, files: list[tuple[str, str]],
-    history: list[dict], assets: list[str], max_iter: int = 12,
+    history: list[dict], assets: list[str], templates: list[dict] | None = None,
+    max_iter: int = 12,
 ) -> Outcome:
-    ex = ToolExecutor(deck)
-    tools = tool_specs()
-    messages: list[dict] = [{"role": "system", "content": build_system_prompt(deck, assets)}]
+    template_ids = [t["id"] for t in templates] if templates else None
+    ex = ToolExecutor(deck, template_ids)
+    tools = tool_specs(template_ids)
+    messages: list[dict] = [{"role": "system", "content": build_system_prompt(deck, assets, templates)}]
     messages += [{"role": m["role"], "content": m["content"]} for m in history]
     messages.append({"role": "user", "content": _user_content(user_message, files)})
 
