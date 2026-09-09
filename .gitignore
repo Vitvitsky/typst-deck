@@ -13,3 +13,6 @@ templates/lmru-hr/*
 !templates/lmru-hr/deck.typ
 !templates/lmru-hr/template.json
 !templates/lmru-hr/CANON_REV
+
+# артефакты graphify (граф репозитория, пересобирается)
+graphify-out/
