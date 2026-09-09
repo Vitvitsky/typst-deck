@@ -195,6 +195,7 @@ class DeckService:
             if job:
                 job.phase = "reading"
             deck = self.store.load(deck_id)
+            prev = deck.version  # агент правит эту же колоду на месте, а save поднимет version
             files = self.store.list_uploads(deck_id)  # исходники нужны и при правках: кеш промпта делает это дёшево
             history = [m for m in self.store.read_chat(deck_id) if m["role"] in ("user", "assistant")]
             self._chat(deck_id, "user", message, deck.version)
@@ -206,7 +207,12 @@ class DeckService:
                     if job:
                         job.phase = "render"
                     self.store.save(out.deck)
-                    self.render(out.deck)
+                    try:
+                        self.render(out.deck)
+                    except Exception:
+                        # как в manual: колода, которая не собирается, не остаётся сохранённой
+                        self.store.revert(deck_id, prev)
+                        raise
             except Exception as e:
                 self._chat(deck_id, "error", f"{type(e).__name__}: {e}", deck.version)
                 raise

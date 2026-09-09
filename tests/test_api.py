@@ -197,3 +197,36 @@ async def test_templates_history_and_template_choice(client, fake_llm):
 
     h = (await client.get("/api/history")).json()
     assert h[0]["text"] == "тёмная" and h[0]["deck_id"] == r.json()["deck_id"] and h[0]["deck_title"] == "T"
+
+
+def _render_boom(monkeypatch):
+    from typst_deck.api.common import ApiError
+    from typst_deck.service import DeckService
+
+    def boom(self, deck):
+        raise ApiError(500, "render", "шаблон не собрался")
+
+    monkeypatch.setattr(DeckService, "render", boom)
+
+
+@requires_typst
+async def test_failed_render_in_generate_reverts_deck(client, fake_llm, monkeypatch):
+    """Провал рендера не оставляет сохранённой колоду, которая не собирается."""
+    fake_llm._queue += [
+        Completion("", [ToolCall("c1", "set_deck", {"title": "T", "slides": [{"type": "title", "title": "Первый"}]})]),
+        Completion("готово", []),
+    ]
+    r = await client.post("/api/decks", json={"brief": "x", "upload_ids": []})
+    deck_id = r.json()["deck_id"]
+    assert (await wait_job(client, r.json()["job_id"]))["status"] == "done"
+    good = (await client.get(f"/api/decks/{deck_id}")).json()["deck"]
+
+    _render_boom(monkeypatch)
+    fake_llm._queue += [
+        Completion("", [ToolCall("c2", "set_deck", {"title": "T2", "slides": [{"type": "title", "title": "Второй"}]})]),
+        Completion("готово", []),
+    ]
+    r2 = await client.post(f"/api/decks/{deck_id}/messages", json={"text": "поменяй"})
+    assert (await wait_job(client, r2.json()["job_id"]))["status"] == "failed"
+    after = (await client.get(f"/api/decks/{deck_id}")).json()["deck"]
+    assert [s["title"] for s in after["slides"]] == [s["title"] for s in good["slides"]]

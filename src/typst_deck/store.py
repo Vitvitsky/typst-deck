@@ -105,9 +105,13 @@ class DeckStore:
         return Deck.model_validate_json(p.read_text())
 
     def revert(self, deck_id: str, version: int) -> Deck:
+        """Полный откат на версию, включая шаблон: используется при провале рендера,
+        а несобираемым может оказаться именно оформление. Пользовательский откат
+        (POST /revert) шаблон намеренно сохраняет и делает это своим кодом.
+        """
         old = self.load_version(deck_id, version)
         cur = self.load(deck_id)
-        cur.title, cur.slides = old.title, old.slides
+        cur.title, cur.slides, cur.template = old.title, old.slides, old.template
         return self.save(cur)
 
     # --- ассеты

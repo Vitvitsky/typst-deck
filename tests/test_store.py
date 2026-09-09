@@ -89,3 +89,13 @@ def test_delete_moves_to_trash(store):
     assert not store.exists(d.id) and dst.parent.name == "trash" and (dst / "deck.json").exists()
     with pytest.raises(DeckNotFound):
         store.delete(d.id)
+
+
+def test_revert_restores_template(store):
+    """Откат после провала рендера обязан вернуть и шаблон: иначе колода остаётся
+    на оформлении, которое не собирается, и чинить её нечем."""
+    d = store.create(Deck(title="v1", template="default", slides=[{"type": "final"}]))
+    d.template = "broken"
+    store.save(d)
+    r = store.revert(d.id, 1)
+    assert r.template == "default" and store.load(d.id).template == "default"
