@@ -225,3 +225,26 @@ def test_title_slide_survives_many_line_breaks(deck_dir):
                          "subtitle": "«Лемана ПРО»" + "\n" * 8 + "хвост"}])
     r = compile_deck(deck, deck_dir, lmru)
     assert len(r.svgs) == 1
+
+
+def _title_deck():
+    from typst_deck.model import Deck
+
+    return Deck(slides=[{"type": "title", "title": "Итоги квартала", "subtitle": "Q3 2026",
+                         "author": "Сергей Витвицкий", "department": "ПК Данные и аналитика"}])
+
+
+def _y_of(positions, field):
+    return next(p["y"] for p in positions if p["field"] == field)
+
+
+@pytest.mark.parametrize("tid", sorted(p.name for p in (TEMPLATE_DIR.parent / "templates").iterdir() if (p / "deck.typ").exists()))
+def test_author_is_printed_above_department(deck_dir, tid):
+    """Порядок подписи: сначала человек, потом подразделение."""
+    r = compile_deck(_title_deck(), deck_dir, TEMPLATE_DIR.parent / "templates" / tid)
+    assert _y_of(r.positions, "author") < _y_of(r.positions, "department")
+
+
+def test_author_above_department_in_default_template(deck_dir):
+    r = compile_deck(_title_deck(), deck_dir, TEMPLATE_DIR)
+    assert _y_of(r.positions, "author") < _y_of(r.positions, "department")

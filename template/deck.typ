@@ -46,9 +46,10 @@
   #v(0.35cm)
   #if subtitle != none { text(size: 14pt, fill: muted, subtitle) }
   #v(1.4fr)
-  // автор и департамент — отдельные блоки контракта, прижаты к низу слайда
-  #if department != none { text(size: 10pt, fill: muted, department); linebreak() }
-  #if author != none { text(size: 10pt, fill: muted, author) }
+  // автор и департамент — отдельные блоки контракта, прижаты к низу слайда;
+  // порядок подписи: сначала человек, потом подразделение
+  #if author != none { text(size: 10pt, fill: muted, author); linebreak() }
+  #if department != none { text(size: 10pt, fill: muted, department) }
 ]
 
 #let slide-section(title: none, subtitle: none) = slide(fill: accent)[

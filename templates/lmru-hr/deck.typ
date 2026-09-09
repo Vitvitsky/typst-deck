@@ -42,9 +42,15 @@
   set par(spacing: 0pt)
   // у канона автор и департамент — свои блоки под отступом v(80mm); раньше сюда
   // приходили пустые строки, и автора приходилось вписывать в подзаголовок
+  // Канон печатает свой слот department выше слота author, а подпись нужна в
+  // обратном порядке: сначала человек, потом подразделение. Канон не правим —
+  // его перезаписывает sync-lmru-template.sh, — поэтому меняем местами значения.
+  // Оба слота набраны одинаково (lm-dark, size-body, body-font), так что
+  // визуально это ровно перестановка строк.
   title-slide(
     title: slot(60mm, title), subtitle: slot(30mm, subtitle),
-    author: slot(12mm, author), department: slot(12mm, department),
+    department: slot(12mm, author),   // верхняя строка подписи
+    author: slot(12mm, department),   // нижняя строка подписи
   )
 }
 
