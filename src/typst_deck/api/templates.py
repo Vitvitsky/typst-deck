@@ -15,4 +15,4 @@ async def list_templates(s: DeckService = Depends(svc)):
 
 @router.get("/{tid}/preview/{n}.svg")
 async def preview(tid: str, n: int, s: DeckService = Depends(svc)):
-    return FileResponse(s.template_preview(tid, n), media_type="image/svg+xml", headers={"Cache-Control": "max-age=60"})
+    return FileResponse(await s.template_preview(tid, n), media_type="image/svg+xml", headers={"Cache-Control": "max-age=60"})

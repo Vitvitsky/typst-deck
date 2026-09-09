@@ -1,6 +1,7 @@
 """Операции над колодой, общие для веб-интерфейса и агентского API."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -10,12 +11,12 @@ from pydantic import ValidationError
 
 from .api.common import ApiError, not_found
 from .config import Settings
-from .logs import log_event
 from .extract import UnsupportedFile, extract
 from .jobs import Job, JobConflict, JobRegistry
 from .llm.agent import run_agent
 from .llm.client import LLM
 from .llm.tools import format_validation
+from .logs import log_event
 from .model import Deck, utcnow
 from .render import CompileError, CompileResult, compile_deck
 from .store import DeckNotFound, DeckStore
@@ -55,6 +56,7 @@ class DeckService:
         self.store, self.jobs, self.llm, self.settings = store, jobs, llm, settings
         self.templates = TemplateRegistry(settings.template_dir, settings.templates_dirs)
         self.meter = TokenMeter()
+        self._preview_locks: dict[str, asyncio.Lock] = {}
 
     # --- шаблоны
     def template_dir(self, tid: str):
@@ -63,19 +65,26 @@ class DeckService:
         except TemplateNotFound:
             raise ApiError(422, "validation", f"шаблон «{tid}» не найден")
 
-    def template_preview(self, tid: str, n: int):
-        """SVG n-й страницы образца в шаблоне; рендер кешируется в data/template-previews/<id>/."""
+    async def template_preview(self, tid: str, n: int):
+        """SVG n-й страницы образца в шаблоне; рендер кешируется в data/template-previews/<id>/.
+        Компиляция уходит в поток по той же причине, что и в render()."""
         tdir = self.template_dir(tid)
         out = self.settings.data_dir / "template-previews" / tid
         stamp = out / "build" / "stamp.txt"
         newest = max((p.stat().st_mtime for p in tdir.rglob("*") if p.is_file()), default=0)
-        if not stamp.exists() or stamp.read_text() != str(newest):
-            out.mkdir(parents=True, exist_ok=True)
-            try:
-                compile_deck(SAMPLE_DECK.model_copy(update={"template": tid}), out, tdir, self.settings.typst_bin)
-            except CompileError as e:
-                raise ApiError(500, "render", f"шаблон «{tid}» не собрался: {e.stderr[:1500]}")
-            stamp.write_text(str(newest))
+        # рендер в потоке, поэтому два первых превью одного шаблона больше не
+        # сериализуются сами собой и подрались бы за build.tmp
+        async with self._preview_locks.setdefault(tid, asyncio.Lock()):
+            if not stamp.exists() or stamp.read_text() != str(newest):
+                out.mkdir(parents=True, exist_ok=True)
+                try:
+                    await asyncio.to_thread(
+                        compile_deck, SAMPLE_DECK.model_copy(update={"template": tid}), out, tdir,
+                        self.settings.typst_bin,
+                    )
+                except CompileError as e:
+                    raise ApiError(500, "render", f"шаблон «{tid}» не собрался: {e.stderr[:1500]}")
+                stamp.write_text(str(newest))
         p = out / "build" / f"slide-{n}.svg"
         if not p.exists():
             raise not_found("страница образца")
@@ -151,9 +160,14 @@ class DeckService:
         }
 
     # --- рендер
-    def render(self, deck: Deck) -> CompileResult:
+    async def render(self, deck: Deck) -> CompileResult:
+        """typst — блокирующий subprocess, поэтому уходит в поток: иначе на время
+        компиляции встаёт весь сервер, включая статику и превью чужих колод."""
         try:
-            return compile_deck(deck, self.store.deck_dir(deck.id), self.template_dir(deck.template), self.settings.typst_bin)
+            return await asyncio.to_thread(
+                compile_deck, deck, self.store.deck_dir(deck.id),
+                self.template_dir(deck.template), self.settings.typst_bin,
+            )
         except CompileError as e:
             raise ApiError(500, "render", f"{e}: {e.stderr[:2000]}")
 
@@ -174,7 +188,7 @@ class DeckService:
                 raise ApiError(422, "validation", str(e))
             self.store.save(deck)
             try:
-                self.render(deck)
+                await self.render(deck)
             except ApiError:
                 self.store.revert(deck_id, prev)
                 log_event(log, "manual.failed", deck=deck_id, v=prev, ms=_ms(t0), level=logging.WARNING)
@@ -247,7 +261,7 @@ class DeckService:
                         job.phase = "render"
                     self.store.save(out.deck)
                     try:
-                        self.render(out.deck)
+                        await self.render(out.deck)
                     except Exception:
                         # как в manual: колода, которая не собирается, не остаётся сохранённой
                         self.store.revert(deck_id, prev)

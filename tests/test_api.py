@@ -373,3 +373,73 @@ async def test_create_app_installs_log_handler(settings):
             _logging.getLogger().removeHandler(h)
     create_app(settings, llm=None)
     assert any(getattr(h, HANDLER_MARK, False) for h in _logging.getLogger().handlers)
+
+
+@requires_typst
+async def test_render_does_not_block_event_loop(client, fake_llm, monkeypatch):
+    """Пока идёт компиляция typst, сервер обязан отвечать на другие запросы."""
+    import time
+
+    from typst_deck import service as service_mod
+
+    fake_llm._queue += [
+        Completion("", [ToolCall("c1", "set_deck", {"title": "T", "slides": [{"type": "title", "title": "A"}]})]),
+        Completion("", [ToolCall("c2", "finish", {"summary": "Готово"})]),
+    ]
+    r = await client.post("/api/decks", json={"brief": "x", "upload_ids": []})
+    deck_id = r.json()["deck_id"]
+    await wait_job(client, r.json()["job_id"])
+
+    real_compile = service_mod.compile_deck
+
+    def slow_compile(*a, **kw):
+        time.sleep(0.4)  # блокирующий вызов, как настоящий subprocess.run
+        return real_compile(*a, **kw)
+
+    monkeypatch.setattr(service_mod, "compile_deck", slow_compile)
+
+    # мерим от старта правки: если цикл занят компиляцией, ответить раньше неё нельзя
+    started = time.perf_counter()
+    edit = asyncio.create_task(client.patch(f"/api/decks/{deck_id}", json={"title": "Новое"}))
+    await asyncio.sleep(0.05)  # даём правке дойти до компиляции
+    probe = await client.get("/api/decks")
+    probe_s = time.perf_counter() - started
+
+    assert probe.status_code == 200
+    assert probe_s < 0.3, f"параллельный запрос ждал рендера {probe_s:.2f} с — цикл заблокирован"
+    assert (await edit).status_code == 200
+
+
+@requires_typst
+async def test_template_preview_does_not_block_event_loop(client, monkeypatch):
+    """Первое превью шаблона компилирует образец — тоже в потоке, не в цикле."""
+    import time
+
+    from typst_deck import service as service_mod
+
+    real_compile = service_mod.compile_deck
+
+    def slow_compile(*a, **kw):
+        time.sleep(0.4)
+        return real_compile(*a, **kw)
+
+    monkeypatch.setattr(service_mod, "compile_deck", slow_compile)
+
+    started = time.perf_counter()
+    preview = asyncio.create_task(client.get("/api/templates/dark/preview/1.svg"))
+    await asyncio.sleep(0.05)
+    probe = await client.get("/api/decks")
+    probe_s = time.perf_counter() - started
+
+    assert probe.status_code == 200
+    assert probe_s < 0.3, f"параллельный запрос ждал превью {probe_s:.2f} с — цикл заблокирован"
+    assert (await preview).status_code == 200
+
+
+@requires_typst
+async def test_concurrent_first_previews_of_same_template(client):
+    """Раньше компиляции сериализовал заблокированный цикл. Теперь они в потоках,
+    и два первых превью одного шаблона не должны драться за build.tmp."""
+    rs = await asyncio.gather(*(client.get("/api/templates/dark/preview/1.svg") for _ in range(4)))
+    assert [r.status_code for r in rs] == [200, 200, 200, 200]
+    assert all(r.content.startswith(b"<svg") or b"<svg" in r.content[:200] for r in rs)
