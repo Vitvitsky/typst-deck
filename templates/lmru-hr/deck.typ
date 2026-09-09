@@ -27,13 +27,24 @@
 // в паре с ними переполняет страницу → ghost-страница → нарушение контракта
 // «страниц == слайдов». Здесь параграфы не нужны (отступы заданы явными v()),
 // поэтому для вызова title-slide отключаем межпараграфный интервал.
+// Слот титульного слайда с потолком по высоте. Сам title-slide — это вызов
+// page(), обернуть его в box(clip: true) нельзя, поэтому границу держим на входе.
+// Пустое значение остаётся пустой строкой: канон проверяет `subtitle != ""`, и
+// бокс нулевого содержимого всё равно занял бы свою высоту.
+#let slot(h, x) = if x == none or x == "" { "" } else {
+  box(width: 100%, height: h, clip: true, x)
+}
+
+// Бюджет страницы 381mm: поля 50+30, плюс жёсткие v(50mm) и v(80mm) внутри
+// канона. На заголовок, подзаголовок и подпись остаётся около 140mm — отсюда
+// высоты слотов ниже.
 #let slide-title(title: none, subtitle: none, author: none, department: none) = {
   set par(spacing: 0pt)
   // у канона автор и департамент — свои блоки под отступом v(80mm); раньше сюда
   // приходили пустые строки, и автора приходилось вписывать в подзаголовок
   title-slide(
-    title: or-empty(title), subtitle: or-empty(subtitle),
-    author: or-empty(author), department: or-empty(department),
+    title: slot(60mm, title), subtitle: slot(30mm, subtitle),
+    author: slot(12mm, author), department: slot(12mm, department),
   )
 }
 

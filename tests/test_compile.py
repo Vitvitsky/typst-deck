@@ -188,3 +188,40 @@ def test_default_template_accepts_author_and_department(deck_dir):
                          "author": "Сергей Витвицкий", "department": "ПК Данные и аналитика"}])
     r = compile_deck(deck, deck_dir, TEMPLATE_DIR)
     assert len(r.svgs) == 1
+
+
+OVERSIZED = "Очень длинный текст, который заведомо не помещается в отведённое место " * 6
+
+
+@pytest.mark.parametrize("tid", sorted(p.name for p in (TEMPLATE_DIR.parent / "templates").iterdir() if (p / "deck.typ").exists()))
+def test_template_survives_oversized_title_slide(deck_dir, tid):
+    """Контракт «одна функция — одна страница» обязан держаться при любом входе:
+    переполнение обрезается, а не переливается на вторую страницу."""
+    from typst_deck.model import Deck
+
+    deck = Deck(slides=[{"type": "title", "title": OVERSIZED[:120], "subtitle": OVERSIZED[:120],
+                         "author": OVERSIZED[:120], "department": OVERSIZED[:120]}])
+    r = compile_deck(deck, deck_dir, TEMPLATE_DIR.parent / "templates" / tid)
+    assert len(r.svgs) == 1
+
+
+@pytest.mark.parametrize("tid", sorted(p.name for p in (TEMPLATE_DIR.parent / "templates").iterdir() if (p / "deck.typ").exists()))
+def test_template_survives_oversized_section_slide(deck_dir, tid):
+    from typst_deck.model import Deck
+
+    deck = Deck(slides=[{"type": "section", "title": OVERSIZED[:120], "subtitle": OVERSIZED[:120]}])
+    r = compile_deck(deck, deck_dir, TEMPLATE_DIR.parent / "templates" / tid)
+    assert len(r.svgs) == 1
+
+
+def test_title_slide_survives_many_line_breaks(deck_dir):
+    """Ровно тот вход, который уронил боевую колоду 2026-09-09."""
+    from typst_deck.model import Deck
+
+    lmru = TEMPLATE_DIR.parent / "templates" / "lmru-hr"
+    if not (lmru / "deck.typ").exists():
+        pytest.skip("канон lmru-hr не подтянут")
+    deck = Deck(slides=[{"type": "title", "title": "Итоги квартала",
+                         "subtitle": "«Лемана ПРО»" + "\n" * 8 + "хвост"}])
+    r = compile_deck(deck, deck_dir, lmru)
+    assert len(r.svgs) == 1
