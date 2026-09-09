@@ -108,7 +108,9 @@ def render_typ(deck: Deck, assets: set[str]) -> tuple[str, list[str]]:
         if isinstance(s, TitleSlide):
             out.append(
                 f"#slide-title(title: {_text(sid, 'title', s.title)}, "
-                f"subtitle: {_text(sid, 'subtitle', s.subtitle)})\n"
+                f"subtitle: {_text(sid, 'subtitle', s.subtitle)}, "
+                f"author: {_text(sid, 'author', s.author)}, "
+                f"department: {_text(sid, 'department', s.department)})\n"
             )
         elif isinstance(s, SectionSlide):
             out.append(

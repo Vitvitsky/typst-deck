@@ -364,7 +364,7 @@ function renderProps() {
   const patch = {};
   const form = el("form", {}, el("h3", {}, `Слайд ${n} · ${TYPE_RU[slide.type]}`), el("div", { class: "sub" }, "Меняются только поля — оформление задаёт шаблон колоды (его можно сменить вверху)."));
   const readers = [];
-  const ORDER = ["title", "subtitle", "bullets", "caption", "contact", "unit", "labels", "series", "data", "notes"];
+  const ORDER = ["title", "subtitle", "author", "department", "bullets", "caption", "contact", "unit", "labels", "series", "data", "notes"];
   const keys = Object.keys(slide).filter((k) => !["id", "type", "image", "image_size"].includes(k))
     .sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
   for (const k of keys) {

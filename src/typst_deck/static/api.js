@@ -78,6 +78,7 @@ export function armConfirm(btn, label, onConfirm) {
 export const TYPE_RU = { title: "Заглавный", section: "Раздел", image: "Текст и картинка", "bar-chart": "Диаграмма", chart: "График", final: "Финальный" };
 export const FIELD_RU = {
   title: "Заголовок", subtitle: "Подзаголовок", bullets: "Тезисы", caption: "Подпись к картинке", contact: "Контакты",
+  author: "Автор", department: "Подразделение",
   unit: "Единица измерения", notes: "Заметки докладчика", data: "Данные диаграммы", labels: "Подписи по оси",
   series: "Ряды данных", image: "Картинка", image_size: "Размер картинки",
 };

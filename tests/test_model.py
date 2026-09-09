@@ -89,3 +89,35 @@ def test_schema_has_all_types():
 def test_roundtrip_json():
     d = deck()
     assert Deck.model_validate_json(d.model_dump_json()) == d
+
+
+def test_title_slide_has_author_and_department():
+    """Канон lmru-hr верстает автора и департамент отдельными блоками —
+    без этих полей их приходилось запихивать в подзаголовок переносами строк."""
+    from typst_deck.model import TitleSlide
+
+    s = TitleSlide(type="title", title="Итоги")
+    assert s.author == "" and s.department == ""
+    s = TitleSlide(type="title", title="Итоги", author="Сергей Витвицкий",
+                   department="ПК Данные и аналитика")
+    assert s.author == "Сергей Витвицкий"
+    assert s.department == "ПК Данные и аналитика"
+
+
+def test_title_slide_author_is_length_limited():
+    import pytest
+    from pydantic import ValidationError
+
+    from typst_deck.model import TitleSlide
+
+    with pytest.raises(ValidationError):
+        TitleSlide(type="title", title="Итоги", author="я" * 200)
+
+
+def test_slide_schema_exposes_author_to_model():
+    import json
+
+    from typst_deck.model import slide_schema
+
+    assert "author" in json.dumps(slide_schema(), ensure_ascii=False)
+    assert "department" in json.dumps(slide_schema(), ensure_ascii=False)

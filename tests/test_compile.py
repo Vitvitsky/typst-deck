@@ -135,7 +135,7 @@ def _template_without_clip(tmp_path):
   set text(size: 11pt, lang: "ru")
   body
 }
-#let slide-title(title: none, subtitle: none) = page[#title #linebreak() #subtitle]
+#let slide-title(title: none, subtitle: none, author: none, department: none) = page[#title #linebreak() #subtitle]
 #let slide-section(title: none, subtitle: none) = page[#title]
 #let slide-image(title: none, bullets: none, image: none, image-size: none, caption: none) = page[#title]
 #let slide-bar-chart(title: none, data: none, unit: none, bullets: none) = page[#title]
@@ -168,3 +168,23 @@ def test_overflow_message_falls_back_when_culprit_unknown(deck_dir, tmp_path):
     from typst_deck.model import Deck
 
     assert overflowing_slide(Deck(slides=[{"type": "final"}]), [], pages=2) is None
+
+
+@pytest.mark.parametrize("tid", sorted(p.name for p in (TEMPLATE_DIR.parent / "templates").iterdir() if (p / "deck.typ").exists()))
+def test_every_template_accepts_author_and_department(deck_dir, tid):
+    """Контракт шаблона расширен: slide-title обязан принимать автора и департамент."""
+    from typst_deck.model import Deck
+
+    deck = Deck(slides=[{"type": "title", "title": "Итоги квартала", "subtitle": "Q3 2026",
+                         "author": "Сергей Витвицкий", "department": "ПК Данные и аналитика"}])
+    r = compile_deck(deck, deck_dir, TEMPLATE_DIR.parent / "templates" / tid)
+    assert len(r.svgs) == 1
+
+
+def test_default_template_accepts_author_and_department(deck_dir):
+    from typst_deck.model import Deck
+
+    deck = Deck(slides=[{"type": "title", "title": "Итоги квартала", "subtitle": "Q3 2026",
+                         "author": "Сергей Витвицкий", "department": "ПК Данные и аналитика"}])
+    r = compile_deck(deck, deck_dir, TEMPLATE_DIR)
+    assert len(r.svgs) == 1

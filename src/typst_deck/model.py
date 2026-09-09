@@ -39,6 +39,9 @@ class TitleSlide(SlideBase):
     type: Literal["title"]
     title: Title
     subtitle: Title = ""
+    # отдельные блоки, а не строки внутри подзаголовка: шаблоны размещают их сами
+    author: Title = ""
+    department: Title = ""
 
 
 class SectionSlide(SlideBase):

@@ -27,10 +27,13 @@
 // в паре с ними переполняет страницу → ghost-страница → нарушение контракта
 // «страниц == слайдов». Здесь параграфы не нужны (отступы заданы явными v()),
 // поэтому для вызова title-slide отключаем межпараграфный интервал.
-#let slide-title(title: none, subtitle: none) = {
+#let slide-title(title: none, subtitle: none, author: none, department: none) = {
   set par(spacing: 0pt)
+  // у канона автор и департамент — свои блоки под отступом v(80mm); раньше сюда
+  // приходили пустые строки, и автора приходилось вписывать в подзаголовок
   title-slide(
-    title: or-empty(title), subtitle: or-empty(subtitle), author: "", department: "",
+    title: or-empty(title), subtitle: or-empty(subtitle),
+    author: or-empty(author), department: or-empty(department),
   )
 }
 

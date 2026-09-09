@@ -39,7 +39,7 @@
   v(0.3cm)
 }
 
-#let slide-title(title: none, subtitle: none) = slide(
+#let slide-title(title: none, subtitle: none, author: none, department: none) = slide(
   background: place(top, rect(width: 100%, height: 1.1cm, fill: accent)),
 )[
   #v(1fr)
@@ -47,6 +47,9 @@
   #v(0.35cm)
   #if subtitle != none { text(size: 14pt, fill: muted, subtitle) }
   #v(1.4fr)
+  // автор и департамент — отдельные блоки контракта, прижаты к низу слайда
+  #if department != none { text(size: 10pt, fill: muted, department); linebreak() }
+  #if author != none { text(size: 10pt, fill: muted, author) }
 ]
 
 #let slide-section(title: none, subtitle: none) = slide(fill: accent)[

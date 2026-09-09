@@ -150,3 +150,22 @@ def test_overflowing_slide_unattributable_returns_none():
 
     deck = _deck_of(2)
     assert overflowing_slide(deck, [], pages=3) is None
+
+
+def test_render_typ_passes_author_and_department():
+    from typst_deck.model import Deck
+    from typst_deck.render import render_typ
+
+    deck = Deck(slides=[{"type": "title", "title": "Итоги", "subtitle": "Q3",
+                         "author": "Сергей Витвицкий", "department": "ПК Данные и аналитика"}])
+    typ, _ = render_typ(deck, set())
+    assert "author:" in typ and "department:" in typ
+    assert "Сергей Витвицкий" in typ and "ПК Данные и аналитика" in typ
+
+
+def test_render_typ_omits_empty_author():
+    from typst_deck.model import Deck
+    from typst_deck.render import render_typ
+
+    typ, _ = render_typ(Deck(slides=[{"type": "title", "title": "Итоги"}]), set())
+    assert "author: none" in typ and "department: none" in typ
