@@ -47,6 +47,15 @@ def build_system_prompt(deck: Deck, assets: list[str], templates: list[dict] | N
     )
 
 
+def _history_message(m: dict) -> dict:
+    """Роли "error" в API нет: неудачу прошлой правки передаём как реплику
+    пользователя, иначе провайдер отвергнет запрос, а модель повторит ошибку."""
+    if m["role"] == "error":
+        return {"role": "user",
+                "content": f"Предыдущая правка не применилась: {m['content']}. Учти это и предложи другое решение."}
+    return {"role": m["role"], "content": m["content"]}
+
+
 def _user_content(message: str, files: list[tuple[str, str]]) -> str:
     parts = [message.strip() or "Сделай презентацию по приложенным материалам."]
     for name, text in files:
@@ -63,7 +72,7 @@ async def run_agent(
     ex = ToolExecutor(deck, template_ids)
     tools = tool_specs(template_ids)
     messages: list[dict] = [{"role": "system", "content": build_system_prompt(deck, assets, templates)}]
-    messages += [{"role": m["role"], "content": m["content"]} for m in history]
+    messages += [_history_message(m) for m in history]
     messages.append({"role": "user", "content": _user_content(user_message, files)})
 
     reply = ""

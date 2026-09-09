@@ -208,3 +208,19 @@ async def test_run_agent_logs_each_llm_call(caplog):
     assert done[0].fields["tok_out"] == 200
     assert done[0].fields["cached"] == 800
     assert done[0].fields["iter"] == 1
+
+
+async def test_run_agent_passes_render_errors_as_valid_role():
+    """Ошибка рендера должна дойти до модели, но роли "error" в API нет —
+    её надо переложить в допустимую, иначе провайдер отвергнет запрос."""
+    llm = FakeLLM([Completion("понял", [])])
+    history = [
+        {"role": "user", "content": "добавь отступы"},
+        {"role": "error", "content": "CompileError: слайд 1 «Титул» не помещается на страницу"},
+    ]
+    await run_agent(llm, Deck(), "ещё раз", [], history, [])
+    sent = llm.calls[0]
+    assert all(m["role"] in ("system", "user", "assistant", "tool") for m in sent), \
+        [m["role"] for m in sent]
+    assert any("не помещается на страницу" in (m.get("content") or "") for m in sent), \
+        "модель обязана увидеть, почему прошлая правка не собралась"

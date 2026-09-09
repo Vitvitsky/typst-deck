@@ -591,3 +591,40 @@ async def test_pdf_build_is_logged(client, fake_llm, caplog):
     await client.get(f"/api/decks/{deck_id}/deck.pdf")
     done = [x for x in caplog.records if x.msg == "pdf.done"]
     assert len(done) == 1 and done[0].fields["ms"] >= 0 and done[0].fields["kb"] > 0
+
+
+@requires_typst
+async def test_failed_render_is_reported_to_model_on_retry(client, fake_llm, monkeypatch):
+    """Без этого модель повторяет ту же правку: она не знает, что прошлая не собралась."""
+    from typst_deck import service as service_mod
+    from typst_deck.render import CompileError
+
+    fake_llm._queue += [
+        Completion("", [ToolCall("c1", "set_deck", {"title": "T", "slides": [{"type": "title", "title": "A"}]})]),
+        Completion("", [ToolCall("c2", "finish", {"summary": "Готово"})]),
+    ]
+    r = await client.post("/api/decks", json={"brief": "первый заход", "upload_ids": []})
+    deck_id = r.json()["deck_id"]
+    await wait_job(client, r.json()["job_id"])
+
+    def boom(*a, **kw):
+        raise CompileError("слайд 1 «A» не помещается на страницу: содержимого больше")
+
+    monkeypatch.setattr(service_mod, "compile_deck", boom)
+    fake_llm._queue += [
+        Completion("", [ToolCall("c3", "set_deck", {"title": "T", "slides": [
+            {"type": "title", "title": "Длинный заголовок"}]})]),
+        Completion("", [ToolCall("c4", "finish", {"summary": "ок"})]),
+    ]
+    j = await client.post(f"/api/decks/{deck_id}/messages", json={"text": "добавь отступы"})
+    assert (await wait_job(client, j.json()["job_id"]))["status"] == "failed"
+
+    monkeypatch.undo()
+    fake_llm.calls.clear()
+    fake_llm._queue += [Completion("теперь короче", [])]
+    j = await client.post(f"/api/decks/{deck_id}/messages", json={"text": "давай ещё раз"})
+    await wait_job(client, j.json()["job_id"])
+
+    sent = fake_llm.calls[0]
+    assert any("не помещается на страницу" in (m.get("content") or "") for m in sent), \
+        [m.get("content", "")[:60] for m in sent]

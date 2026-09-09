@@ -121,3 +121,50 @@ def test_compile_pdf_without_build_is_error(deck_dir):
     (deck_dir / "build").mkdir(parents=True)
     with pytest.raises(CompileError):
         compile_pdf(deck_dir / "build")
+
+
+def _template_without_clip(tmp_path):
+    """Шаблон без защитной обрезки: титульный слайд переливается на вторую страницу.
+    Ровно так ведёт себя адаптер lmru-hr, у которого clip есть только на
+    содержательных слайдах."""
+    d = tmp_path / "leaky"
+    d.mkdir()
+    (d / "deck.typ").write_text("""
+#let deck(title: none, body) = {
+  set page(width: 16cm, height: 9cm, margin: 1cm)
+  set text(size: 11pt, lang: "ru")
+  body
+}
+#let slide-title(title: none, subtitle: none) = page[#title #linebreak() #subtitle]
+#let slide-section(title: none, subtitle: none) = page[#title]
+#let slide-image(title: none, bullets: none, image: none, image-size: none, caption: none) = page[#title]
+#let slide-bar-chart(title: none, data: none, unit: none, bullets: none) = page[#title]
+#let slide-chart(title: none, labels: none, series: none, unit: none, bullets: none) = page[#title]
+#let slide-final(title: none, contact: none) = page[#title]
+""", encoding="utf-8")
+    return d
+
+
+def test_overflow_names_the_slide_and_blames_content(deck_dir, tmp_path):
+    from typst_deck.model import Deck
+
+    tpl = _template_without_clip(tmp_path)
+    deck = Deck(slides=[
+        {"type": "title", "title": "Титул", "subtitle": "A" + "\n" * 40 + "B"},
+        {"type": "section", "title": "Раздел"},
+        {"type": "final"},
+    ])
+    with pytest.raises(CompileError) as e:
+        compile_deck(deck, deck_dir, tpl)
+    msg = str(e.value)
+    assert "слайд 1" in msg, msg
+    assert "не помещается" in msg or "не поместил" in msg, msg
+    assert "нарушает контракт" not in msg, "шаблон тут ни при чём — виновато содержимое"
+
+
+def test_overflow_message_falls_back_when_culprit_unknown(deck_dir, tmp_path):
+    """Если виновника определить нельзя, остаёмся на прежней формулировке про контракт."""
+    from typst_deck.render import overflowing_slide
+    from typst_deck.model import Deck
+
+    assert overflowing_slide(Deck(slides=[{"type": "final"}]), [], pages=2) is None

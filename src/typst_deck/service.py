@@ -271,7 +271,10 @@ class DeckService:
             deck = self.store.load(deck_id)
             prev = deck.version  # агент правит эту же колоду на месте, а save поднимет version
             files = self.store.list_uploads(deck_id)  # исходники нужны и при правках: кеш промпта делает это дёшево
-            history = [m for m in self.store.read_chat(deck_id) if m["role"] in ("user", "assistant")]
+            # ошибки тоже уходят в модель: без них она не знает, что прошлая правка
+            # не собралась, и повторяет её (см. чат колоды 0o97cztaysre 2026-09-09)
+            history = [m for m in self.store.read_chat(deck_id)
+                       if m["role"] in ("user", "assistant", "error")]
             self._chat(deck_id, "user", message, deck.version)
             log_event(log, "stage.reading", deck=deck_id, job=job_id, files=len(files),
                       chars=sum(len(t) for _, t in files), history=len(history), ms=_ms(t_read))

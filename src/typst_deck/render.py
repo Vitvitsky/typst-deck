@@ -42,6 +42,27 @@ def page_size(svg: Path) -> dict[str, float]:
     return {"w": float(m[1]), "h": float(m[2])} if m else dict(DEFAULT_PAGE)
 
 
+def overflowing_slide(deck: Deck, positions: list[dict], pages: int | None = None) -> int | None:
+    """Номер слайда (с единицы), который не поместился на свою страницу, или None.
+
+    Переполнившийся слайд оставляет свои поля на своей странице, а всё, что
+    после него, съезжает на страницу вперёд. Поэтому виновник — последний слайд
+    перед первым съехавшим. Если не съехал никто, а страниц больше, чем слайдов,
+    вылез последний слайд.
+    """
+    culprit = None
+    for i, s in enumerate(deck.slides, 1):
+        slide_pages = [p["page"] for p in positions if p.get("slide") == s.id]
+        if not slide_pages:
+            continue  # у слайда нет размеченных полей — судить по нему нельзя
+        if min(slide_pages) != i:
+            return culprit
+        culprit = i
+    if pages is not None and pages > len(deck.slides):
+        return culprit
+    return None
+
+
 def typ_str(s: str) -> str:
     """Строковый литерал Typst: содержимое не трактуется как разметка."""
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
@@ -197,19 +218,29 @@ def compile_deck(
     if r.returncode != 0:
         raise CompileError("ошибка компиляции", r.stderr)
     svgs = sorted(tmp.glob("slide-*.svg"), key=lambda p: int(p.stem.split("-")[1]))
-    if len(svgs) != len(deck.slides):
-        raise CompileError(
-            f"страниц {len(svgs)}, слайдов {len(deck.slides)}: "
-            "шаблон нарушает контракт «одна функция — одна страница»"
-        )
+    # Позиции запрашиваются до проверки контракта: по ним видно, какой именно
+    # слайд вылез за свою страницу, а без этого сообщение винит шаблон вслепую.
     r, timings["query_ms"] = _run(
         [typst_bin, "eval", "query(<edit>).map(it => it.value)", "--root", str(tmp),
          *font_args, "--in", src, "--format", "json"],
         timeout,
     )
+    positions = json.loads(r.stdout) if r.returncode == 0 else []
+    if len(svgs) != len(deck.slides):
+        n = overflowing_slide(deck, positions, pages=len(svgs))
+        if n:
+            title = getattr(deck.slides[n - 1], "title", "") or ""
+            where = f"слайд {n}" + (f" «{title}»" if title else "")
+            raise CompileError(
+                f"{where} не помещается на страницу: содержимого больше, чем вмещает шаблон. "
+                "Сократите текст на этом слайде."
+            )
+        raise CompileError(
+            f"страниц {len(svgs)}, слайдов {len(deck.slides)}: "
+            "шаблон нарушает контракт «одна функция — одна страница»"
+        )
     if r.returncode != 0:
         raise CompileError("ошибка запроса позиций", r.stderr)
-    positions = json.loads(r.stdout)
     # Вывод typst детерминирован, поэтому хеш страницы годится как её версия в URL:
     # правка одного слайда меняет ссылку только у него, остальные берутся из кеша.
     pages = [hashlib.blake2b(p.read_bytes(), digest_size=8).hexdigest() for p in svgs]

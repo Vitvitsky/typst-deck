@@ -87,3 +87,66 @@ def test_page_size_reads_only_head_of_large_file(tmp_path):
     p = tmp_path / "slide-1.svg"
     p.write_text('<svg viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg">' + "<path/>" * 40000)
     assert page_size(p) == {"w": 800.0, "h": 600.0}
+
+
+def _deck_of(n: int):
+    from typst_deck.model import Deck
+
+    return Deck(slides=[{"type": "section", "title": f"С{i}"} for i in range(1, n + 1)])
+
+
+def test_overflowing_slide_finds_culprit_by_shift():
+    """Переполнившийся слайд держит свои поля на своей странице, а съезжает всё после него."""
+    from typst_deck.render import overflowing_slide
+
+    deck = _deck_of(4)
+    ids = [s.id for s in deck.slides]
+    positions = [{"slide": ids[0], "page": 1}, {"slide": ids[1], "page": 3},
+                 {"slide": ids[2], "page": 4}, {"slide": ids[3], "page": 5}]
+    assert overflowing_slide(deck, positions) == 1
+
+
+def test_overflowing_slide_in_the_middle():
+    from typst_deck.render import overflowing_slide
+
+    deck = _deck_of(4)
+    ids = [s.id for s in deck.slides]
+    positions = [{"slide": ids[0], "page": 1}, {"slide": ids[1], "page": 2},
+                 {"slide": ids[2], "page": 4}, {"slide": ids[3], "page": 5}]
+    assert overflowing_slide(deck, positions) == 2
+
+
+def test_overflowing_slide_is_the_last_one():
+    """Последний слайд переполнился: сдвигать некого, но страниц больше, чем слайдов."""
+    from typst_deck.render import overflowing_slide
+
+    deck = _deck_of(3)
+    ids = [s.id for s in deck.slides]
+    positions = [{"slide": ids[i], "page": i + 1} for i in range(3)]
+    assert overflowing_slide(deck, positions, pages=4) == 3
+
+
+def test_overflowing_slide_none_when_layout_is_sane():
+    from typst_deck.render import overflowing_slide
+
+    deck = _deck_of(3)
+    ids = [s.id for s in deck.slides]
+    positions = [{"slide": ids[i], "page": i + 1} for i in range(3)]
+    assert overflowing_slide(deck, positions, pages=3) is None
+
+
+def test_overflowing_slide_skips_slides_without_fields():
+    """У слайда может не быть размеченных полей — судить по нему нельзя, но и падать незачем."""
+    from typst_deck.render import overflowing_slide
+
+    deck = _deck_of(3)
+    ids = [s.id for s in deck.slides]
+    positions = [{"slide": ids[0], "page": 1}, {"slide": ids[2], "page": 4}]
+    assert overflowing_slide(deck, positions) == 1
+
+
+def test_overflowing_slide_unattributable_returns_none():
+    from typst_deck.render import overflowing_slide
+
+    deck = _deck_of(2)
+    assert overflowing_slide(deck, [], pages=3) is None
