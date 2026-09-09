@@ -1,12 +1,12 @@
 """Колоды: создание, чтение сборки, ручные правки, версии, чат."""
 import json
 
-from fastapi import APIRouter, Depends, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, Request, UploadFile
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from ..service import DeckService
-from .common import ApiError, not_found, svc
+from .common import ApiError, file_etag, is_fresh, not_found, svc
 
 router = APIRouter(prefix="/api/decks")
 
@@ -89,11 +89,19 @@ async def add_material(deck_id: str, file: UploadFile, s: DeckService = Depends(
 
 
 @router.get("/{deck_id}/slides/{n}.svg")
-async def svg(deck_id: str, n: int, s: DeckService = Depends(svc)):
+async def svg(request: Request, deck_id: str, n: int, s: DeckService = Depends(svc)):
     p = s.store.deck_dir(deck_id) / "build" / f"slide-{n}.svg"
     if not s.store.exists(deck_id) or not p.exists():
         raise not_found("страница")
-    return FileResponse(p, media_type="image/svg+xml", headers={"Cache-Control": "no-store"})
+    # URL версионирован (?v=), значит содержимое под ним не меняется. no-store
+    # заставлял браузер тянуть все слайды заново после каждой правки — на боевой
+    # колоде это 705 КБ несжатого SVG. private: колоды за Basic Auth, общим
+    # прокси их кэшировать нельзя.
+    headers = {"Cache-Control": "private, max-age=31536000, immutable"}
+    etag = file_etag(p)
+    if is_fresh(request, etag):
+        return Response(status_code=304, headers={**headers, "ETag": etag})
+    return FileResponse(p, media_type="image/svg+xml", headers={**headers, "ETag": etag})
 
 
 @router.get("/{deck_id}/deck.pdf")

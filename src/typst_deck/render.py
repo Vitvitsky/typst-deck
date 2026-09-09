@@ -1,6 +1,7 @@
 """Порождение deck.typ из модели и компиляция через typst."""
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -145,6 +146,7 @@ class CompileResult:
     warnings: list[str] = field(default_factory=list)
     typ: str = ""
     timings: dict[str, int] = field(default_factory=dict)  # pdf_ms, svg_ms, query_ms, ms
+    pages: list[str] = field(default_factory=list)  # хеш содержимого каждой страницы
 
 
 def _run(cmd: list[str], timeout: int) -> tuple[subprocess.CompletedProcess, int]:
@@ -205,8 +207,12 @@ def compile_deck(
     if r.returncode != 0:
         raise CompileError("ошибка запроса позиций", r.stderr)
     positions = json.loads(r.stdout)
+    # Вывод typst детерминирован, поэтому хеш страницы годится как её версия в URL:
+    # правка одного слайда меняет ссылку только у него, остальные берутся из кеша.
+    pages = [hashlib.blake2b(p.read_bytes(), digest_size=8).hexdigest() for p in svgs]
     (tmp / "positions.json").write_text(json.dumps(positions, ensure_ascii=False))
     (tmp / "warnings.json").write_text(json.dumps(warnings, ensure_ascii=False))
+    (tmp / "pages.json").write_text(json.dumps(pages))
 
     build = deck_dir / "build"
     old = deck_dir / "build.old"
@@ -228,4 +234,5 @@ def compile_deck(
         warnings=warnings,
         typ=typ,
         timings=timings,
+        pages=pages,
     )

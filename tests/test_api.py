@@ -466,3 +466,73 @@ async def test_deck_response_page_size_without_build(client, fake_llm):
     await wait_job(client, r.json()["job_id"])
     d = (await client.get(f"/api/decks/{r.json()['deck_id']}")).json()
     assert d["has_build"] is False and d["page"] == DEFAULT_PAGE
+
+
+@requires_typst
+async def test_slide_svg_is_cacheable_by_version(client, fake_llm):
+    """URL слайда версионирован ?v=, поэтому содержимое под ним неизменно:
+    no-store заставлял браузер качать все слайды заново после каждой правки."""
+    fake_llm._queue += [
+        Completion("", [ToolCall("c1", "set_deck", {"title": "T", "slides": [{"type": "title", "title": "A"}]})]),
+        Completion("", [ToolCall("c2", "finish", {"summary": "Готово"})]),
+    ]
+    r = await client.post("/api/decks", json={"brief": "x", "upload_ids": []})
+    deck_id = r.json()["deck_id"]
+    await wait_job(client, r.json()["job_id"])
+    v = (await client.get(f"/api/decks/{deck_id}")).json()["version"]
+
+    svg = await client.get(f"/api/decks/{deck_id}/slides/1.svg?v={v}")
+    cc = svg.headers["cache-control"]
+    assert "no-store" not in cc
+    assert "immutable" in cc and "max-age=" in cc
+    assert "private" in cc, "колоды за Basic Auth — общим прокси их кэшировать нельзя"
+    assert svg.headers["etag"], "ETag нужен, чтобы работал условный запрос"
+
+
+@requires_typst
+async def test_slide_svg_answers_304_on_revalidation(client, fake_llm):
+    fake_llm._queue += [
+        Completion("", [ToolCall("c1", "set_deck", {"title": "T", "slides": [{"type": "title", "title": "A"}]})]),
+        Completion("", [ToolCall("c2", "finish", {"summary": "Готово"})]),
+    ]
+    r = await client.post("/api/decks", json={"brief": "x", "upload_ids": []})
+    deck_id = r.json()["deck_id"]
+    await wait_job(client, r.json()["job_id"])
+
+    first = await client.get(f"/api/decks/{deck_id}/slides/1.svg?v=2")
+    again = await client.get(f"/api/decks/{deck_id}/slides/1.svg?v=2",
+                             headers={"If-None-Match": first.headers["etag"]})
+    assert again.status_code == 304
+    assert again.content == b""
+
+
+@requires_typst
+async def test_deck_response_carries_per_slide_versions(client, fake_llm):
+    """Версия на слайд: правка одного слайда не должна менять URL остальных."""
+    fake_llm._queue += [
+        Completion("", [ToolCall("c1", "set_deck", {"title": "T", "slides": [
+            {"type": "title", "title": "Первый"},
+            {"type": "section", "title": "Второй"},
+            {"type": "final"}]})]),
+        Completion("", [ToolCall("c2", "finish", {"summary": "Готово"})]),
+    ]
+    r = await client.post("/api/decks", json={"brief": "x", "upload_ids": []})
+    deck_id = r.json()["deck_id"]
+    await wait_job(client, r.json()["job_id"])
+
+    d = (await client.get(f"/api/decks/{deck_id}")).json()
+    before = d["pages"]
+    assert len(before) == 3 and len(set(before)) == 3
+
+    sid = d["deck"]["slides"][1]["id"]
+    after = (await client.patch(f"/api/decks/{deck_id}/slides/{sid}",
+                                json={"patch": {"title": "Изменённый"}})).json()["pages"]
+    assert after[1] != before[1]
+    assert [after[0], after[2]] == [before[0], before[2]]
+
+
+async def test_deck_response_pages_empty_without_build(client, fake_llm):
+    fake_llm._queue += [Completion("нет правок", [])]
+    r = await client.post("/api/decks", json={"brief": "x", "upload_ids": []})
+    await wait_job(client, r.json()["job_id"])
+    assert (await client.get(f"/api/decks/{r.json()['deck_id']}")).json()["pages"] == []

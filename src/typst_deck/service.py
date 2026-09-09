@@ -134,6 +134,8 @@ class DeckService:
             "has_build": (build / "deck.pdf").exists(),
             # размер страницы отсюда, чтобы фронт не качал slide-1.svg целиком ради viewBox
             "page": page_size(build / "slide-1.svg"),
+            # версия на слайд: правка одного слайда не меняет URL остальных
+            "pages": json.loads(pp.read_text()) if (pp := build / "pages.json").exists() else [],
         }
 
     def list_decks(self) -> list[dict]:

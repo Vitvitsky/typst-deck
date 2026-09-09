@@ -149,6 +149,13 @@ $("history").addEventListener("click", async () => {
   box.classList.remove("hidden");
 });
 
+// версия слайда для URL: хеш его содержимого, чтобы правка одного слайда
+// не сбрасывала кеш остальных; на сборках до pages.json — версия колоды
+function slideVer(i) {
+  const pages = state.info && state.info.pages;
+  return (pages && pages[i]) || (state.info && state.info.version);
+}
+
 // ============ сцена: сборка / пусто / слайды
 function renderGenerating() {
   const inner = $("stage-inner");
@@ -179,7 +186,7 @@ function startTimer() {
 function stopTimer() { if (state.timer) clearInterval(state.timer); state.timer = null; }
 
 function renderStage() {
-  const { deck, version, warnings, status, last_error } = state.info;
+  const { deck, warnings, status, last_error } = state.info;
   const inner = $("stage-inner");
   const parts = [];
   if (status === "failed" && last_error && !deck.slides.length) {
@@ -206,7 +213,7 @@ function renderStage() {
         onclick: (e) => { e.stopPropagation(); select(slide.id); openFieldEditor(slide, n, p.field, e.currentTarget, page); },
       }));
     }
-    const page = el("div", { class: "page" }, el("img", { src: `api/decks/${deckId}/slides/${n}.svg?v=${version}`, alt: `Слайд ${n}` }), overlay);
+    const page = el("div", { class: "page" }, el("img", { src: `api/decks/${deckId}/slides/${n}.svg?v=${slideVer(i)}`, alt: `Слайд ${n}` }), overlay);
     parts.push(el("div", { class: `pagewrap${state.selected === slide.id ? " selected" : ""}`, id: `slide-${slide.id}` },
       el("div", { class: "pagebar" }, el("span", { class: "n num" }, n), el("span", {}, TYPE_RU[slide.type]),
         el("span", { class: "hint" }, "Нажмите на текст, чтобы изменить")),
@@ -217,13 +224,13 @@ function renderStage() {
 
 // ============ лента миниатюр
 function renderRail() {
-  const { deck, version } = state.info;
+  const { deck } = state.info;
   const rail = $("rail");
   if (!deck.slides.length) { rail.replaceChildren(el("div", { class: "muted tiny", style: "padding:6px" }, "Слайдов нет")); return; }
   rail.replaceChildren(...deck.slides.map((slide, i) => {
     const item = el("div", { class: `thumb-item${state.selected === slide.id ? " selected" : ""}`, role: "button", tabindex: 0,
       "aria-label": `Слайд ${i + 1}: ${slide.title || TYPE_RU[slide.type]}` },
-      state.info.has_build ? el("img", { src: `api/decks/${deckId}/slides/${i + 1}.svg?v=${version}`, alt: "" }) : el("div", { class: "skeleton" }),
+      state.info.has_build ? el("img", { src: `api/decks/${deckId}/slides/${i + 1}.svg?v=${slideVer(i)}`, alt: "" }) : el("div", { class: "skeleton" }),
       el("div", { class: "cap" }, el("span", { class: "n num" }, i + 1), el("span", { class: "t" }, slide.title || TYPE_RU[slide.type])),
       state.changed.has(slide.id) ? el("span", { class: "dot", title: "Изменён моделью" }) : null,
       el("div", { class: "ops" },

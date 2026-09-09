@@ -75,3 +75,23 @@ def test_compile_logs_render_done(deck_dir, caplog):
     assert rec.fields["slides"] == 6
     assert rec.fields["svg_kb"] > 0
     assert rec.fields["ms"] >= 0
+
+
+def test_compile_hashes_each_page(deck_dir):
+    import json as _json
+
+    r = compile_deck(full_deck(), deck_dir, TEMPLATE_DIR)
+    assert len(r.pages) == 6
+    assert all(isinstance(h, str) and h for h in r.pages)
+    assert len(set(r.pages)) == 6, "разные слайды — разные хеши"
+    assert _json.loads((deck_dir / "build" / "pages.json").read_text()) == r.pages
+
+
+def test_page_hash_changes_only_for_edited_slide(deck_dir):
+    before = compile_deck(full_deck(), deck_dir, TEMPLATE_DIR).pages
+    deck = full_deck()
+    deck.slides[2].title = "Совсем другой заголовок"
+    after = compile_deck(deck, deck_dir, TEMPLATE_DIR).pages
+    assert after[2] != before[2], "правленый слайд обязан сменить хеш"
+    assert [after[i] for i in (0, 1, 3, 4, 5)] == [before[i] for i in (0, 1, 3, 4, 5)], \
+        "остальные слайды должны остаться под теми же URL"
