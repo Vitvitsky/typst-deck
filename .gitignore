@@ -6,5 +6,8 @@ data/
 build.tmp/
 *.pdf
 
-# Корпоративный шаблон Lemana Tech: подтягивается scripts/sync-lmru-template.sh из закрытого репозитория, в git не хранится
-templates/lmru-hr/
+# Корпоративный шаблон Lemana Tech: канон, компоненты и шрифты подтягивает scripts/sync-lmru-template.sh
+# из закрытого репозитория и в git не хранятся. Адаптер контракта deck.typ и template.json — свои, они в git.
+templates/lmru-hr/*
+!templates/lmru-hr/deck.typ
+!templates/lmru-hr/template.json
