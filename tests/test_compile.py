@@ -13,7 +13,7 @@ pytestmark = requires_typst
 def test_compile_full_deck(deck_dir, png_bytes):
     (deck_dir / "assets" / "a000001.png").write_bytes(png_bytes)
     r = compile_deck(full_deck(), deck_dir, TEMPLATE_DIR)
-    assert r.pdf.exists() and len(r.svgs) == 6
+    assert len(r.svgs) == 6  # PDF теперь ленивый, см. test_compile_does_not_build_pdf
     assert r.warnings == []
     fields = {(p["slide"], p["field"]) for p in r.positions}
     assert ("s000001", "title") in fields and ("s000003", "bullets") in fields
@@ -61,9 +61,9 @@ def test_every_template_honours_contract(deck_dir, png_bytes, tid):
 
 def test_compile_reports_per_command_timings(deck_dir):
     r = compile_deck(full_deck(), deck_dir, TEMPLATE_DIR)
-    assert set(r.timings) == {"pdf_ms", "svg_ms", "query_ms", "ms"}
+    assert set(r.timings) == {"svg_ms", "query_ms", "ms"}
     assert all(isinstance(v, int) and v >= 0 for v in r.timings.values())
-    assert r.timings["ms"] >= max(r.timings["pdf_ms"], r.timings["svg_ms"], r.timings["query_ms"])
+    assert r.timings["ms"] >= max(r.timings["svg_ms"], r.timings["query_ms"])
 
 
 def test_compile_logs_render_done(deck_dir, caplog):
@@ -95,3 +95,29 @@ def test_page_hash_changes_only_for_edited_slide(deck_dir):
     assert after[2] != before[2], "правленый слайд обязан сменить хеш"
     assert [after[i] for i in (0, 1, 3, 4, 5)] == [before[i] for i in (0, 1, 3, 4, 5)], \
         "остальные слайды должны остаться под теми же URL"
+
+
+def test_compile_does_not_build_pdf(deck_dir):
+    """PDF нужен раз в конце, а собирался на каждую правку — 161 мс из 341."""
+    r = compile_deck(full_deck(), deck_dir, TEMPLATE_DIR)
+    assert not (deck_dir / "build" / "deck.pdf").exists()
+    assert len(r.svgs) == 6
+    assert (deck_dir / "build" / "deck.typ").exists(), "исходник нужен, чтобы собрать PDF потом"
+    assert (deck_dir / "build" / "template").is_symlink()
+    assert "pdf_ms" not in r.timings
+
+
+def test_compile_pdf_builds_from_existing_build(deck_dir):
+    from typst_deck.render import compile_pdf
+
+    compile_deck(full_deck(), deck_dir, TEMPLATE_DIR)
+    pdf = compile_pdf(deck_dir / "build")
+    assert pdf.exists() and pdf.read_bytes()[:5] == b"%PDF-"
+
+
+def test_compile_pdf_without_build_is_error(deck_dir):
+    from typst_deck.render import CompileError, compile_pdf
+
+    (deck_dir / "build").mkdir(parents=True)
+    with pytest.raises(CompileError):
+        compile_pdf(deck_dir / "build")

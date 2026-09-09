@@ -107,9 +107,7 @@ async def svg(request: Request, deck_id: str, n: int, s: DeckService = Depends(s
 @router.get("/{deck_id}/deck.pdf")
 async def pdf(deck_id: str, s: DeckService = Depends(svc)):
     deck = s.load(deck_id)
-    p = s.store.deck_dir(deck_id) / "build" / "deck.pdf"
-    if not p.exists():
-        raise not_found("PDF")
+    p = await s.pdf(deck_id)
     return FileResponse(p, media_type="application/pdf", filename=f"{deck.title[:60] or 'deck'}.pdf")
 
 

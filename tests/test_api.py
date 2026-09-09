@@ -536,3 +536,58 @@ async def test_deck_response_pages_empty_without_build(client, fake_llm):
     r = await client.post("/api/decks", json={"brief": "x", "upload_ids": []})
     await wait_job(client, r.json()["job_id"])
     assert (await client.get(f"/api/decks/{r.json()['deck_id']}")).json()["pages"] == []
+
+
+@requires_typst
+async def test_pdf_is_built_on_demand_and_reused(client, fake_llm):
+    fake_llm._queue += [
+        Completion("", [ToolCall("c1", "set_deck", {"title": "T", "slides": [{"type": "title", "title": "A"}]})]),
+        Completion("", [ToolCall("c2", "finish", {"summary": "Готово"})]),
+    ]
+    r = await client.post("/api/decks", json={"brief": "x", "upload_ids": []})
+    deck_id = r.json()["deck_id"]
+    await wait_job(client, r.json()["job_id"])
+
+    build = client.app.state.service.store.deck_dir(deck_id) / "build"
+    assert not (build / "deck.pdf").exists(), "после сборки колоды PDF ещё не нужен"
+    assert (await client.get(f"/api/decks/{deck_id}")).json()["has_build"] is True
+
+    first = await client.get(f"/api/decks/{deck_id}/deck.pdf")
+    assert first.status_code == 200 and first.content[:5] == b"%PDF-"
+    stamp = (build / "deck.pdf").stat().st_mtime_ns
+
+    second = await client.get(f"/api/decks/{deck_id}/deck.pdf")
+    assert second.status_code == 200
+    assert (build / "deck.pdf").stat().st_mtime_ns == stamp, "готовый PDF не должен пересобираться"
+
+
+@requires_typst
+async def test_pdf_rebuilt_after_edit(client, fake_llm):
+    fake_llm._queue += [
+        Completion("", [ToolCall("c1", "set_deck", {"title": "T", "slides": [{"type": "title", "title": "A"}]})]),
+        Completion("", [ToolCall("c2", "finish", {"summary": "Готово"})]),
+    ]
+    r = await client.post("/api/decks", json={"brief": "x", "upload_ids": []})
+    deck_id = r.json()["deck_id"]
+    await wait_job(client, r.json()["job_id"])
+    await client.get(f"/api/decks/{deck_id}/deck.pdf")
+
+    await client.patch(f"/api/decks/{deck_id}", json={"title": "Другое имя"})
+    build = client.app.state.service.store.deck_dir(deck_id) / "build"
+    assert not (build / "deck.pdf").exists(), "правка обязана обнулить готовый PDF"
+    assert (await client.get(f"/api/decks/{deck_id}/deck.pdf")).content[:5] == b"%PDF-"
+
+
+@requires_typst
+async def test_pdf_build_is_logged(client, fake_llm, caplog):
+    fake_llm._queue += [
+        Completion("", [ToolCall("c1", "set_deck", {"title": "T", "slides": [{"type": "title", "title": "A"}]})]),
+        Completion("", [ToolCall("c2", "finish", {"summary": "Готово"})]),
+    ]
+    r = await client.post("/api/decks", json={"brief": "x", "upload_ids": []})
+    deck_id = r.json()["deck_id"]
+    await wait_job(client, r.json()["job_id"])
+    caplog.set_level("INFO", logger="typst_deck.render")
+    await client.get(f"/api/decks/{deck_id}/deck.pdf")
+    done = [x for x in caplog.records if x.msg == "pdf.done"]
+    assert len(done) == 1 and done[0].fields["ms"] >= 0 and done[0].fields["kb"] > 0

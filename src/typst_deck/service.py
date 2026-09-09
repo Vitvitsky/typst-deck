@@ -18,7 +18,7 @@ from .llm.client import LLM
 from .llm.tools import format_validation
 from .logs import log_event
 from .model import Deck, utcnow
-from .render import CompileError, CompileResult, compile_deck, page_size
+from .render import CompileError, CompileResult, compile_deck, compile_pdf, page_size
 from .store import DeckNotFound, DeckStore
 from .templates import SAMPLE_DECK, TemplateNotFound, TemplateRegistry
 
@@ -131,7 +131,8 @@ class DeckService:
             "edit_url": f"{base}/d/{deck_id}",
             "warnings": warnings,
             "last_error": last.error if last else None,
-            "has_build": (build / "deck.pdf").exists(),
+            # признак сборки — слайды, а не PDF: он собирается лениво
+            "has_build": (build / "slide-1.svg").exists(),
             # размер страницы отсюда, чтобы фронт не качал slide-1.svg целиком ради viewBox
             "page": page_size(build / "slide-1.svg"),
             # версия на слайд: правка одного слайда не меняет URL остальных
@@ -146,7 +147,8 @@ class DeckService:
             out.append({
                 "id": d.id, "title": d.title, "slide_count": len(d.slides), "version": d.version,
                 "created_at": d.created_at.isoformat(), "updated_at": d.updated_at.isoformat(),
-                "status": status, "has_build": (self.store.deck_dir(d.id) / "build" / "deck.pdf").exists(),
+                "status": status,
+                "has_build": (self.store.deck_dir(d.id) / "build" / "slide-1.svg").exists(),
             })
         return out
 
@@ -174,6 +176,24 @@ class DeckService:
             )
         except CompileError as e:
             raise ApiError(500, "render", f"{e}: {e.stderr[:2000]}")
+
+    async def pdf(self, deck_id: str) -> Path:
+        """PDF по требованию: собирается при первом скачивании и лежит в build/
+        до следующей правки, которая заменяет build/ целиком и снимает его."""
+        self.load(deck_id)
+        build = self.store.deck_dir(deck_id) / "build"
+        ready = build / "deck.pdf"
+        if ready.exists():
+            return ready
+        if not (build / "deck.typ").exists():
+            raise not_found("PDF")
+        async with self.store.lock(deck_id):
+            if ready.exists():  # мог успеть параллельный запрос
+                return ready
+            try:
+                return await asyncio.to_thread(compile_pdf, build, self.settings.typst_bin)
+            except CompileError as e:
+                raise ApiError(500, "render", f"{e}: {e.stderr[:2000]}")
 
     # --- ручные правки
     async def manual(self, deck_id: str, fn: Callable[[Deck], object]) -> dict:

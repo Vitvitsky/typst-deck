@@ -140,12 +140,12 @@ class CompileError(Exception):
 
 @dataclass
 class CompileResult:
-    pdf: Path
+    pdf: Path  # путь, по которому его соберёт compile_pdf(); сразу после сборки файла нет
     svgs: list[Path]
     positions: list[dict]
     warnings: list[str] = field(default_factory=list)
     typ: str = ""
-    timings: dict[str, int] = field(default_factory=dict)  # pdf_ms, svg_ms, query_ms, ms
+    timings: dict[str, int] = field(default_factory=dict)  # svg_ms, query_ms, ms
     pages: list[str] = field(default_factory=list)  # хеш содержимого каждой страницы
 
 
@@ -164,7 +164,9 @@ def _run(cmd: list[str], timeout: int) -> tuple[subprocess.CompletedProcess, int
 def compile_deck(
     deck: Deck, deck_dir: Path, template_dir: Path, typst_bin: str = "typst", timeout: int = 60
 ) -> CompileResult:
-    """Собирает build/: deck.typ, deck.pdf, slide-N.svg, positions.json, warnings.json.
+    """Собирает build/: deck.typ, slide-N.svg, positions.json, warnings.json, pages.json.
+
+    PDF не собирается — его делает compile_pdf() по требованию.
 
     Сборка идёт в build.tmp/ и подменяет build/ целиком, чтобы превью
     не читало полуготовые файлы.
@@ -187,12 +189,13 @@ def compile_deck(
     src = str(tmp / "deck.typ")
     t_all = time.perf_counter_ns()
     timings: dict[str, int] = {}
-    for target, key in (("deck.pdf", "pdf_ms"), ("slide-{p}.svg", "svg_ms")):
-        r, timings[key] = _run(
-            [typst_bin, "compile", "--root", str(tmp), *font_args, src, str(tmp / target)], timeout
-        )
-        if r.returncode != 0:
-            raise CompileError("ошибка компиляции", r.stderr)
+    # PDF здесь не собирается: он нужен раз в конце работы, а стоил 161 мс из 341
+    # на каждой правке. Его делает compile_pdf() по запросу — см. api/decks.py.
+    r, timings["svg_ms"] = _run(
+        [typst_bin, "compile", "--root", str(tmp), *font_args, src, str(tmp / "slide-{p}.svg")], timeout
+    )
+    if r.returncode != 0:
+        raise CompileError("ошибка компиляции", r.stderr)
     svgs = sorted(tmp.glob("slide-*.svg"), key=lambda p: int(p.stem.split("-")[1]))
     if len(svgs) != len(deck.slides):
         raise CompileError(
@@ -225,8 +228,7 @@ def compile_deck(
     timings["ms"] = (time.perf_counter_ns() - t_all) // 1_000_000
     svg_kb = sum(p.stat().st_size for p in out_svgs) // 1024
     log_event(log, "render.done", deck=deck.id, slides=len(out_svgs), svg_kb=svg_kb,
-              pdf_ms=timings["pdf_ms"], svg_ms=timings["svg_ms"], query_ms=timings["query_ms"],
-              ms=timings["ms"])
+              svg_ms=timings["svg_ms"], query_ms=timings["query_ms"], ms=timings["ms"])
     return CompileResult(
         pdf=build / "deck.pdf",
         svgs=out_svgs,
@@ -236,3 +238,24 @@ def compile_deck(
         timings=timings,
         pages=pages,
     )
+
+
+def compile_pdf(build_dir: Path, typst_bin: str = "typst", timeout: int = 60) -> Path:
+    """PDF из уже готового build/: deck.typ, шаблон и ассеты там уже лежат.
+
+    Собирается по запросу и остаётся в build/, поэтому повторное скачивание
+    бесплатно, а любая правка колоды заменяет build/ целиком и снимает его сама.
+    """
+    src = build_dir / "deck.typ"
+    if not src.exists():
+        raise CompileError("нет сборки колоды: нечего превращать в PDF")
+    fonts = build_dir / "template" / "fonts"
+    font_args = ["--font-path", str(fonts)] if fonts.is_dir() else []
+    out = build_dir / "deck.pdf"
+    r, ms = _run(
+        [typst_bin, "compile", "--root", str(build_dir), *font_args, str(src), str(out)], timeout
+    )
+    if r.returncode != 0:
+        raise CompileError("ошибка сборки PDF", r.stderr)
+    log_event(log, "pdf.done", kb=out.stat().st_size // 1024, ms=ms)
+    return out
