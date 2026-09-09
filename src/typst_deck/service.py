@@ -18,7 +18,7 @@ from .llm.client import LLM
 from .llm.tools import format_validation
 from .logs import log_event
 from .model import Deck, utcnow
-from .render import CompileError, CompileResult, compile_deck
+from .render import CompileError, CompileResult, compile_deck, page_size
 from .store import DeckNotFound, DeckStore
 from .templates import SAMPLE_DECK, TemplateNotFound, TemplateRegistry
 
@@ -132,6 +132,8 @@ class DeckService:
             "warnings": warnings,
             "last_error": last.error if last else None,
             "has_build": (build / "deck.pdf").exists(),
+            # размер страницы отсюда, чтобы фронт не качал slide-1.svg целиком ради viewBox
+            "page": page_size(build / "slide-1.svg"),
         }
 
     def list_decks(self) -> list[dict]:

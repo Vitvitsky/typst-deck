@@ -20,7 +20,6 @@ const state = { info: null, positions: [], page: { w: 453.54, h: 255.12 }, selec
 // ============ загрузка
 async function refresh() {
   const info = await api(`api/decks/${deckId}`);
-  const prevVersion = state.info && state.info.version;
   state.info = info;
   renderTopbar();
   if (info.status === "generating") {
@@ -29,10 +28,8 @@ async function refresh() {
     return;
   }
   stopTimer();
-  if (info.has_build) {
-    state.positions = await api(`api/decks/${deckId}/positions`);
-    if (prevVersion !== info.version) await readPageSize();
-  }
+  state.page = info.page || state.page;
+  if (info.has_build) state.positions = await api(`api/decks/${deckId}/positions`);
   if (state.selected && !info.deck.slides.some((s) => s.id === state.selected)) state.selected = null;
   renderStage();
   renderRail();
@@ -52,14 +49,6 @@ async function pollUntilReady() {
     }
   } finally { state.polling = false; }
   await Promise.all([refresh(), loadChat()]);
-}
-
-async function readPageSize() {
-  try {
-    const r = await fetch(`api/decks/${deckId}/slides/1.svg?v=${state.info.version}`);
-    const m = /viewBox="0 0 ([\d.]+) ([\d.]+)"/.exec(await r.text());
-    if (m) state.page = { w: +m[1], h: +m[2] };
-  } catch { /* размер по умолчанию */ }
 }
 
 // ============ шапка
@@ -258,12 +247,9 @@ function select(id) {
 // ============ правки
 async function applyResult(promise) {
   const info = await promise;
-  const prevVersion = state.info.version;
   state.info = info;
-  if (info.has_build) {
-    state.positions = await api(`api/decks/${deckId}/positions`);
-    if (prevVersion !== info.version) await readPageSize();
-  }
+  state.page = info.page || state.page;
+  if (info.has_build) state.positions = await api(`api/decks/${deckId}/positions`);
   renderTopbar(); renderStage(); renderRail();
   if (state.tab === "slide") renderProps();
   return info;

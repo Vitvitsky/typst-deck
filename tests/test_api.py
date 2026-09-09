@@ -443,3 +443,26 @@ async def test_concurrent_first_previews_of_same_template(client):
     rs = await asyncio.gather(*(client.get("/api/templates/dark/preview/1.svg") for _ in range(4)))
     assert [r.status_code for r in rs] == [200, 200, 200, 200]
     assert all(r.content.startswith(b"<svg") or b"<svg" in r.content[:200] for r in rs)
+
+
+@requires_typst
+async def test_deck_response_carries_page_size(client, fake_llm):
+    """Размер страницы приходит вместе с колодой: фронту незачем качать slide-1.svg ради viewBox."""
+    fake_llm._queue += [
+        Completion("", [ToolCall("c1", "set_deck", {"title": "T", "slides": [{"type": "title", "title": "A"}]})]),
+        Completion("", [ToolCall("c2", "finish", {"summary": "Готово"})]),
+    ]
+    r = await client.post("/api/decks", json={"brief": "x", "upload_ids": []})
+    await wait_job(client, r.json()["job_id"])
+    d = (await client.get(f"/api/decks/{r.json()['deck_id']}")).json()
+    assert d["page"] == {"w": 453.543307087, "h": 255.118110236}
+
+
+async def test_deck_response_page_size_without_build(client, fake_llm):
+    from typst_deck.render import DEFAULT_PAGE
+
+    fake_llm._queue += [Completion("нет правок", [])]
+    r = await client.post("/api/decks", json={"brief": "x", "upload_ids": []})
+    await wait_job(client, r.json()["job_id"])
+    d = (await client.get(f"/api/decks/{r.json()['deck_id']}")).json()
+    assert d["has_build"] is False and d["page"] == DEFAULT_PAGE

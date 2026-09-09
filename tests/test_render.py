@@ -56,3 +56,34 @@ def test_empty_fields_are_none():
 def test_one_call_per_slide():
     typ, _ = render_typ(full_deck(), assets={"a000001.png"})
     assert typ.count("\n#slide-") == 6
+
+
+def test_page_size_reads_viewbox(tmp_path):
+    from typst_deck.render import page_size
+
+    p = tmp_path / "slide-1.svg"
+    p.write_text('<svg class="typst-doc" viewBox="0 0 1919.05511811 1080" width="1919" xmlns="http://www.w3.org/2000/svg">')
+    assert page_size(p) == {"w": 1919.05511811, "h": 1080.0}
+
+
+def test_page_size_defaults_when_file_missing(tmp_path):
+    from typst_deck.render import DEFAULT_PAGE, page_size
+
+    assert page_size(tmp_path / "нет.svg") == DEFAULT_PAGE
+
+
+def test_page_size_defaults_when_viewbox_absent(tmp_path):
+    from typst_deck.render import DEFAULT_PAGE, page_size
+
+    p = tmp_path / "slide-1.svg"
+    p.write_text('<svg width="100" xmlns="http://www.w3.org/2000/svg"></svg>')
+    assert page_size(p) == DEFAULT_PAGE
+
+
+def test_page_size_reads_only_head_of_large_file(tmp_path):
+    """viewBox стоит в первых байтах: файл на 160 КБ читать целиком незачем."""
+    from typst_deck.render import page_size
+
+    p = tmp_path / "slide-1.svg"
+    p.write_text('<svg viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg">' + "<path/>" * 40000)
+    assert page_size(p) == {"w": 800.0, "h": 600.0}

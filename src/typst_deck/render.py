@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -23,6 +24,21 @@ from .model import (
 
 HEADER = '#import "/template/deck.typ": *\n#import "/fields.typ": field\n'
 log = logging.getLogger(__name__)
+
+# запасной размер страницы: 16:9 в миллиметрах, как у шаблона по умолчанию
+DEFAULT_PAGE = {"w": 453.543307087, "h": 255.118110236}
+_VIEWBOX = re.compile(r'viewBox="0 0 ([\d.]+) ([\d.]+)"')
+
+
+def page_size(svg: Path) -> dict[str, float]:
+    """Размер страницы из viewBox. Шаблоны различаются кратно (453×255 против
+    1919×1080), поэтому фронту нужен точный размер, чтобы разложить зоны правки."""
+    try:
+        head = svg.open("rb").read(2048).decode("utf-8", "replace")
+    except OSError:
+        return dict(DEFAULT_PAGE)
+    m = _VIEWBOX.search(head)
+    return {"w": float(m[1]), "h": float(m[2])} if m else dict(DEFAULT_PAGE)
 
 
 def typ_str(s: str) -> str:
