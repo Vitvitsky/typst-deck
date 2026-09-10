@@ -276,10 +276,13 @@ height: 100%, fit: "contain"`, контейнер задаёт шаблон; `da
 Стек в `~/stack` устроен единообразно, typst-deck встаёт в него тем же
 способом, что и `deepseek-web`:
 
-- контейнеры стека держит rootless podman 5.7; поднимается и пересобирается
-  как остальные сервисы: `podman compose up -d --build typst-deck`;
-- сервис `typst-deck` в `~/stack/compose.yaml`, порт `127.0.0.1:8088:8000`,
-  сеть `internal`, healthcheck на `/api/health`;
+- контейнерами управляет rootless podman через systemd (Quadlet), а не compose:
+  юнит `typst-deck.container` версионируется в `~/stack/quadlet/`, работает из
+  `~/.config/containers/systemd/`, порт `127.0.0.1:8088:8000`, сеть
+  `portfolio-internal`, healthcheck на `/api/health`;
+- выкатка после правки кода — два шага, образ и юнит разведены намеренно:
+  `podman build -t localhost/typst-deck:latest ~/projects/typst-deck` и
+  `systemctl --user restart typst-deck`;
 - ключ и модель из уже существующих `DEEPSEEK_API_KEY`, `DEEPSEEK_API_BASE`,
   `DEEPSEEK_MODEL`; замена на внутренний эндпоинт — две переменные;
 - путь `/deck/` в `nginx/portfolio.conf` по образцу `/deepseek/`: Basic Auth,
