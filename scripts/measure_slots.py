@@ -30,7 +30,7 @@ SAMPLE = "Итоги квартала по направлению данных �
 # lmru-hr: страница 677mm, поля 30+30; на титульном слайде колонка текста ещё
 # уже на стрелку 47mm и gutter 18mm → 552mm. Высоты — аргументы slot().
 # У содержательных слайдов тело — body-box высотой 250mm, ширина колонки
-# тезисов: image — (617-15)*58% ≈ 349mm, chart — (617-12)*38% ≈ 230mm.
+# тезисов: image — (617-15)*58% ≈ 349mm, chart и bar-chart — (617-12)*38% ≈ 230mm.
 PROBES = {
     "lmru-hr": [
         ("title", "title", "552mm", "60mm", None, "size-title", "bold", "title-font"),
@@ -41,6 +41,10 @@ PROBES = {
         ("image", "bullets", "349mm", "250mm", "40mm", "size-body", "regular", "body-font"),
         ("chart", "title", "617mm", "50mm", None, "size-h1-compact", "bold", "title-font"),
         ("chart", "bullets", "230mm", "200mm", "40mm", "size-body", "regular", "body-font"),
+        # bar-chart делит с chart одну раскладку (chart-layout в deck.typ): та же
+        # колонка тезисов и тот же body-box с clip — значит, и та же геометрия проб.
+        ("bar-chart", "title", "617mm", "50mm", None, "size-h1-compact", "bold", "title-font"),
+        ("bar-chart", "bullets", "230mm", "200mm", "40mm", "size-body", "regular", "body-font"),
     ],
 }
 

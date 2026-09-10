@@ -15,6 +15,10 @@
     "chart": {
       "title": {"max": 120, "lines": 2},
       "bullets": {"count": 4, "max": 120}
+    },
+    "bar-chart": {
+      "title": {"max": 120, "lines": 2},
+      "bullets": {"count": 4, "max": 120}
     }
   }
 }
