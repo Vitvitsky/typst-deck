@@ -840,6 +840,27 @@ async def test_broken_template_is_hidden_refused_and_reported(settings, fake_llm
         h = (await c.get("/api/health")).json()
         assert h["ok"] is True and h["templates"]["checked"] is True
         assert "broken" in h["templates"]["broken"] and "default" in h["templates"]["ok"]
+        assert h["templates"]["error"] is None  # проверка завершилась, а не упала
+
+
+async def test_check_templates_survives_an_exception_and_remembers_it(settings, fake_llm, monkeypatch):
+    """check_templates идёт в фоновом потоке (app.py): необработанное исключение
+    там тихо роняет поток — checked навсегда остаётся False, а сломанный шаблон
+    не скрывается и не отвергается. Поэтому падение самой проверки не должно
+    убивать вызов, а причина должна быть видна в /api/health."""
+    from typst_deck.app import create_app
+
+    app = create_app(settings, llm=fake_llm)
+    svc = app.state.service
+
+    def boom(typst_bin, work_dir):
+        raise RuntimeError("бабах")
+
+    monkeypatch.setattr(svc.templates, "check_all", boom)
+    svc.check_templates()  # не должно бросать исключение наружу
+    health = svc.templates_health()
+    assert health["checked"] is False  # отличимо от «ещё выполняется» через error
+    assert health["error"] is not None and "бабах" in health["error"]
 
 
 @requires_typst

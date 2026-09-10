@@ -177,3 +177,29 @@ def test_incomplete_template_is_reported_as_broken(tmp_path):
     reg = TemplateRegistry(TEMPLATE_DIR, tmp_path / "templates")
     reg.check_all("typst", tmp_path / "work")
     assert "slides_template.typ" in reg.broken["half"]
+
+
+def test_check_all_uses_a_snapshot_of_incomplete_not_the_live_dict(tmp_path, monkeypatch):
+    """Пока check_all крутит медленный цикл компиляции, запрос в другом потоке
+    мог бы вызвать list()/get() → _scan() → переписать self.incomplete. Финальный
+    обход должен идти по снимку, снятому до цикла, а не по живому словарю —
+    иначе конкурентная мутация словаря во время обхода валит RuntimeError."""
+    d = tmp_path / "templates" / "half"
+    d.mkdir(parents=True)
+    (d / "deck.typ").write_text('#import "slides_template.typ": *\n')
+    reg = TemplateRegistry(TEMPLATE_DIR, tmp_path / "templates")
+    assert reg.incomplete == {"half": ["slides_template.typ"]}
+
+    import typst_deck.templates as templates_module
+    from typst_deck.contract import Report
+
+    def fake_check_template(path, typst_bin, work_dir, full=False):
+        # имитация конкурентного запроса, который пересканировал каталоги
+        # и добавил в incomplete запись уже после того, как check_all начал цикл
+        reg.incomplete["late"] = ["x"]
+        return Report()
+
+    monkeypatch.setattr(templates_module, "check_template", fake_check_template)
+    reg.check_all("typst", tmp_path / "work")  # не должно падать RuntimeError на итерации
+    assert reg.broken["half"] == "нет slides_template.typ"
+    assert "late" not in reg.broken  # мутация случилась после снимка — в итог не попала

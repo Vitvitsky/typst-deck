@@ -161,16 +161,24 @@ class TemplateRegistry:
 
     def check_all(self, typst_bin: str, work_dir: Path) -> None:
         """Стартовая проверка: сломанные шаблоны прячутся, предупреждения запоминаются.
-        Корпоративные шаблоны монтируются при запуске, и сборка образа их не видела."""
+        Корпоративные шаблоны монтируются при запуске, и сборка образа их не видела.
+
+        Список шаблонов и снимок self.incomplete берутся одним моментом, до
+        медленного цикла компиляции: запросы в других потоках зовут list()/get(),
+        те дергают _scan() и переписывают self.incomplete конкурентно, и обход
+        живого словаря после цикла падал бы RuntimeError на изменении размера.
+        """
+        templates = self.all()
+        incomplete = dict(self.incomplete)
         broken: dict[str, str] = {}
         warnings: dict[str, list[str]] = {}
-        for t in self.all():
+        for t in templates:
             rep = check_template(t.path, typst_bin, work_dir / t.id, full=False)
             if rep.errors:
                 broken[t.id] = "; ".join(rep.errors)
             if rep.warnings:
                 warnings[t.id] = rep.warnings
-        for tid, missing in self.incomplete.items():
+        for tid, missing in incomplete.items():
             broken[tid] = f"нет {', '.join(missing)}"
         self.broken, self.warnings, self.checked = broken, warnings, True
 

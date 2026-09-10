@@ -61,6 +61,9 @@ class DeckService:
                                           settings.template_alias_map)
         self.meter = TokenMeter()
         self._preview_locks: dict[str, asyncio.Lock] = {}
+        # причина, если фоновая проверка шаблонов упала целиком; иначе checked=False
+        # неотличимо от «ещё выполняется» (/api/health её и показывает)
+        self.template_check_error: str | None = None
 
     # --- шаблоны
     def template(self, tid: str) -> TemplateInfo:
@@ -73,9 +76,21 @@ class DeckService:
             raise ApiError(422, "validation", f"шаблон «{tid}» не найден")
 
     def check_templates(self) -> None:
-        """Стартовая проверка шаблонов; идёт в фоне, итог — в лог и в /api/health."""
-        with tempfile.TemporaryDirectory() as tmp:
-            self.templates.check_all(self.settings.typst_bin, Path(tmp))
+        """Стартовая проверка шаблонов; идёт в фоне, итог — в лог и в /api/health.
+
+        Проверка идёт в отдельном потоке (см. app.py): исключение отсюда никто
+        не подхватит, поток тихо умрёт, checked навсегда останется False, а
+        сломанный шаблон — ни скрытым, ни отвергнутым. Поэтому вся проверка —
+        под try/except: причина падения запоминается и видна в /api/health.
+        """
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                self.templates.check_all(self.settings.typst_bin, Path(tmp))
+        except Exception as e:
+            self.template_check_error = f"{type(e).__name__}: {e}"
+            log.exception("проверка шаблонов при старте упала")
+            return
+        self.template_check_error = None
         for tid, reason in self.templates.broken.items():
             log_event(log, "template.broken", template=tid, reason=reason, level=logging.ERROR)
         for tid, notes in self.templates.warnings.items():
@@ -85,7 +100,8 @@ class DeckService:
     def templates_health(self) -> dict:
         t = self.templates
         return {"checked": t.checked, "ok": [x.id for x in t.list()],
-                "broken": dict(t.broken), "warnings": dict(t.warnings)}
+                "broken": dict(t.broken), "warnings": dict(t.warnings),
+                "error": self.template_check_error}
 
     def template_dir(self, tid: str):
         return self.template(tid).path
