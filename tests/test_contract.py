@@ -36,6 +36,28 @@ def test_inapplicable_slots_key_is_an_error_in_full_mode_and_a_warning_at_start(
 
 
 @requires_typst
+def test_bad_fonts_value_is_an_error_in_full_mode_and_a_warning_at_start(tmp_path):
+    """resolve_fonts бросает ValueError на путь наружу шаблона. Реестр в этом же случае
+    не падает, а откатывается на fonts/ (templates.py _info) и сервис продолжает отдавать
+    шаблон — стартовый режим не должен ломаться там, где сервис не ломается."""
+    d = make_template(tmp_path, "badfonts", meta={"name": "Ф", "fonts": "../elsewhere"})
+    full = check_template(d, "typst", tmp_path / "w1")
+    start = check_template(d, "typst", tmp_path / "w2", full=False)
+    assert any("fonts" in e for e in full.errors), full.errors
+    assert start.errors == [] and any("fonts" in w for w in start.warnings), start.warnings
+
+
+@requires_typst
+def test_bad_fonts_value_at_start_does_not_stop_the_check(tmp_path):
+    """Стартовый режим откатывается на fonts/ и проверяет дальше: правило 2 по-прежнему
+    ловит двойную страницу, а не молчит из-за раннего возврата на плохом fonts."""
+    d = make_template(tmp_path, "badfontstwopages", deck_edit=TWO_PAGES,
+                      meta={"name": "Ф", "fonts": "../elsewhere"})
+    start = check_template(d, "typst", tmp_path / "w", full=False)
+    assert any("образец не собирается" in e for e in start.errors), start.errors
+
+
+@requires_typst
 def test_extra_page_per_slide_is_an_error(tmp_path):
     d = make_template(tmp_path, "twopages", deck_edit=TWO_PAGES)
     assert any("образец не собирается" in e for e in check_template(d, "typst", tmp_path / "w").errors)

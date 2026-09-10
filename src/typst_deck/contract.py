@@ -205,8 +205,13 @@ def check_template(path: Path, typst_bin: str, work_dir: Path, full: bool = True
     try:
         fonts = resolve_fonts(path, meta.get("fonts", "fonts"))
     except ValueError as e:
-        report.errors.append(str(e))
-        return report
+        # реестр на этот же случай не падает, а откатывается на fonts/ (templates.py
+        # _info) — сервис продолжает отдавать шаблон. В стартовом режиме сообщение
+        # уходит в предупреждения, и проверка идёт тем же откатом, а не обрывается.
+        strict.append(str(e))
+        if full:
+            return report
+        fonts = resolve_fonts(path)
     try:  # правило 2: образец собирается, одна функция — одна страница
         sample = compile_deck(SAMPLE_DECK, work_dir / "sample", path, typst_bin, fonts_dir=fonts)
     except CompileError as e:
