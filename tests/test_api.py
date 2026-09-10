@@ -767,3 +767,35 @@ async def test_deck_without_declared_slots_has_no_such_warnings(client):
     d = store.create(Deck(title="T", slides=[{"type": "title", "title": "Э" * 110}]))
     r = await client.post(f"/api/decks/{d.id}/template", json={"template": "dark"})
     assert r.status_code == 200 and r.json()["warnings"] == []
+
+
+async def test_pdf_is_built_with_the_template_fonts(settings, fake_llm, tmp_path, monkeypatch):
+    """PDF собирается с каталогом шрифтов шаблона колоды, а не с жёстким build/template/fonts."""
+    import json
+    import shutil
+
+    import typst_deck.service as service_module
+    from typst_deck.app import create_app
+    from typst_deck.model import Deck
+
+    root = tmp_path / "corp"
+    t = root / "withfonts"
+    shutil.copytree(settings.template_dir, t)
+    (t / "typst-deck" / "fonts").mkdir(parents=True)
+    (t / "template.json").write_text(json.dumps({"name": "Со шрифтами", "fonts": "typst-deck/fonts"}))
+    app = create_app(settings.model_copy(update={"templates_dir": str(root)}), llm=fake_llm)
+    store, svc_ = app.state.store, app.state.service
+    d = store.create(Deck(title="T", template="withfonts", slides=[{"type": "final"}]))
+    build = store.deck_dir(d.id) / "build"
+    build.mkdir()
+    (build / "deck.typ").write_text("")
+    seen = {}
+
+    def fake_pdf(build_dir, typst_bin, fonts_dir=None):
+        seen["fonts"] = fonts_dir
+        (build_dir / "deck.pdf").write_bytes(b"%PDF")
+        return build_dir / "deck.pdf"
+
+    monkeypatch.setattr(service_module, "compile_pdf", fake_pdf)
+    await svc_.pdf(d.id)
+    assert seen["fonts"] == t / "typst-deck" / "fonts"

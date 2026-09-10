@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .model import Deck
+from .render import resolve_fonts
 from .slots import clamp
 
 log = logging.getLogger(__name__)
@@ -35,6 +36,8 @@ class TemplateInfo:
     path: Path
     # объявленная ёмкость слотов; пусто — действуют глобальные пределы model.py
     slots: dict = field(default_factory=dict)
+    # каталог шрифтов шаблона (поле fonts в template.json) или None
+    fonts: Path | None = None
 
     def public(self) -> dict:
         return {"id": self.id, "name": self.name, "description": self.description}
@@ -112,8 +115,14 @@ class TemplateRegistry:
                 meta = json.loads(mp.read_text())
             except ValueError:
                 meta = {}
+        try:
+            fonts = resolve_fonts(path, meta.get("fonts", "fonts"))
+        except ValueError as e:
+            self._warn(mp, f"{e} — взят каталог fonts/")
+            fonts = resolve_fonts(path)
         name = meta.get("name") or ("Корпоративный" if tid == "default" else tid)
-        return TemplateInfo(tid, name, meta.get("description", ""), path, clamp(meta.get("slots"), tid))
+        return TemplateInfo(tid, name, meta.get("description", ""), path,
+                            clamp(meta.get("slots"), tid), fonts)
 
     def list(self) -> list[TemplateInfo]:
         out = []
@@ -150,7 +159,7 @@ def check(registry: TemplateRegistry, typst_bin: str, work_dir: Path) -> list[st
     for t in registry.list():
         deck_dir = work_dir / t.id
         try:
-            compile_deck(SAMPLE_DECK, deck_dir, t.path, typst_bin)
+            compile_deck(SAMPLE_DECK, deck_dir, t.path, typst_bin, fonts_dir=t.fonts)
         except CompileError as e:
             errors.append(f"{t.id}: {e}\n{e.stderr.strip()}")
     return errors

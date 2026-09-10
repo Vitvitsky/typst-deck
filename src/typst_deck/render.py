@@ -42,6 +42,18 @@ def page_size(svg: Path) -> dict[str, float]:
     return {"w": float(m[1]), "h": float(m[2])} if m else dict(DEFAULT_PAGE)
 
 
+def resolve_fonts(template_dir: Path, rel: object = "fonts") -> Path | None:
+    """Каталог шрифтов шаблона: rel — поле fonts из template.json, от корня шаблона.
+
+    None — каталога нет, typst обойдётся системными шрифтами. Путь наружу из
+    шаблона — ValueError: в контейнере шаблон смонтирован, и цели снаружи там нет.
+    """
+    if not isinstance(rel, str) or not rel or Path(rel).is_absolute() or ".." in Path(rel).parts:
+        raise ValueError(f"fonts={rel!r}: путь должен вести внутрь шаблона")
+    d = Path(template_dir) / rel
+    return d if d.is_dir() else None
+
+
 def overflowing_slide(deck: Deck, positions: list[dict], pages: int | None = None) -> int | None:
     """Номер слайда (с единицы), который не поместился на свою страницу, или None.
 
@@ -185,7 +197,8 @@ def _run(cmd: list[str], timeout: int) -> tuple[subprocess.CompletedProcess, int
 
 
 def compile_deck(
-    deck: Deck, deck_dir: Path, template_dir: Path, typst_bin: str = "typst", timeout: int = 60
+    deck: Deck, deck_dir: Path, template_dir: Path, typst_bin: str = "typst", timeout: int = 60,
+    fonts_dir: Path | None = None,
 ) -> CompileResult:
     """Собирает build/: deck.typ, slide-N.svg, positions.json, warnings.json, pages.json.
 
@@ -207,7 +220,8 @@ def compile_deck(
     shutil.copy(FIELDS_TYP, tmp / "fields.typ")
     (tmp / "deck.typ").write_text(typ)
 
-    fonts = Path(template_dir) / "fonts"
+    # каталог шрифтов — из template.json шаблона (TemplateInfo.fonts); без него прежнее место
+    fonts = Path(fonts_dir) if fonts_dir is not None else Path(template_dir) / "fonts"
     font_args = ["--font-path", str(fonts)] if fonts.is_dir() else []
     src = str(tmp / "deck.typ")
     t_all = time.perf_counter_ns()
@@ -273,7 +287,8 @@ def compile_deck(
     )
 
 
-def compile_pdf(build_dir: Path, typst_bin: str = "typst", timeout: int = 60) -> Path:
+def compile_pdf(build_dir: Path, typst_bin: str = "typst", timeout: int = 60,
+                fonts_dir: Path | None = None) -> Path:
     """PDF из уже готового build/: deck.typ, шаблон и ассеты там уже лежат.
 
     Собирается по запросу и остаётся в build/, поэтому повторное скачивание
@@ -282,7 +297,7 @@ def compile_pdf(build_dir: Path, typst_bin: str = "typst", timeout: int = 60) ->
     src = build_dir / "deck.typ"
     if not src.exists():
         raise CompileError("нет сборки колоды: нечего превращать в PDF")
-    fonts = build_dir / "template" / "fonts"
+    fonts = Path(fonts_dir) if fonts_dir is not None else build_dir / "template" / "fonts"
     font_args = ["--font-path", str(fonts)] if fonts.is_dir() else []
     out = build_dir / "deck.pdf"
     r, ms = _run(

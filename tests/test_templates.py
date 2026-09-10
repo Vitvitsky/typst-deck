@@ -108,3 +108,32 @@ def test_registry_without_slots_declares_nothing(tmp_path):
     reg = TemplateRegistry(TEMPLATE_DIR, tmp_path / "templates")
     assert reg.get("plain").slots == {} and reg.get("default").slots == {}
     assert reg.get("plain").public() == {"id": "plain", "name": "Простой", "description": ""}
+
+
+def test_registry_resolves_fonts_dir(tmp_path):
+    root = tmp_path / "templates"
+    plain = root / "plain"
+    (plain / "fonts").mkdir(parents=True)
+    (plain / "deck.typ").write_text("// stub")
+    custom = root / "custom"
+    (custom / "typst-deck" / "fonts").mkdir(parents=True)
+    (custom / "deck.typ").write_text("// stub")
+    (custom / "template.json").write_text(json.dumps({"name": "C", "fonts": "typst-deck/fonts"}))
+    bare = root / "bare"
+    bare.mkdir()
+    (bare / "deck.typ").write_text("// stub")
+    reg = TemplateRegistry(TEMPLATE_DIR, root)
+    assert reg.get("plain").fonts == plain / "fonts"
+    assert reg.get("custom").fonts == custom / "typst-deck" / "fonts"
+    assert reg.get("bare").fonts is None
+
+
+def test_registry_refuses_fonts_outside_the_template(tmp_path, caplog):
+    d = tmp_path / "templates" / "escape"
+    (d / "fonts").mkdir(parents=True)
+    (d / "deck.typ").write_text("// stub")
+    (d / "template.json").write_text(json.dumps({"name": "E", "fonts": "../../elsewhere"}))
+    with caplog.at_level("WARNING", logger="typst_deck.templates"):
+        reg = TemplateRegistry(TEMPLATE_DIR, tmp_path / "templates")
+        assert reg.get("escape").fonts == d / "fonts"  # взят каталог по умолчанию
+    assert any("fonts" in r.getMessage() and "внутрь шаблона" in r.getMessage() for r in caplog.records)

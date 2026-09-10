@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Callable
 
 from pydantic import ValidationError
@@ -21,7 +22,7 @@ from .model import Deck, utcnow
 from .render import CompileError, CompileResult, compile_deck, compile_pdf, page_size
 from .slots import check_deck, first_few
 from .store import DeckNotFound, DeckStore
-from .templates import SAMPLE_DECK, TemplateNotFound, TemplateRegistry
+from .templates import SAMPLE_DECK, TemplateInfo, TemplateNotFound, TemplateRegistry
 
 # (имя, байты, извлечённый текст или None для картинок)
 IngestedFile = tuple[str, bytes, str | None]
@@ -60,16 +61,21 @@ class DeckService:
         self._preview_locks: dict[str, asyncio.Lock] = {}
 
     # --- шаблоны
-    def template_dir(self, tid: str):
+    def template(self, tid: str) -> TemplateInfo:
+        """Шаблон по id; неизвестный — 422 с понятным текстом."""
         try:
-            return self.templates.dir_for(tid)
+            return self.templates.get(tid)
         except TemplateNotFound:
             raise ApiError(422, "validation", f"шаблон «{tid}» не найден")
+
+    def template_dir(self, tid: str):
+        return self.template(tid).path
 
     async def template_preview(self, tid: str, n: int):
         """SVG n-й страницы образца в шаблоне; рендер кешируется в data/template-previews/<id>/.
         Компиляция уходит в поток по той же причине, что и в render()."""
-        tdir = self.template_dir(tid)
+        t = self.template(tid)
+        tdir = t.path
         out = self.settings.data_dir / "template-previews" / tid
         stamp = out / "build" / "stamp.txt"
         newest = max((p.stat().st_mtime for p in tdir.rglob("*") if p.is_file()), default=0)
@@ -81,7 +87,7 @@ class DeckService:
                 try:
                     await asyncio.to_thread(
                         compile_deck, SAMPLE_DECK.model_copy(update={"template": tid}), out, tdir,
-                        self.settings.typst_bin,
+                        self.settings.typst_bin, fonts_dir=t.fonts,
                     )
                 except CompileError as e:
                     raise ApiError(500, "render", f"шаблон «{tid}» не собрался: {e.stderr[:1500]}")
@@ -184,10 +190,11 @@ class DeckService:
     async def render(self, deck: Deck) -> CompileResult:
         """typst — блокирующий subprocess, поэтому уходит в поток: иначе на время
         компиляции встаёт весь сервер, включая статику и превью чужих колод."""
+        t = self.template(deck.template)
         try:
             return await asyncio.to_thread(
-                compile_deck, deck, self.store.deck_dir(deck.id),
-                self.template_dir(deck.template), self.settings.typst_bin,
+                compile_deck, deck, self.store.deck_dir(deck.id), t.path,
+                self.settings.typst_bin, fonts_dir=t.fonts,
             )
         except CompileError as e:
             raise ApiError(500, "render", f"{e}: {e.stderr[:2000]}")
@@ -195,7 +202,7 @@ class DeckService:
     async def pdf(self, deck_id: str) -> Path:
         """PDF по требованию: собирается при первом скачивании и лежит в build/
         до следующей правки, которая заменяет build/ целиком и снимает его."""
-        self.load(deck_id)
+        deck = self.load(deck_id)
         build = self.store.deck_dir(deck_id) / "build"
         ready = build / "deck.pdf"
         if ready.exists():
@@ -206,7 +213,11 @@ class DeckService:
             if ready.exists():  # мог успеть параллельный запрос
                 return ready
             try:
-                return await asyncio.to_thread(compile_pdf, build, self.settings.typst_bin)
+                fonts = self.templates.get(deck.template).fonts
+            except TemplateNotFound:
+                fonts = None  # шаблон пропал, но build/ собран: PDF соберётся с прежним каталогом
+            try:
+                return await asyncio.to_thread(compile_pdf, build, self.settings.typst_bin, fonts_dir=fonts)
             except CompileError as e:
                 raise ApiError(500, "render", f"{e}: {e.stderr[:2000]}")
 

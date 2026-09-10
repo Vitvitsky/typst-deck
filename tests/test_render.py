@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pytest
+
+from tests.conftest import TEMPLATE_DIR
 from typst_deck.model import Deck
 from typst_deck.render import render_typ, typ_str, typ_value
 
@@ -169,3 +172,59 @@ def test_render_typ_omits_empty_author():
 
     typ, _ = render_typ(Deck(slides=[{"type": "title", "title": "Итоги"}]), set())
     assert "author: none" in typ and "department: none" in typ
+
+
+def _stub_run(monkeypatch):
+    """Подменяет render._run: запоминает переданную команду и останавливает сборку до её выполнения."""
+    import typst_deck.render as render
+
+    class Stop(Exception):
+        pass
+
+    seen = []
+
+    def fake_run(cmd, timeout):
+        seen.append(cmd)
+        raise Stop
+
+    monkeypatch.setattr(render, "_run", fake_run)
+    return seen, Stop
+
+
+def test_compile_deck_takes_fonts_from_the_given_dir(deck_dir, tmp_path, monkeypatch):
+    """Каталог шрифтов приходит из template.json шаблона, а не всегда <шаблон>/fonts."""
+    import typst_deck.render as render
+
+    seen, Stop = _stub_run(monkeypatch)
+    fonts = tmp_path / "typst-deck" / "fonts"
+    fonts.mkdir(parents=True)
+    with pytest.raises(Stop):
+        render.compile_deck(Deck(slides=[{"type": "final"}]), deck_dir, TEMPLATE_DIR, fonts_dir=fonts)
+    assert seen[0][seen[0].index("--font-path") + 1] == str(fonts)
+
+
+def test_compile_pdf_takes_fonts_from_the_given_dir(tmp_path, monkeypatch):
+    import typst_deck.render as render
+
+    seen, Stop = _stub_run(monkeypatch)
+    build = tmp_path / "build"
+    build.mkdir()
+    (build / "deck.typ").write_text("")
+    fonts = tmp_path / "f"
+    fonts.mkdir()
+    with pytest.raises(Stop):
+        render.compile_pdf(build, fonts_dir=fonts)
+    assert seen[0][seen[0].index("--font-path") + 1] == str(fonts)
+
+
+def test_resolve_fonts(tmp_path):
+    from typst_deck.render import resolve_fonts
+
+    (tmp_path / "fonts").mkdir()
+    (tmp_path / "typst-deck" / "fonts").mkdir(parents=True)
+    assert resolve_fonts(tmp_path) == tmp_path / "fonts"
+    assert resolve_fonts(tmp_path, "typst-deck/fonts") == tmp_path / "typst-deck" / "fonts"
+    assert resolve_fonts(tmp_path, "nope") is None
+    for bad in ("../outside", "/abs", "", 5):
+        with pytest.raises(ValueError):
+            resolve_fonts(tmp_path, bad)
