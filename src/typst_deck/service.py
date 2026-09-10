@@ -111,21 +111,22 @@ class DeckService:
         Компиляция уходит в поток по той же причине, что и в render()."""
         t = self.template(tid)
         tdir = t.path
-        out = self.settings.data_dir / "template-previews" / tid
+        # по действующему id: старый id из алиаса не заводит рядом свою копию кэша
+        out = self.settings.data_dir / "template-previews" / t.id
         stamp = out / "build" / "stamp.txt"
         newest = max((p.stat().st_mtime for p in tdir.rglob("*") if p.is_file()), default=0)
         # рендер в потоке, поэтому два первых превью одного шаблона больше не
         # сериализуются сами собой и подрались бы за build.tmp
-        async with self._preview_locks.setdefault(tid, asyncio.Lock()):
+        async with self._preview_locks.setdefault(t.id, asyncio.Lock()):
             if not stamp.exists() or stamp.read_text() != str(newest):
                 out.mkdir(parents=True, exist_ok=True)
                 try:
                     await asyncio.to_thread(
-                        compile_deck, SAMPLE_DECK.model_copy(update={"template": tid}), out, tdir,
+                        compile_deck, SAMPLE_DECK.model_copy(update={"template": t.id}), out, tdir,
                         self.settings.typst_bin, fonts_dir=t.fonts,
                     )
                 except CompileError as e:
-                    raise ApiError(500, "render", f"шаблон «{tid}» не собрался: {e.stderr[:1500]}")
+                    raise ApiError(500, "render", f"шаблон «{t.id}» не собрался: {e.stderr[:1500]}")
                 stamp.write_text(str(newest))
         p = out / "build" / f"slide-{n}.svg"
         if not p.exists():

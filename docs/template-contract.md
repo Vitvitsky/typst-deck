@@ -161,3 +161,8 @@ Environment=TYPST_DECK_TEMPLATES_DIR=/app/templates:/corp
 `TYPST_DECK_TEMPLATE_ALIASES=старый:новый`. Колоды переносит
 `python -m typst_deck.migrate_template старый новый` (при остановленном
 сервисе).
+
+Алиас разрешается в один шаг, без цепочек: из `a:b,b:c` не следует `a:c` —
+каждый старый id ведите сразу в действующий (`a:c,b:c`). Кривое значение
+`TYPST_DECK_TEMPLATE_ALIASES` (пара без `:` или с пустой стороной) не даёт
+сервису стартовать — это нарочно.

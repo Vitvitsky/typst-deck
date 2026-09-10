@@ -875,6 +875,16 @@ async def test_old_template_id_is_stored_as_the_new_one(settings, fake_llm):
         assert r.status_code == 200 and r.json()["deck"]["template"] == "dark"
 
 
+@requires_typst
+async def test_template_preview_by_old_id_uses_the_cache_of_the_new(settings, fake_llm):
+    """Старый id из алиаса не заводит свой кэш превью рядом с действующим."""
+    from typst_deck.app import create_app
+
+    app = create_app(settings.model_copy(update={"template_aliases": "old-dark:dark"}), llm=fake_llm)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        assert (await c.get("/api/templates/old-dark/preview/1.svg")).status_code == 200
+    assert [p.name for p in (settings.data_dir / "template-previews").iterdir()] == ["dark"]
+
 
 @requires_typst
 async def test_broken_template_is_hidden_refused_and_reported(settings, fake_llm, tmp_path):
