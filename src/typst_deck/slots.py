@@ -183,9 +183,16 @@ def check_slide(slide, declared: dict, *, n: int, template_name: str, before=Non
     return out
 
 
-def check_deck(deck, declared: dict, template_name: str) -> list[str]:
-    """Нарушения по всей колоде: для предупреждения о переезде в тесный шаблон."""
+def check_deck(deck, declared: dict, template_name: str, before=None) -> list[str]:
+    """Нарушения объявленных пределов по всей колоде, слайд за слайдом.
+
+    before — та же колода до правки (set_deck переписывает её целиком). Слайды
+    сопоставляются по id: у найденной пары действует та же скидка «не стало
+    хуже», что check_slide уже даёт update_slide (спека §8); слайд без пары в
+    before — новый, скидки не получает.
+    """
+    by_id = {s.id: s for s in before.slides} if before is not None else {}
     out: list[str] = []
     for i, s in enumerate(deck.slides, 1):
-        out += check_slide(s, declared, n=i, template_name=template_name)
+        out += check_slide(s, declared, n=i, template_name=template_name, before=by_id.get(s.id))
     return out

@@ -85,7 +85,7 @@ class ToolExecutor:
 
     def _set_deck(self, title: str, slides: list[dict]) -> str:
         new = Deck(id=self.deck.id, title=title, slides=slides)
-        bad = check_deck(new, self.slots, self.template_name)
+        bad = check_deck(new, self.slots, self.template_name, before=self.deck)
         if bad:
             return "ERROR: " + "; ".join(bad[:5])
         self.deck.title, self.deck.slides = new.title, new.slides

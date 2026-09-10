@@ -108,6 +108,19 @@ def test_executor_set_deck_rejects_whole_deck_and_keeps_the_old_one():
     assert ex.deck.title == "Старое" and len(ex.deck.slides) == 1
 
 
+def test_executor_set_deck_grandfathers_an_unchanged_over_limit_slide():
+    """set_deck переписывает колоду целиком, но старому слайду положена та же
+    скидка «не стало хуже», что update_slide даёт по спеке §8."""
+    ex = _tight_executor(Deck(title="Старое", slides=[{"type": "title", "title": "Э" * 80}]))
+    sid = ex.deck.slides[0].id
+    r = ex.call("set_deck", {"title": "Новое", "slides": [{"id": sid, "type": "title", "title": "Э" * 80}]})
+    assert r.startswith("OK") and ex.deck.title == "Новое"
+    r2 = ex.call("set_deck", {"title": "Совсем новое",
+                              "slides": [{"id": sid, "type": "title", "title": "Э" * 81}]})
+    assert r2.startswith("ERROR") and "«Заголовок»" in r2 and "81" in r2
+    assert ex.deck.title == "Новое"  # вторая правка не применилась
+
+
 def test_executor_without_slots_keeps_global_limits():
     ex = ToolExecutor(Deck(slides=[{"type": "title", "title": "Итоги"}]))
     sid = ex.deck.slides[0].id

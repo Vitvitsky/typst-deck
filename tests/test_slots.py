@@ -147,6 +147,27 @@ def test_check_deck_numbers_slides_from_one():
     ]
 
 
+def test_check_deck_grandfathers_slides_matched_by_id_with_before():
+    """set_deck переписывает колоду целиком, но не должен лишать её снисходительности
+    к старым слайдам, которой пользуется update_slide (спека §8)."""
+    was = Deck(slides=[{"type": "title", "title": "Э" * 100}])
+    sid = was.slides[0].id
+    now_same = Deck(slides=[{"id": sid, "type": "title", "title": "Э" * 100}])
+    assert check_deck(now_same, TIGHT, "Тесный", before=was) == []
+    now_worse = Deck(slides=[{"id": sid, "type": "title", "title": "Э" * 101}])
+    assert check_deck(now_worse, TIGHT, "Тесный", before=was) == [
+        "слайд 1, поле «Заголовок»: 101 знак при пределе 60 в шаблоне «Тесный»"
+    ]
+
+
+def test_check_deck_does_not_grandfather_slide_with_new_id():
+    was = Deck(slides=[{"type": "title", "title": "Э" * 100}])
+    now = Deck(slides=[{"type": "title", "title": "Э" * 100}])  # другой id — не тот же слайд
+    assert check_deck(now, TIGHT, "Тесный", before=was) == [
+        "слайд 1, поле «Заголовок»: 100 знаков при пределе 60 в шаблоне «Тесный»"
+    ]
+
+
 @pytest.mark.parametrize("n,word", [(1, "знак"), (2, "знака"), (5, "знаков"), (11, "знаков"), (21, "знак")])
 def test_plural_of_measures(n, word):
     from typst_deck.slots import _phrase
