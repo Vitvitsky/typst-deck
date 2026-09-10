@@ -15,6 +15,36 @@ PNG_1PX = base64.b64decode(
 )
 
 
+# Правки эталона template/deck.typ: каждая ломает ровно одно правило контракта.
+TWO_PAGES = ("#let slide-final(title: none, contact: none) = slide(fill: accent)[",
+             "#let slide-final(title: none, contact: none) = page[] + slide(fill: accent)[")
+NO_CLIP_FINAL = ("#let slide-final(title: none, contact: none) = slide(fill: accent)[",
+                 "#let slide-final(title: none, contact: none) = page(fill: accent)[")
+NO_CONTACT = ("#if contact != none { v(0.4cm); text(size: 12pt, contact) }", "")
+FALLBACK_FONT = ('set text(font: "DejaVu Sans",', 'set text(font: ("DejaVu Sans", "Нет Такого Шрифта"),')
+
+
+def make_template(parent: Path, name: str, deck_edit: tuple[str, str] | None = None,
+                  meta: dict | None = None) -> Path:
+    """Копия эталона template/ с одной правкой deck.typ и своим template.json.
+
+    Сломанные шаблоны выводятся из эталона, а не лежат файлами: так они не
+    расходятся с ним, а правка, которая перестала применяться, валит тест сразу.
+    """
+    import json
+
+    d = parent / name
+    shutil.copytree(TEMPLATE_DIR, d)
+    if deck_edit:
+        old, new = deck_edit
+        src = (d / "deck.typ").read_text()
+        assert old in src, f"эталон template/deck.typ изменился: нет «{old}»"
+        (d / "deck.typ").write_text(src.replace(old, new, 1))
+    if meta is not None:
+        (d / "template.json").write_text(json.dumps(meta, ensure_ascii=False))
+    return d
+
+
 @pytest.fixture
 def deck_dir(tmp_path: Path) -> Path:
     d = tmp_path / "deck"

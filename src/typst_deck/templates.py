@@ -17,7 +17,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .model import Deck
+from .contract import SAMPLE_DECK, check_template
 from .render import resolve_fonts
 from .slots import clamp
 
@@ -45,17 +45,6 @@ class TemplateInfo:
 
 class TemplateNotFound(KeyError):
     pass
-
-
-# Образец для превью: по одному слайду каждого типа.
-SAMPLE_DECK = Deck(id="templatepreview", title="Образец шаблона", slides=[
-    {"id": "s000001", "type": "title", "title": "Название презентации", "subtitle": "Подзаголовок и дата"},
-    {"id": "s000002", "type": "section", "title": "Раздел", "subtitle": "Промежуточный слайд"},
-    {"id": "s000003", "type": "image", "title": "Текст и картинка", "bullets": ["Первый тезис", "Второй тезис", "Третий тезис"], "caption": "Подпись"},
-    {"id": "s000004", "type": "bar-chart", "title": "Диаграмма", "unit": "млн", "data": [{"label": "Центр", "value": 42}, {"label": "Север", "value": 17}, {"label": "Юг", "value": 28}]},
-    {"id": "s000005", "type": "chart", "title": "График", "labels": ["Q1", "Q2", "Q3", "Q4"], "series": [{"name": "Выручка", "values": [10, 14, 13, 18]}, {"name": "Расходы", "values": [8, 9, 11, 12]}]},
-    {"id": "s000006", "type": "final", "contact": "team@corp"},
-])
 
 
 class TemplateRegistry:
@@ -153,43 +142,49 @@ class TemplateRegistry:
         return self.get(tid).path
 
 
-def check(registry: TemplateRegistry, typst_bin: str, work_dir: Path) -> list[str]:
-    """Собирает образец каждым шаблоном реестра; возвращает список ошибок.
+def check(registry: TemplateRegistry, typst_bin: str, work_dir: Path, full: bool = True) -> list[str]:
+    """Контракт для каждого шаблона реестра; возвращает список ошибок.
 
-    Это проверка на уровне сборки образа: шаблон, у которого на месте deck.typ,
-    но не хватает канона или шрифтов, ломается здесь, а не у пользователя.
+    Проверка на уровне сборки образа: встроенный шаблон, нарушающий контракт,
+    ломается здесь, а не у пользователя. Корпоративные монтируются при запуске
+    и проверяются сервисом при старте.
     """
-    from .render import CompileError, compile_deck
-
-    errors = []
-    for tid, missing in sorted(registry.incomplete.items()):
-        errors.append(f"{tid}: нет {', '.join(missing)} — шаблон синхронизирован не до конца")
+    errors = [f"{tid}: нет {', '.join(missing)} — шаблон неполон"
+              for tid, missing in sorted(registry.incomplete.items())]
     for t in registry.list():
-        deck_dir = work_dir / t.id
-        try:
-            compile_deck(SAMPLE_DECK, deck_dir, t.path, typst_bin, fonts_dir=t.fonts)
-        except CompileError as e:
-            errors.append(f"{t.id}: {e}\n{e.stderr.strip()}")
+        rep = check_template(t.path, typst_bin, work_dir / t.id, full=full)
+        errors += [f"{t.id}: {e}" for e in rep.errors]
     return errors
 
 
-def main() -> int:
-    """`python -m typst_deck.templates`: перечисляет шаблоны и собирает образец каждым."""
+def main(argv: list[str] | None = None) -> int:
+    """`python -m typst_deck.templates [каталог]`: без аргумента — все шаблоны реестра,
+    с аргументом — один каталог шаблона по полному контракту (docs/template-contract.md)."""
     import tempfile
 
     from .config import get_settings
 
+    argv = sys.argv[1:] if argv is None else argv
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
     s = get_settings()
-    reg = TemplateRegistry(s.template_dir, s.templates_dirs)
-    ids = [t.id for t in reg.list()]
-    print("шаблоны:", ", ".join(ids) or "нет")
     with tempfile.TemporaryDirectory() as tmp:
+        if argv:
+            path = Path(argv[0]).expanduser().resolve()
+            rep = check_template(path, s.typst_bin, Path(tmp))
+            for w in rep.warnings:
+                print("ПРЕДУПРЕЖДЕНИЕ", w, file=sys.stderr)
+            for e in rep.errors:
+                print("ОШИБКА", e, file=sys.stderr)
+            if rep.ok:
+                print(f"{path.name}: контракт соблюдён")
+            return 0 if rep.ok else 1
+        reg = TemplateRegistry(s.template_dir, s.templates_dirs, s.template_alias_map)
+        print("шаблоны:", ", ".join(t.id for t in reg.list()) or "нет")
         errors = check(reg, s.typst_bin, Path(tmp))
     for e in errors:
         print("ОШИБКА", e, file=sys.stderr)
     if not errors:
-        print("каждый шаблон собирает образец")
+        print("каждый шаблон соблюдает контракт")
     return 1 if errors else 0
 
 

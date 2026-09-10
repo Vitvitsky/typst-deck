@@ -182,6 +182,8 @@ class CompileResult:
     typ: str = ""
     timings: dict[str, int] = field(default_factory=dict)  # svg_ms, query_ms, ms
     pages: list[str] = field(default_factory=list)  # хеш содержимого каждой страницы
+    # предупреждения typst при сборке SVG (например, «unknown font family»): сборка при них проходит
+    stderr: str = ""
 
 
 def _run(cmd: list[str], timeout: int) -> tuple[subprocess.CompletedProcess, int]:
@@ -198,7 +200,7 @@ def _run(cmd: list[str], timeout: int) -> tuple[subprocess.CompletedProcess, int
 
 def compile_deck(
     deck: Deck, deck_dir: Path, template_dir: Path, typst_bin: str = "typst", timeout: int = 60,
-    fonts_dir: Path | None = None,
+    fonts_dir: Path | None = None, system_fonts: bool = True,
 ) -> CompileResult:
     """Собирает build/: deck.typ, slide-N.svg, positions.json, warnings.json, pages.json.
 
@@ -223,6 +225,9 @@ def compile_deck(
     # каталог шрифтов — из template.json шаблона (TemplateInfo.fonts); без него прежнее место
     fonts = Path(fonts_dir) if fonts_dir is not None else Path(template_dir) / "fonts"
     font_args = ["--font-path", str(fonts)] if fonts.is_dir() else []
+    if not system_fonts:
+        # проверка контракта: чем шаблон набирает текст, когда системных шрифтов нет
+        font_args.append("--ignore-system-fonts")
     src = str(tmp / "deck.typ")
     t_all = time.perf_counter_ns()
     timings: dict[str, int] = {}
@@ -233,6 +238,7 @@ def compile_deck(
     )
     if r.returncode != 0:
         raise CompileError("ошибка компиляции", r.stderr)
+    svg_stderr = r.stderr
     svgs = sorted(tmp.glob("slide-*.svg"), key=lambda p: int(p.stem.split("-")[1]))
     # Позиции запрашиваются до проверки контракта: по ним видно, какой именно
     # слайд вылез за свою страницу, а без этого сообщение винит шаблон вслепую.
@@ -284,6 +290,7 @@ def compile_deck(
         typ=typ,
         timings=timings,
         pages=pages,
+        stderr=svg_stderr,
     )
 
 
