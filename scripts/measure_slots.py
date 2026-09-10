@@ -1,9 +1,11 @@
 #!/usr/bin/env python
 """Ёмкость слота в знаках: не угадывается, а измеряется typst'ом.
 
-Скрипт просит typst померить высоту текста настоящим шрифтом шаблона при разной
-длине и бинарным поиском находит наибольшую длину, которая ещё влезает в высоту
-слота. Тем же способом меряется допустимое число явных строк.
+Скрипт просит typst померить высоту текста настоящим шрифтом шаблона на наборе
+длин-кандидатов и берёт наибольшую, которая ещё влезает в высоту слота. Тем же
+способом меряется допустимое число явных строк. Число тезисов в списке —
+через высоту одного оформленного тезиса (с маркером и интервалами списка,
+как в deck.typ), а не через угаданную константу.
 
 Запуск:  uv run python scripts/measure_slots.py lmru-hr
 Вывод — готовый раздел slots для template.json.
@@ -58,6 +60,20 @@ PROBE_TYP = """#import "slides_template.typ": *
 )) <probe>]
 """
 
+# Стили списка — копия #let deck(...) в templates/lmru-hr/deck.typ (маркер
+# lm-yellow, интервалы). Adapter-функцию deck() сюда не импортировать: она
+# сама вызывает page() и столкнётся с #set page пробы. Эту копию держать в
+# шаге с deck.typ вручную — другого способа нет, deck() не выставляет список
+# отдельной функцией.
+ITEM_TYP = """#import "slides_template.typ": *
+#set page(width: {width}, height: auto, margin: 0pt)
+#set list(marker: text(fill: lm-yellow, size: 1.2em)[•], spacing: 0.7em, indent: 0pt, body-indent: 0.5em)
+#let base = "{sample}"
+#let sample(n) = {{ let s = ""; while s.clusters().len() < n {{ s = s + base }}; s.clusters().slice(0, n).join() }}
+#let item = list(text(size: {size}, weight: "{weight}", font: {font}, sample({max})))
+#context [#metadata(measure(width: {width}, item).height.mm()) <item>]
+"""
+
 
 def measure(tdir: Path, probe: tuple) -> dict:
     """Высоты текста в мм для набора длин и для набора числа строк."""
@@ -84,6 +100,26 @@ def measure(tdir: Path, probe: tuple) -> dict:
         src.unlink(missing_ok=True)
 
 
+def measure_item(tdir: Path, probe: tuple, max_chars: int) -> float:
+    """Высота в мм одного оформленного тезиса (маркер + интервалы списка) на
+    max_chars знаках — тех самых, что и в итоговом max этого поля."""
+    _stype, _field, width, _cap, _item, size, weight, font = probe
+    src = tdir / "_measure_item.typ"
+    src.write_text(ITEM_TYP.format(width=width, sample=SAMPLE, size=size, weight=weight,
+                                   font=font, max=max_chars))
+    try:
+        fonts = tdir / "fonts"
+        font_args = ["--font-path", str(fonts)] if fonts.is_dir() else []
+        cmd = ["typst", "eval", "query(<item>).map(it => it.value)", "--root", str(tdir),
+               *font_args, "--in", str(src), "--format", "json"]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            raise SystemExit(f"typst не смог померить высоту тезиса {probe[0]}.{probe[1]}:\n{r.stderr}")
+        return json.loads(r.stdout)[0]
+    finally:
+        src.unlink(missing_ok=True)
+
+
 def largest_fitting(pairs: list[list], cap_mm: float) -> int:
     """Наибольшее значение, при котором высота ещё не превысила потолок."""
     ok = [n for n, h in pairs if h <= cap_mm]
@@ -104,7 +140,11 @@ def main(tid: str) -> int:
         chars = largest_fitting(m["chars"], item_mm)
         limits["max"] = max(chars - chars % 5, 5)
         if item:
-            limits["count"] = max(int(cap_mm // item_mm), 1)
+            # count — не догадка cap_mm // item_mm (item_mm лишь ограничивает max
+            # сверху), а слот, делённый на реально померенную высоту одного
+            # оформленного тезиса ровно на max знаках.
+            item_h = measure_item(tdir, probe, limits["max"])
+            limits["count"] = max(int(cap_mm // item_h), 1)
         else:
             limits["lines"] = max(largest_fitting(m["lines"], cap_mm), 1)
         out.setdefault(stype, {})[fld] = limits
