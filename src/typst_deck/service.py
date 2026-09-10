@@ -127,7 +127,11 @@ class DeckService:
         warnings = json.loads(wp.read_text()) if wp.exists() else []
         base = self.settings.public_base_url.rstrip("/")
         try:
-            template = self.templates.get(deck.template).public()
+            info = self.templates.get(deck.template)
+            template = info.public()
+            # пределы проверяются на лету, а не запоминаются: предупреждение
+            # исчезает вместе с причиной, как только текст сократили
+            warnings = warnings + check_deck(deck, info.slots, info.name)
         except TemplateNotFound:
             template = {"id": deck.template, "name": deck.template, "description": "шаблон не найден"}
         return {
@@ -354,9 +358,13 @@ class DeckService:
         return await self.manual(deck_id, fn)
 
     async def change_template(self, deck_id: str, template: str) -> dict:
-        """Сменить шаблон колоды; рендер и откат при ошибке — как в manual."""
+        """Сменить шаблон колоды; рендер и откат при ошибке — как в manual.
+
+        Пределы нового шаблона проверяются не здесь: переезд даёт предупреждение
+        в ответе колоды, а не отказ (спека §7).
+        """
         self.template_dir(template)
-        return await self.manual(deck_id, lambda d: setattr(d, "template", template))
+        return await self.manual(deck_id, lambda d: setattr(d, "template", template), check_slots=False)
 
     def _chat(self, deck_id: str, role: str, content: str, version: int, **extra) -> None:
         self.store.append_chat(deck_id, {"role": role, "content": content, "version": version,

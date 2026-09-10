@@ -706,3 +706,29 @@ async def test_rename_and_move_are_not_affected_by_limits(tight_client):
     sid = d.slides[1].id
     assert (await tight_client.post(f"/api/decks/{d.id}/slides/{sid}/move",
                                     json={"to_index": 0})).status_code == 200
+
+
+@requires_typst
+async def test_moving_to_a_tighter_template_warns_but_is_allowed(tight_client):
+    """Блокировать нельзя: колода застрянет — ни остаться, ни переехать."""
+    from typst_deck.model import Deck
+
+    store = tight_client.app.state.store
+    d = store.create(Deck(title="T", template="default", slides=[{"type": "title", "title": "Э" * 100}]))
+    r = await tight_client.post(f"/api/decks/{d.id}/template", json={"template": "tight"})
+    assert r.status_code == 200 and r.json()["deck"]["template"] == "tight"
+    assert any("«Заголовок»" in w and "Тесный" in w for w in r.json()["warnings"])
+    # предупреждение живёт, пока живёт причина, и снимается вместе с ней
+    sid = d.slides[0].id
+    r = await tight_client.patch(f"/api/decks/{d.id}/slides/{sid}", json={"patch": {"title": "Коротко"}})
+    assert r.status_code == 200 and r.json()["warnings"] == []
+
+
+@requires_typst
+async def test_deck_without_declared_slots_has_no_such_warnings(client):
+    from typst_deck.model import Deck
+
+    store = client.app.state.store
+    d = store.create(Deck(title="T", slides=[{"type": "title", "title": "Э" * 110}]))
+    r = await client.post(f"/api/decks/{d.id}/template", json={"template": "dark"})
+    assert r.status_code == 200 and r.json()["warnings"] == []
