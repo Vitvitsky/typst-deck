@@ -51,3 +51,39 @@ async def client(settings, fake_llm):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         c.app = app
         yield c
+
+
+@pytest.fixture
+def tight_settings(tmp_path):
+    """Клиент с шаблоном, у которого объявлена ёмкость слотов.
+
+    Шаблон — копия default: важна не вёрстка, а объявление в template.json.
+    """
+    import json
+    import shutil as sh
+
+    from typst_deck.config import Settings
+
+    root = tmp_path / "templates"
+    tight = root / "tight"
+    tight.mkdir(parents=True)
+    sh.copy(TEMPLATE_DIR / "deck.typ", tight / "deck.typ")
+    (tight / "template.json").write_text(json.dumps({
+        "name": "Тесный",
+        "slots": {"title": {"title": {"max": 60}, "subtitle": {"lines": 2}},
+                  "image": {"bullets": {"count": 3}}},
+    }, ensure_ascii=False))
+    return Settings(data_dir=tmp_path / "data", template_dir=TEMPLATE_DIR, templates_dir=str(root),
+                    public_base_url="http://t", llm_model="deepseek-chat")
+
+
+@pytest.fixture
+async def tight_client(tight_settings, fake_llm):
+    import httpx
+
+    from typst_deck.app import create_app
+
+    app = create_app(tight_settings, llm=fake_llm)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        c.app = app
+        yield c

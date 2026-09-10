@@ -166,7 +166,8 @@ async def revert(deck_id: str, body: RevertBody, s: DeckService = Depends(svc)):
         old = s.store.load_version(deck_id, body.version)
         d.title, d.slides = old.title, old.slides
 
-    return await s.manual(deck_id, fn)
+    # откат возвращает версию, которая уже собиралась: пределы шаблона её не судят
+    return await s.manual(deck_id, fn, check_slots=False)
 
 
 @router.post("/{deck_id}/messages", status_code=202)

@@ -650,3 +650,59 @@ async def test_failed_render_is_reported_to_model_on_retry(client, fake_llm, mon
     sent = fake_llm.calls[0]
     assert any("не помещается на страницу" in (m.get("content") or "") for m in sent), \
         [m.get("content", "")[:60] for m in sent]
+
+
+@requires_typst
+async def test_manual_edit_over_limit_is_422_with_the_same_text(tight_client):
+    from typst_deck.model import Deck
+
+    store = tight_client.app.state.store
+    d = store.create(Deck(title="T", template="tight", slides=[{"type": "title", "title": "Итоги"}]))
+    sid = d.slides[0].id
+    r = await tight_client.patch(f"/api/decks/{d.id}/slides/{sid}", json={"patch": {"title": "Э" * 80}})
+    assert r.status_code == 422
+    msg = r.json()["error"]["message"]
+    assert "«Заголовок»" in msg and "80 знаков при пределе 60" in msg and "Тесный" in msg
+    assert (await tight_client.get(f"/api/decks/{d.id}")).json()["deck"]["slides"][0]["title"] == "Итоги"
+
+
+@requires_typst
+async def test_manual_edit_that_reduces_an_old_violation_passes(tight_client):
+    """Колода, созданная до появления пределов, обязана оставаться редактируемой."""
+    from typst_deck.model import Deck
+
+    store = tight_client.app.state.store
+    d = store.create(Deck(title="T", template="tight", slides=[{"type": "title", "title": "Э" * 110}]))
+    sid = d.slides[0].id
+    r = await tight_client.patch(f"/api/decks/{d.id}/slides/{sid}", json={"patch": {"title": "Э" * 100}})
+    assert r.status_code == 200
+    r = await tight_client.patch(f"/api/decks/{d.id}/slides/{sid}", json={"patch": {"title": "Э" * 105}})
+    assert r.status_code == 422
+
+
+@requires_typst
+async def test_revert_is_not_blocked_by_limits(tight_client):
+    """Откат возвращает состояние, которое уже собиралось; запирать его нельзя."""
+    from typst_deck.model import Deck
+
+    store = tight_client.app.state.store
+    d = store.create(Deck(title="T", template="tight", slides=[{"type": "title", "title": "Э" * 110}]))
+    sid = d.slides[0].id
+    assert (await tight_client.patch(f"/api/decks/{d.id}/slides/{sid}",
+                                     json={"patch": {"title": "Коротко"}})).status_code == 200
+    v = (await tight_client.get(f"/api/decks/{d.id}/versions")).json()[0]["version"]
+    r = await tight_client.post(f"/api/decks/{d.id}/revert", json={"version": v})
+    assert r.status_code == 200
+
+
+@requires_typst
+async def test_rename_and_move_are_not_affected_by_limits(tight_client):
+    from typst_deck.model import Deck
+
+    store = tight_client.app.state.store
+    d = store.create(Deck(title="T", template="tight",
+                          slides=[{"type": "title", "title": "Э" * 110}, {"type": "final"}]))
+    assert (await tight_client.patch(f"/api/decks/{d.id}", json={"title": "Новое"})).status_code == 200
+    sid = d.slides[1].id
+    assert (await tight_client.post(f"/api/decks/{d.id}/slides/{sid}/move",
+                                    json={"to_index": 0})).status_code == 200

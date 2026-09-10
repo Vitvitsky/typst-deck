@@ -19,6 +19,7 @@ from .llm.tools import format_validation
 from .logs import log_event
 from .model import Deck, utcnow
 from .render import CompileError, CompileResult, compile_deck, compile_pdf, page_size
+from .slots import check_deck
 from .store import DeckNotFound, DeckStore
 from .templates import SAMPLE_DECK, TemplateNotFound, TemplateRegistry
 
@@ -205,12 +206,18 @@ class DeckService:
                 raise ApiError(500, "render", f"{e}: {e.stderr[:2000]}")
 
     # --- ручные правки
-    async def manual(self, deck_id: str, fn: Callable[[Deck], object]) -> dict:
-        """Под блокировкой: fn правит колоду, новая версия, рендер; при ошибке рендера — откат."""
+    async def manual(self, deck_id: str, fn: Callable[[Deck], object], check_slots: bool = True) -> dict:
+        """Под блокировкой: fn правит колоду, новая версия, рендер; при ошибке рендера — откат.
+
+        check_slots=False у отката и смены шаблона: откат возвращает состояние,
+        которое уже собиралось, а переезд в тесный шаблон даёт предупреждение,
+        а не отказ (спека §7) — иначе колода застревает между шаблонами.
+        """
         t0 = time.perf_counter_ns()
         async with self.store.lock(deck_id):
             deck = self.load(deck_id)
             prev = deck.version
+            before = deck.model_copy(deep=True) if check_slots else None
             try:
                 fn(deck)
             except ValidationError as e:
@@ -219,6 +226,11 @@ class DeckService:
                 raise not_found(str(e).strip("'"))
             except ValueError as e:
                 raise ApiError(422, "validation", str(e))
+            if before is not None:
+                declared, template_name = self._slots(deck)
+                bad = check_deck(deck, declared, template_name, before=before)
+                if bad:
+                    raise ApiError(422, "validation", "; ".join(bad))
             self.store.save(deck)
             try:
                 await self.render(deck)
