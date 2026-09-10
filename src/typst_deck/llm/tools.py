@@ -6,7 +6,7 @@ import re
 from pydantic import ValidationError
 
 from ..model import TEMPLATE_PATTERN, Deck, slide_schema
-from ..slots import check_deck, check_slide
+from ..slots import check_deck, check_slide, first_few
 
 
 def _fn(name: str, description: str, params: dict) -> dict:
@@ -97,7 +97,7 @@ class ToolExecutor:
         declared, name = self._current()
         bad = check_deck(new, declared, name, before=self.deck)
         if bad:
-            return "ERROR: " + "; ".join(bad[:5])
+            return "ERROR: " + "; ".join(first_few(bad))
         self.deck.title, self.deck.slides = new.title, new.slides
         self._done("set_deck", {"kind": "rebuilt", "count": len(self.deck.slides)})
         ids = ", ".join(f"{i + 1}={s.id}" for i, s in enumerate(self.deck.slides))

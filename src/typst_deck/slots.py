@@ -237,6 +237,17 @@ def check_slide(slide, declared: dict, *, n: int, template_name: str, before=Non
     return out
 
 
+def first_few(messages: list[str], limit: int = 5) -> list[str]:
+    """Первые limit сообщений и «и ещё N», если их больше.
+
+    Большая колода, созданная до пределов, иначе давала бы стену текста: и в
+    ERROR модели, и в плашке предупреждений, которая склеивает их в строку.
+    """
+    if len(messages) <= limit:
+        return list(messages)
+    return messages[:limit] + [f"и ещё {len(messages) - limit}"]
+
+
 def check_deck(deck, declared: dict, template_name: str, before=None) -> list[str]:
     """Нарушения объявленных пределов по всей колоде, слайд за слайдом.
 

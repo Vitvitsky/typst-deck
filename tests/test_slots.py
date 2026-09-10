@@ -326,3 +326,11 @@ def test_list_max_rejects_shortening_one_bullet_to_make_room_for_another():
     assert check_slide(now, TIGHT, n=1, template_name="Тесный", before=was) == [
         "слайд 1, поле «Тезисы»: 50 знаков при пределе 40 в шаблоне «Тесный»"
     ]
+
+
+def test_first_few_keeps_five_and_counts_the_rest():
+    from typst_deck.slots import first_few
+
+    assert first_few([]) == []
+    assert first_few(list("абвгд")) == list("абвгд")
+    assert first_few(list("абвгдеж")) == list("абвгд") + ["и ещё 2"]

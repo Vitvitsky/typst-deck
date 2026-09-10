@@ -19,7 +19,7 @@ from .llm.tools import format_validation
 from .logs import log_event
 from .model import Deck, utcnow
 from .render import CompileError, CompileResult, compile_deck, compile_pdf, page_size
-from .slots import check_deck
+from .slots import check_deck, first_few
 from .store import DeckNotFound, DeckStore
 from .templates import SAMPLE_DECK, TemplateNotFound, TemplateRegistry
 
@@ -131,7 +131,8 @@ class DeckService:
             template = info.public()
             # пределы проверяются на лету, а не запоминаются: предупреждение
             # исчезает вместе с причиной, как только текст сократили
-            warnings = warnings + check_deck(deck, info.slots, info.name)
+            # check_deck без before намеренно: предупреждение перечисляет все текущие нарушения, в отличие от manual
+            warnings = warnings + first_few(check_deck(deck, info.slots, info.name))
         except TemplateNotFound:
             template = {"id": deck.template, "name": deck.template, "description": "шаблон не найден"}
         return {

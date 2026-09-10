@@ -109,6 +109,13 @@ def test_executor_set_deck_rejects_whole_deck_and_keeps_the_old_one():
     assert ex.deck.title == "Старое" and len(ex.deck.slides) == 1
 
 
+def test_executor_set_deck_names_five_violations_and_counts_the_rest():
+    ex = _tight_executor(Deck(title="Старое", slides=[{"type": "final"}]))
+    r = ex.call("set_deck", {"title": "Новое", "slides": [{"type": "title", "title": "Э" * 80}] * 7})
+    assert r.startswith("ERROR") and "слайд 5," in r and "слайд 6," not in r
+    assert r.endswith("; и ещё 2"), r
+
+
 def test_executor_set_deck_grandfathers_an_unchanged_over_limit_slide():
     """set_deck переписывает колоду целиком, но старому слайду положена та же
     скидка «не стало хуже», что update_slide даёт по спеке §8."""

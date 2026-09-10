@@ -748,6 +748,17 @@ async def test_moving_to_a_tighter_template_warns_but_is_allowed(tight_client):
     assert r.status_code == 200 and r.json()["warnings"] == []
 
 
+async def test_limit_warnings_on_an_old_deck_are_capped(tight_client):
+    """Колода, созданная до пределов, не должна давать стену текста на каждом чтении."""
+    from typst_deck.model import Deck
+
+    store = tight_client.app.state.store
+    d = store.create(Deck(title="T", template="tight", slides=[{"type": "title", "title": "Э" * 80}] * 7))
+    warnings = (await tight_client.get(f"/api/decks/{d.id}")).json()["warnings"]
+    assert len(warnings) == 6 and warnings[-1] == "и ещё 2", warnings
+    assert warnings[0].startswith("слайд 1, поле «Заголовок»")
+
+
 @requires_typst
 async def test_deck_without_declared_slots_has_no_such_warnings(client):
     from typst_deck.model import Deck
