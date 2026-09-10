@@ -71,7 +71,8 @@ TIGHT = {"title": {"title": {"max": 60}, "subtitle": {"lines": 2}},
 
 
 def _tight_executor(deck=None):
-    return ToolExecutor(deck if deck is not None else Deck(), slots=TIGHT, template_name="Тесный")
+    # Deck() по умолчанию в шаблоне default — ему и достаётся тесное объявление
+    return ToolExecutor(deck if deck is not None else Deck(), limits={"default": (TIGHT, "Тесный")})
 
 
 def test_executor_rejects_text_over_the_declared_limit():
@@ -119,6 +120,27 @@ def test_executor_set_deck_grandfathers_an_unchanged_over_limit_slide():
                               "slides": [{"id": sid, "type": "title", "title": "Э" * 81}]})
     assert r2.startswith("ERROR") and "«Заголовок»" in r2 and "81" in r2
     assert ex.deck.title == "Новое"  # вторая правка не применилась
+
+
+def test_executor_checks_limits_of_the_template_switched_to_mid_run():
+    """set_template посреди прогона: следующая правка проверяется пределами нового
+    шаблона, а не того, с которого прогон начался, и ошибка называет новый шаблон."""
+    limits = {"default": ({}, "Корпоративный"), "lmru-hr": (TIGHT, "Lemana Tech")}
+    ex = ToolExecutor(Deck(slides=[{"type": "title", "title": "Итоги"}]),
+                      template_ids=["default", "lmru-hr"], limits=limits)
+    sid = ex.deck.slides[0].id
+    assert ex.call("set_template", {"template": "lmru-hr"}).startswith("OK")
+    r = ex.call("update_slide", {"slide_id": sid, "patch": {"title": "Э" * 80}})
+    assert r.startswith("ERROR") and "«Заголовок»" in r and "Lemana Tech" in r, r
+    assert ex.deck.slides[0].title == "Итоги"
+
+
+def test_executor_on_template_without_limits_entry_keeps_global_limits():
+    """Шаблона колоды нет среди переданных пределов — действуют глобальные из model.py."""
+    ex = ToolExecutor(Deck(template="gone", slides=[{"type": "title", "title": "Итоги"}]),
+                      limits={"default": (TIGHT, "Тесный")})
+    sid = ex.deck.slides[0].id
+    assert ex.call("update_slide", {"slide_id": sid, "patch": {"title": "Э" * 80}}).startswith("OK")
 
 
 def test_executor_without_slots_keeps_global_limits():
@@ -294,10 +316,13 @@ async def test_run_agent_passes_limits_to_prompt_and_executor():
         Completion("", [ToolCall("c1", "update_slide", {"slide_id": sid, "patch": {"title": "Э" * 80}})]),
         Completion("", [ToolCall("c2", "finish", {"summary": "готово"})]),
     ])
-    out = await run_agent(llm, d, "правь", [], [], [], slots=clamp({"title": {"title": {"max": 60}}}),
-                          template_name="Тесный")
+    out = await run_agent(llm, d, "правь", [], [], [],
+                          limits={"default": (clamp({"title": {"title": {"max": 60}}}), "Тесный"),
+                                  "dark": ({}, "Тёмный")})
+    # схема промпта — из шаблона колоды на старте прогона, не из соседнего
     assert '"maxLength":60' in llm.calls[0][0]["content"].replace(" ", "")
     assert out.deck.slides[0].title == "Итоги"
+    assert "Тесный" in llm.calls[1][-1]["content"]
 
 
 async def test_run_agent_passes_render_errors_as_valid_role():

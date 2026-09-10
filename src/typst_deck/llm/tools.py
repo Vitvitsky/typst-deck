@@ -53,11 +53,13 @@ class ToolExecutor:
     """Применяет вызовы инструментов к колоде; ошибки возвращает текстом, не исключением."""
 
     def __init__(self, deck: Deck, template_ids: list[str] | None = None,
-                 slots: dict | None = None, template_name: str = ""):
+                 limits: dict[str, tuple[dict, str]] | None = None):
         self.deck = deck
         self.template_ids = template_ids
-        self.slots = slots or {}
-        self.template_name = template_name
+        # id шаблона → (объявленная ёмкость, имя для сообщений) по всем шаблонам:
+        # модель может сменить шаблон посреди прогона, и следующая правка обязана
+        # проверяться пределами нового. Готовый словарь, а не реестр шаблонов.
+        self.limits = limits or {}
         self.changed = False
         self.ops: list[str] = []
         self.changes: list[dict] = []  # для интерфейса: что и с каким слайдом случилось
@@ -77,15 +79,23 @@ class ToolExecutor:
         except (KeyError, ValueError) as e:
             return f"ERROR: {e}"
 
+    def _current(self) -> tuple[dict, str]:
+        """Пределы шаблона, в котором колода сейчас, — ищутся при каждой проверке,
+        поэтому после set_template действуют сразу, без отдельного состояния.
+        Шаблона нет среди переданных — действуют глобальные пределы model.py."""
+        return self.limits.get(self.deck.template, ({}, self.deck.template))
+
     def _fits(self, slide, before=None) -> str | None:
         """Нарушения пределов шаблона одной строкой или None."""
-        bad = check_slide(slide, self.slots, n=self.deck.index_of(slide.id) + 1,
-                          template_name=self.template_name, before=before)
+        declared, name = self._current()
+        bad = check_slide(slide, declared, n=self.deck.index_of(slide.id) + 1,
+                          template_name=name, before=before)
         return "; ".join(bad) if bad else None
 
     def _set_deck(self, title: str, slides: list[dict]) -> str:
         new = Deck(id=self.deck.id, title=title, slides=slides)
-        bad = check_deck(new, self.slots, self.template_name, before=self.deck)
+        declared, name = self._current()
+        bad = check_deck(new, declared, name, before=self.deck)
         if bad:
             return "ERROR: " + "; ".join(bad[:5])
         self.deck.title, self.deck.slides = new.title, new.slides

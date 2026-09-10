@@ -68,14 +68,19 @@ def _user_content(message: str, files: list[tuple[str, str]]) -> str:
 async def run_agent(
     llm: LLM, deck: Deck, user_message: str, files: list[tuple[str, str]],
     history: list[dict], assets: list[str], templates: list[dict] | None = None,
-    slots: dict | None = None, template_name: str = "",
+    limits: dict[str, tuple[dict, str]] | None = None,
     max_iter: int = 12,
 ) -> Outcome:
+    """limits — id шаблона → (объявленная ёмкость слотов, имя шаблона) по всем шаблонам."""
     template_ids = [t["id"] for t in templates] if templates else None
-    ex = ToolExecutor(deck, template_ids, slots=slots, template_name=template_name)
+    ex = ToolExecutor(deck, template_ids, limits=limits)
     tools = tool_specs(template_ids)
+    # Схема промпта — из шаблона колоды на старте: промпт уже отправлен и посреди
+    # прогона не меняется. О пределах шаблона, выбранного через set_template,
+    # модель узнаёт из ERROR — там шаблон назван по имени.
+    declared = (limits or {}).get(deck.template, ({}, ""))[0]
     messages: list[dict] = [{"role": "system",
-                             "content": build_system_prompt(deck, assets, templates, slots)}]
+                             "content": build_system_prompt(deck, assets, templates, declared)}]
     messages += [_history_message(m) for m in history]
     messages.append({"role": "user", "content": _user_content(user_message, files)})
 

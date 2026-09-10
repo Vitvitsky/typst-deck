@@ -317,7 +317,9 @@ async def test_generate_gives_the_model_template_limits(client, fake_llm, monkey
     fake_llm._queue += [Completion("", [ToolCall("c1", "finish", {"summary": "готово"})])]
     r = await client.post(f"/api/decks/{d.id}/messages", json={"text": "привет"})
     await wait_job(client, r.json()["job_id"])
-    assert seen["template_name"] == "Тёмный" and seen["slots"] == {}
+    # пределы всех шаблонов, а не только текущего: модель может сменить шаблон посреди прогона
+    assert seen["limits"]["dark"] == ({}, "Тёмный")
+    assert seen["limits"]["default"] == ({}, "Корпоративный")
 
 
 @requires_typst
@@ -678,6 +680,28 @@ async def test_manual_edit_that_reduces_an_old_violation_passes(tight_client):
     assert r.status_code == 200
     r = await tight_client.patch(f"/api/decks/{d.id}/slides/{sid}", json={"patch": {"title": "Э" * 105}})
     assert r.status_code == 422
+
+
+@requires_typst
+async def test_generate_checks_limits_of_the_template_the_model_switched_to(tight_client, fake_llm):
+    """set_template("tight") и правка в том же прогоне: правка проверяется пределами
+    нового шаблона, иначе модель пишет сверх ёмкости в один запрос."""
+    from typst_deck.model import Deck
+
+    store = tight_client.app.state.store
+    d = store.create(Deck(title="T", template="default", slides=[{"type": "title", "title": "Итоги"}]))
+    sid = d.slides[0].id
+    fake_llm._queue += [
+        Completion("", [ToolCall("c1", "set_template", {"template": "tight"})]),
+        Completion("", [ToolCall("c2", "update_slide", {"slide_id": sid, "patch": {"title": "Э" * 80}})]),
+        Completion("", [ToolCall("c3", "finish", {"summary": "готово"})]),
+    ]
+    r = await tight_client.post(f"/api/decks/{d.id}/messages", json={"text": "в тесный и длиннее"})
+    assert (await wait_job(tight_client, r.json()["job_id"]))["status"] == "done"
+    error = fake_llm.calls[2][-1]["content"]
+    assert error.startswith("ERROR") and "Тесный" in error, error
+    deck = (await tight_client.get(f"/api/decks/{d.id}")).json()["deck"]
+    assert deck["template"] == "tight" and deck["slides"][0]["title"] == "Итоги"
 
 
 @requires_typst

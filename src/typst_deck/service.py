@@ -306,10 +306,12 @@ class DeckService:
             try:
                 if job:
                     job.phase = "model"
-                declared, template_name = self._slots(deck)
+                infos = self.templates.list()
+                # пределы всех шаблонов, а не только текущего: модель может сменить
+                # шаблон через set_template, и правки после этого проверяются по новому
                 out = await run_agent(llm, deck, message, files, history, self.store.assets(deck_id),
-                                      templates=[t.public() for t in self.templates.list()],
-                                      slots=declared, template_name=template_name)
+                                      templates=[t.public() for t in infos],
+                                      limits={t.id: (t.slots, t.name) for t in infos})
                 if out.changed:
                     if job:
                         job.phase = "render"
