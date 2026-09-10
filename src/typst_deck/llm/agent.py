@@ -69,11 +69,13 @@ async def run_agent(
     llm: LLM, deck: Deck, user_message: str, files: list[tuple[str, str]],
     history: list[dict], assets: list[str], templates: list[dict] | None = None,
     limits: dict[str, tuple[dict, str]] | None = None,
+    aliases: dict[str, str] | None = None,
     max_iter: int = 12,
 ) -> Outcome:
-    """limits — id шаблона → (объявленная ёмкость слотов, имя шаблона) по всем шаблонам."""
+    """limits — id шаблона → (объявленная ёмкость слотов, имя шаблона) по всем шаблонам.
+    aliases — старый id шаблона → действующий: set_template тоже принимает старый."""
     template_ids = [t["id"] for t in templates] if templates else None
-    ex = ToolExecutor(deck, template_ids, limits=limits)
+    ex = ToolExecutor(deck, template_ids, limits=limits, aliases=aliases)
     tools = tool_specs(template_ids)
     # Схема промпта — из шаблона колоды на старте: промпт уже отправлен и посреди
     # прогона не меняется. О пределах шаблона, выбранного через set_template,

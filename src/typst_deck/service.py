@@ -327,7 +327,8 @@ class DeckService:
                 # колода могла остаться на старом id — пределы у него те же, что у нового
                 limits |= {old: limits[new] for old, new in self.templates.aliases.items() if new in limits}
                 out = await run_agent(llm, deck, message, files, history, self.store.assets(deck_id),
-                                      templates=[t.public() for t in infos], limits=limits)
+                                      templates=[t.public() for t in infos], limits=limits,
+                                      aliases=self.templates.aliases)
                 if out.changed:
                     if job:
                         job.phase = "render"

@@ -53,13 +53,17 @@ class ToolExecutor:
     """Применяет вызовы инструментов к колоде; ошибки возвращает текстом, не исключением."""
 
     def __init__(self, deck: Deck, template_ids: list[str] | None = None,
-                 limits: dict[str, tuple[dict, str]] | None = None):
+                 limits: dict[str, tuple[dict, str]] | None = None,
+                 aliases: dict[str, str] | None = None):
         self.deck = deck
         self.template_ids = template_ids
         # id шаблона → (объявленная ёмкость, имя для сообщений) по всем шаблонам:
         # модель может сменить шаблон посреди прогона, и следующая правка обязана
         # проверяться пределами нового. Готовый словарь, а не реестр шаблонов.
         self.limits = limits or {}
+        # старый id → действующий: модель могла унаследовать старый id из истории
+        # чата или запомнить его из прошлого ответа. Тоже готовый словарь, не реестр.
+        self.aliases = dict(aliases or {})
         self.changed = False
         self.ops: list[str] = []
         self.changes: list[dict] = []  # для интерфейса: что и с каким слайдом случилось
@@ -134,6 +138,7 @@ class ToolExecutor:
         return f"OK: слайд {slide_id} теперь на позиции {self.deck.index_of(slide_id) + 1}"
 
     def _set_template(self, template: str) -> str:
+        template = self.aliases.get(template, template)
         if self.template_ids and template not in self.template_ids:
             return f"ERROR: шаблон «{template}» не найден; доступны: {', '.join(self.template_ids)}"
         if not re.fullmatch(TEMPLATE_PATTERN, template):

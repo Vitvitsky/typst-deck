@@ -40,6 +40,20 @@ def test_executor_set_template_unknown_ok_without_whitelist():
     assert ex.call("set_template", {"template": "Bad/Name"}).startswith("ERROR")
 
 
+def test_executor_set_template_resolves_old_id():
+    ex = ToolExecutor(Deck(), template_ids=["default", "dark"], aliases={"old-dark": "dark"})
+    r = ex.call("set_template", {"template": "old-dark"})
+    assert r.startswith("OK") and ex.deck.template == "dark"
+    assert ex.ops == ["set_template dark"]
+
+
+def test_executor_set_template_old_id_still_errors_without_aliases():
+    ex = ToolExecutor(Deck(), template_ids=["default", "dark"])
+    r = ex.call("set_template", {"template": "old-dark"})
+    assert r.startswith("ERROR") and "old-dark" in r
+    assert ex.deck.template == "default"  # правка не применилась
+
+
 def test_executor_set_and_update():
     ex = ToolExecutor(Deck())
     r = ex.call("set_deck", {"title": "T", "slides": [{"type": "title", "title": "A"}, {"type": "final"}]})
@@ -188,6 +202,21 @@ async def test_run_agent_set_template_flow():
     assert out.changes == [{"kind": "template", "template_id": "dark"}]
     sysmsg = llm.calls[0][0]["content"]
     assert "Тёмный" in sysmsg and '"template":"default"' in sysmsg
+
+
+async def test_run_agent_set_template_resolves_old_id():
+    """Модель могла унаследовать старый id из истории чата — set_template тоже его разрешает."""
+    d = Deck(title="T", slides=[{"type": "final"}])
+    llm = FakeLLM([
+        Completion("", [ToolCall("c1", "set_template", {"template": "old-dark"})]),
+        Completion("", [ToolCall("c2", "finish", {"summary": "Сменил шаблон"})]),
+    ])
+    out = await run_agent(llm, d, "сделай тёмной", files=[], history=[], assets=[],
+                          templates=[{"id": "default", "name": "Корпоративный"},
+                                     {"id": "dark", "name": "Тёмный"}],
+                          aliases={"old-dark": "dark"})
+    assert out.changed and out.deck.template == "dark"
+    assert out.ops == ["set_template dark"]
 
 
 async def test_run_agent_create_flow():
