@@ -820,3 +820,35 @@ async def test_old_template_id_is_stored_as_the_new_one(settings, fake_llm):
         d = app.state.store.create(Deck(title="T", slides=[{"type": "final"}]))
         r = await c.post(f"/api/decks/{d.id}/template", json={"template": "old-dark"})
         assert r.status_code == 200 and r.json()["deck"]["template"] == "dark"
+
+
+@requires_typst
+async def test_broken_template_is_hidden_refused_and_reported(settings, fake_llm, tmp_path):
+    import httpx
+
+    from tests.conftest import TWO_PAGES, make_template
+    from typst_deck.app import create_app
+
+    root = tmp_path / "corp"
+    make_template(root, "broken", deck_edit=TWO_PAGES, meta={"name": "Сломанный"})
+    app = create_app(settings.model_copy(update={"templates_dir": str(root)}), llm=fake_llm)
+    app.state.service.check_templates()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        assert "broken" not in [t["id"] for t in (await c.get("/api/templates")).json()]
+        r = await c.post("/api/decks", json={"brief": "Итоги", "template": "broken"})
+        assert r.status_code == 422 and "сломан" in r.json()["error"]["message"]
+        h = (await c.get("/api/health")).json()
+        assert h["ok"] is True and h["templates"]["checked"] is True
+        assert "broken" in h["templates"]["broken"] and "default" in h["templates"]["ok"]
+
+
+@requires_typst
+async def test_app_checks_templates_in_background_on_start(settings, fake_llm):
+    from typst_deck.app import create_app
+
+    app = create_app(settings.model_copy(update={"check_templates_on_start": True}), llm=fake_llm)
+    for _ in range(200):
+        if app.state.service.templates.checked:
+            break
+        await asyncio.sleep(0.05)
+    assert app.state.service.templates.checked

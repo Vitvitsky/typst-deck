@@ -47,6 +47,14 @@ class TemplateNotFound(KeyError):
     pass
 
 
+class TemplateBroken(TemplateNotFound):
+    """Шаблон на месте, но работать не может; причина — в reason."""
+
+    def __init__(self, tid: str, reason: str):
+        super().__init__(tid)
+        self.reason = reason
+
+
 class TemplateRegistry:
     def __init__(self, default_dir: Path, templates_dirs: Path | str | Iterable[Path | str],
                  aliases: dict[str, str] | None = None):
@@ -57,6 +65,9 @@ class TemplateRegistry:
         self.incomplete: dict[str, list[str]] = {}  # id → чего не хватает; наполняется в _scan
         # старый id → действующий: колоды и внешние вызовы могли запомнить прежний
         self.aliases = dict(aliases or {})
+        self.broken: dict[str, str] = {}          # id → причина; заполняет check_all
+        self.warnings: dict[str, list[str]] = {}  # id → предупреждения стартовой проверки
+        self.checked = False
         self._scan()  # предупреждения о неполных каталогах — при старте, в лог
 
     def _warn(self, path: Path, msg: str) -> None:
@@ -116,12 +127,17 @@ class TemplateRegistry:
         return TemplateInfo(tid, name, meta.get("description", ""), path,
                             clamp(meta.get("slots"), tid), fonts)
 
-    def list(self) -> list[TemplateInfo]:
+    def all(self) -> list[TemplateInfo]:
+        """Все шаблоны, включая сломанные: их проверяет check_all."""
         out = []
         if (self.default_dir / "deck.typ").exists():
             out.append(self._info("default", self.default_dir))
         out += [self._info(tid, d) for tid, d in self._scan().items()]
         return out
+
+    def list(self) -> list[TemplateInfo]:
+        """Шаблоны, которыми можно пользоваться: сломанные скрыты."""
+        return [t for t in self.all() if t.id not in self.broken]
 
     def resolve(self, tid: str) -> str:
         """Старый id шаблона → действующий; неизвестный id возвращается как есть."""
@@ -129,6 +145,8 @@ class TemplateRegistry:
 
     def get(self, tid: str) -> TemplateInfo:
         tid = self.resolve(tid)
+        if tid in self.broken:
+            raise TemplateBroken(tid, self.broken[tid])
         if tid == "default" and (self.default_dir / "deck.typ").exists():
             return self._info("default", self.default_dir)
         if "/" in tid or ".." in tid or tid.startswith((".", "_")):
@@ -140,6 +158,21 @@ class TemplateRegistry:
 
     def dir_for(self, tid: str) -> Path:
         return self.get(tid).path
+
+    def check_all(self, typst_bin: str, work_dir: Path) -> None:
+        """Стартовая проверка: сломанные шаблоны прячутся, предупреждения запоминаются.
+        Корпоративные шаблоны монтируются при запуске, и сборка образа их не видела."""
+        broken: dict[str, str] = {}
+        warnings: dict[str, list[str]] = {}
+        for t in self.all():
+            rep = check_template(t.path, typst_bin, work_dir / t.id, full=False)
+            if rep.errors:
+                broken[t.id] = "; ".join(rep.errors)
+            if rep.warnings:
+                warnings[t.id] = rep.warnings
+        for tid, missing in self.incomplete.items():
+            broken[tid] = f"нет {', '.join(missing)}"
+        self.broken, self.warnings, self.checked = broken, warnings, True
 
 
 def check(registry: TemplateRegistry, typst_bin: str, work_dir: Path, full: bool = True) -> list[str]:

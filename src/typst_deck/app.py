@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from pathlib import Path
 
@@ -53,6 +54,11 @@ def create_app(settings: Settings | None = None, llm: LLM | None | object = _UNS
     app.state.settings, app.state.store, app.state.jobs, app.state.llm = settings, store, jobs, llm
     app.state.service = DeckService(store, jobs, llm, settings)  # type: ignore[arg-type]
 
+    if settings.check_templates_on_start:
+        # смонтированные шаблоны сборка образа не видит — сервис проверяет их сам,
+        # в фоне: typst собирает образец каждым шаблоном, а старт ждать не должен
+        threading.Thread(target=app.state.service.check_templates, name="template-check", daemon=True).start()
+
     @app.middleware("http")
     async def _timing(request: Request, call_next):
         t0 = time.perf_counter_ns()
@@ -81,7 +87,8 @@ def create_app(settings: Settings | None = None, llm: LLM | None | object = _UNS
         meter = app.state.service.meter
         return {"ok": True, "llm": llm is not None,
                 "model": settings.llm_model if llm is not None else None,
-                "tokens": meter.public(), "since": meter.since.isoformat()}
+                "tokens": meter.public(), "since": meter.since.isoformat(),
+                "templates": app.state.service.templates_health()}
 
     def page(name: str) -> FileResponse:
         return FileResponse(STATIC / name, headers={"Cache-Control": "no-cache, must-revalidate"})

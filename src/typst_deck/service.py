@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import tempfile
 import time
 from pathlib import Path
 from typing import Callable
@@ -22,7 +23,7 @@ from .model import Deck, utcnow
 from .render import CompileError, CompileResult, compile_deck, compile_pdf, page_size
 from .slots import check_deck, first_few
 from .store import DeckNotFound, DeckStore
-from .templates import SAMPLE_DECK, TemplateInfo, TemplateNotFound, TemplateRegistry
+from .templates import SAMPLE_DECK, TemplateBroken, TemplateInfo, TemplateNotFound, TemplateRegistry
 
 # (имя, байты, извлечённый текст или None для картинок)
 IngestedFile = tuple[str, bytes, str | None]
@@ -63,11 +64,28 @@ class DeckService:
 
     # --- шаблоны
     def template(self, tid: str) -> TemplateInfo:
-        """Шаблон по id; неизвестный — 422 с понятным текстом."""
+        """Шаблон по id; неизвестный или сломанный — 422 с понятным текстом."""
         try:
             return self.templates.get(tid)
+        except TemplateBroken as e:
+            raise ApiError(422, "validation", f"шаблон «{e.args[0]}» сломан: {e.reason}")
         except TemplateNotFound:
             raise ApiError(422, "validation", f"шаблон «{tid}» не найден")
+
+    def check_templates(self) -> None:
+        """Стартовая проверка шаблонов; идёт в фоне, итог — в лог и в /api/health."""
+        with tempfile.TemporaryDirectory() as tmp:
+            self.templates.check_all(self.settings.typst_bin, Path(tmp))
+        for tid, reason in self.templates.broken.items():
+            log_event(log, "template.broken", template=tid, reason=reason, level=logging.ERROR)
+        for tid, notes in self.templates.warnings.items():
+            for w in notes:
+                log_event(log, "template.warning", template=tid, warning=w, level=logging.WARNING)
+
+    def templates_health(self) -> dict:
+        t = self.templates
+        return {"checked": t.checked, "ok": [x.id for x in t.list()],
+                "broken": dict(t.broken), "warnings": dict(t.warnings)}
 
     def template_dir(self, tid: str):
         return self.template(tid).path
@@ -140,8 +158,9 @@ class DeckService:
             # исчезает вместе с причиной, как только текст сократили
             # check_deck без before намеренно: предупреждение перечисляет все текущие нарушения, в отличие от manual
             warnings = warnings + first_few(check_deck(deck, info.slots, info.name))
-        except TemplateNotFound:
-            template = {"id": deck.template, "name": deck.template, "description": "шаблон не найден"}
+        except TemplateNotFound as e:
+            reason = e.reason if isinstance(e, TemplateBroken) else "шаблон не найден"
+            template = {"id": deck.template, "name": deck.template, "description": reason}
         return {
             "deck": deck.model_dump(mode="json"),
             "template": template,

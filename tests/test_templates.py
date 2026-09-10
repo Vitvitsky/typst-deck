@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from tests.conftest import TEMPLATE_DIR, requires_typst
-from typst_deck.templates import TemplateNotFound, TemplateRegistry, check
+from tests.conftest import FALLBACK_FONT, TEMPLATE_DIR, TWO_PAGES, make_template, requires_typst
+from typst_deck.templates import TemplateBroken, TemplateNotFound, TemplateRegistry, check
 
 
 def test_registry_lists_default_and_extra(tmp_path):
@@ -149,3 +149,31 @@ def test_registry_refuses_fonts_outside_the_template(tmp_path, caplog):
         reg = TemplateRegistry(TEMPLATE_DIR, tmp_path / "templates")
         assert reg.get("escape").fonts == d / "fonts"  # взят каталог по умолчанию
     assert any("fonts" in r.getMessage() and "внутрь шаблона" in r.getMessage() for r in caplog.records)
+
+
+@requires_typst
+def test_start_check_hides_broken_and_keeps_warned_templates(tmp_path):
+    root = tmp_path / "templates"
+    make_template(root, "broken", deck_edit=TWO_PAGES)
+    make_template(root, "odd-font", deck_edit=FALLBACK_FONT)
+    reg = TemplateRegistry(TEMPLATE_DIR, root)
+    assert not reg.checked
+    reg.check_all("typst", tmp_path / "work")
+    assert reg.checked
+    assert [t.id for t in reg.list()] == ["default", "odd-font"]
+    assert "образец не собирается" in reg.broken["broken"]
+    with pytest.raises(TemplateBroken) as e:
+        reg.get("broken")
+    assert "образец не собирается" in e.value.reason
+    assert any("нет такого шрифта" in w.lower() for w in reg.warnings["odd-font"])
+    assert "broken" in [t.id for t in reg.all()]
+
+
+@requires_typst
+def test_incomplete_template_is_reported_as_broken(tmp_path):
+    d = tmp_path / "templates" / "half"
+    d.mkdir(parents=True)
+    (d / "deck.typ").write_text('#import "slides_template.typ": *\n')
+    reg = TemplateRegistry(TEMPLATE_DIR, tmp_path / "templates")
+    reg.check_all("typst", tmp_path / "work")
+    assert "slides_template.typ" in reg.broken["half"]

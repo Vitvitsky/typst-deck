@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     templates_dir: str = "templates"           # корни дополнительных шаблонов <корень>/<id>/deck.typ; несколько — через ":" как PATH
     template_aliases: str = ""                 # старые id шаблонов: "старый:новый,старый2:новый2"
     typst_bin: str = "typst"
+    check_templates_on_start: bool = True      # фоновая проверка шаблонов при старте
     public_base_url: str = ""
     llm_api_base: str = ""
     llm_api_key: str = ""

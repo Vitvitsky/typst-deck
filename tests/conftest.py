@@ -61,7 +61,8 @@ def png_bytes() -> bytes:
 def settings(tmp_path):
     from typst_deck.config import Settings
 
-    return Settings(data_dir=tmp_path / "data", template_dir=TEMPLATE_DIR, templates_dir=str(ROOT / "templates"), public_base_url="http://t", llm_model="deepseek-chat")
+    return Settings(data_dir=tmp_path / "data", template_dir=TEMPLATE_DIR, templates_dir=str(ROOT / "templates"),
+                    public_base_url="http://t", llm_model="deepseek-chat", check_templates_on_start=False)
 
 
 @pytest.fixture
@@ -104,7 +105,7 @@ def tight_settings(tmp_path):
                   "image": {"bullets": {"count": 3}}},
     }, ensure_ascii=False))
     return Settings(data_dir=tmp_path / "data", template_dir=TEMPLATE_DIR, templates_dir=str(root),
-                    public_base_url="http://t", llm_model="deepseek-chat")
+                    public_base_url="http://t", llm_model="deepseek-chat", check_templates_on_start=False)
 
 
 @pytest.fixture
