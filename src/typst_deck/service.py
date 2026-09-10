@@ -225,7 +225,10 @@ class DeckService:
     # --- рендер
     async def render(self, deck: Deck) -> CompileResult:
         """typst — блокирующий subprocess, поэтому уходит в поток: иначе на время
-        компиляции встаёт весь сервер, включая статику и превью чужих колод."""
+        компиляции встаёт весь сервер, включая статику и превью чужих колод.
+
+        Блокировку колоды не берёт и колоду не сохраняет: блокировку держит
+        вызывающий (manual, generate, pdf), а asyncio.Lock не реентерабелен."""
         t = self.template(deck.template)
         try:
             return await asyncio.to_thread(
@@ -238,7 +241,7 @@ class DeckService:
     async def pdf(self, deck_id: str) -> Path:
         """PDF по требованию: собирается при первом скачивании и лежит в build/
         до следующей правки, которая заменяет build/ целиком и снимает его."""
-        deck = self.load(deck_id)
+        self.load(deck_id)
         build = self.store.deck_dir(deck_id) / "build"
         ready = build / "deck.pdf"
         if ready.exists():
@@ -248,12 +251,18 @@ class DeckService:
         async with self.store.lock(deck_id):
             if ready.exists():  # мог успеть параллельный запрос
                 return ready
+            deck = self.load(deck_id)  # под блокировкой: правка могла успеть раньше нас
+            t = self.template(deck.template)  # сломанный или пропавший шаблон — 422 с причиной
+            # build/template — абсолютная ссылка на каталог, под который собирали build/.
+            # После переноса колоды на новый id или смены точки монтирования она ведёт
+            # в никуда или на прежний шаблон: build/ пересобирается под действующий.
+            # render() блокировку не берёт и колоду не сохраняет: скачивание PDF
+            # не даёт ни новой версии, ни записи в чате.
+            link = build / "template"
+            if not (link / "deck.typ").exists() or link.resolve() != t.path.resolve():
+                await self.render(deck)
             try:
-                fonts = self.templates.get(deck.template).fonts
-            except TemplateNotFound:
-                fonts = None  # шаблон пропал, но build/ собран: PDF соберётся с прежним каталогом
-            try:
-                return await asyncio.to_thread(compile_pdf, build, self.settings.typst_bin, fonts_dir=fonts)
+                return await asyncio.to_thread(compile_pdf, build, self.settings.typst_bin, fonts_dir=t.fonts)
             except CompileError as e:
                 raise ApiError(500, "render", f"{e}: {e.stderr[:2000]}")
 

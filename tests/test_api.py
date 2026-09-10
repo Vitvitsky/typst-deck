@@ -1,6 +1,7 @@
 import asyncio
 
 import httpx
+import pytest
 
 from tests.conftest import requires_typst
 from typst_deck.llm.client import Completion, ToolCall
@@ -789,6 +790,7 @@ async def test_pdf_is_built_with_the_template_fonts(settings, fake_llm, tmp_path
     build = store.deck_dir(d.id) / "build"
     build.mkdir()
     (build / "deck.typ").write_text("")
+    (build / "template").symlink_to(t.resolve())  # собрано под действующий шаблон: пересобирать нечего
     seen = {}
 
     def fake_pdf(build_dir, typst_bin, fonts_dir=None):
@@ -799,6 +801,57 @@ async def test_pdf_is_built_with_the_template_fonts(settings, fake_llm, tmp_path
     monkeypatch.setattr(service_module, "compile_pdf", fake_pdf)
     await svc_.pdf(d.id)
     assert seen["fonts"] == t / "typst-deck" / "fonts"
+
+
+async def test_pdf_of_a_deck_whose_template_vanished_is_refused(client):
+    """Шаблон колоды пропал — PDF не собирается молча с build/template/fonts, а называет причину."""
+    from typst_deck.model import Deck
+
+    store = client.app.state.store
+    d = store.create(Deck(title="T", template="gone", slides=[{"type": "final"}]))
+    build = store.deck_dir(d.id) / "build"
+    build.mkdir()
+    (build / "deck.typ").write_text("")
+    r = await client.get(f"/api/decks/{d.id}/deck.pdf")
+    assert r.status_code == 422 and "не найден" in r.json()["error"]["message"]
+
+
+@requires_typst
+@pytest.mark.parametrize("old_left", [False, True], ids=["old-gone", "old-left"])
+async def test_pdf_rebuilds_a_build_left_on_the_old_template_path(settings, fake_llm, tmp_path, old_left):
+    """Колоду перенесли на новый id шаблона, а её build/template смотрит на прежний
+    каталог: в новом образе его нет (old-gone) или он уже не действующий (old-left).
+    PDF обязан пересобрать build/ под текущий шаблон, а не отдать 500 «file not found»,
+    и при этом не порождать правку: ни новой версии, ни записи в чате."""
+    import shutil
+
+    from tests.conftest import make_template
+    from typst_deck.app import create_app
+    from typst_deck.migrate_template import migrate
+    from typst_deck.model import Deck
+
+    old = make_template(tmp_path / "old-root", "old")
+    new = make_template(tmp_path / "new-root", "new")
+    before = create_app(settings.model_copy(update={"templates_dir": str(old.parent)}), llm=fake_llm)
+    d = before.state.store.create(Deck(title="T", template="old", slides=[{"type": "final"}]))
+    await before.state.service.render(d)
+    build = before.state.store.deck_dir(d.id) / "build"
+    assert (build / "template").resolve() == old.resolve()
+    assert not (build / "deck.pdf").exists()
+
+    if not old_left:
+        shutil.rmtree(old)
+    assert migrate(before.state.store, "old", "new") == [d.id]
+    saved = before.state.store.load(d.id)
+    app = create_app(settings.model_copy(update={"templates_dir": str(new.parent)}), llm=fake_llm)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        r = await c.get(f"/api/decks/{d.id}/deck.pdf")
+    assert r.status_code == 200, r.text
+    assert r.content[:5] == b"%PDF-"
+    assert (build / "template").resolve() == new.resolve()
+    after = app.state.store.load(d.id)
+    assert (after.version, after.updated_at) == (saved.version, saved.updated_at), "скачивание PDF — не правка"
+    assert app.state.store.read_chat(d.id) == []
 
 
 @requires_typst
@@ -820,6 +873,7 @@ async def test_old_template_id_is_stored_as_the_new_one(settings, fake_llm):
         d = app.state.store.create(Deck(title="T", slides=[{"type": "final"}]))
         r = await c.post(f"/api/decks/{d.id}/template", json={"template": "old-dark"})
         assert r.status_code == 200 and r.json()["deck"]["template"] == "dark"
+
 
 
 @requires_typst
