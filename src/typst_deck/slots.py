@@ -122,3 +122,70 @@ def apply_to_schema(declared: dict) -> dict:
                         else f"не больше {n} строк: переводов строки не больше {n - 1}")
                 prop["description"] = f"{prop['description']} {note}" if prop.get("description") else note
     return schema
+
+
+CHARS = ("знак", "знака", "знаков")
+LINES = ("строка", "строки", "строк")
+ITEMS = ("элемент", "элемента", "элементов")
+
+
+def _plural(n: int, forms: tuple[str, str, str]) -> str:
+    tail = abs(n) % 100
+    if 11 <= tail <= 14:
+        return forms[2]
+    return {1: forms[0], 2: forms[1], 3: forms[1], 4: forms[1]}.get(tail % 10, forms[2])
+
+
+def _phrase(key: str, n: int) -> str:
+    forms = {"max": CHARS, "lines": LINES}.get(key, ITEMS)
+    return f"{n} {_plural(n, forms)}"
+
+
+def _measures(value: object) -> dict[str, int]:
+    """Замеры значения поля по тем же ключам, что и в объявлении.
+
+    У списка строк «max» — длина самого длинного элемента: сообщение всё равно
+    называет поле целиком, а модель правит его целиком.
+    """
+    if isinstance(value, str):
+        return {"max": len(value), "lines": value.count("\n") + 1}
+    if isinstance(value, list):
+        m = {"count": len(value)}
+        if value and all(isinstance(x, str) for x in value):
+            m["max"] = max(len(x) for x in value)
+        return m
+    return {}
+
+
+def check_slide(slide, declared: dict, *, n: int, template_name: str, before=None) -> list[str]:
+    """Нарушения объявленных пределов на одном слайде; пусто — всё в порядке.
+
+    before — тот же слайд до правки. Нарушение, которое не стало хуже прежнего,
+    пропускается: текст, сохранённый до появления пределов, иначе нельзя было бы
+    даже сократить (спека §8).
+    """
+    fields = declared.get(slide.type, {})
+    if not fields:
+        return []
+    same_type = before is not None and before.type == slide.type
+    out: list[str] = []
+    for field, limits in fields.items():
+        got = _measures(getattr(slide, field, None))
+        was = _measures(getattr(before, field, None)) if same_type else {}
+        for key, limit in limits.items():
+            actual = got.get(key)
+            if actual is None or actual <= limit:
+                continue
+            if was.get(key) is not None and actual <= was[key]:
+                continue
+            out.append(f"слайд {n}, поле «{FIELD_RU.get(field, field)}»: "
+                       f"{_phrase(key, actual)} при пределе {limit} в шаблоне «{template_name}»")
+    return out
+
+
+def check_deck(deck, declared: dict, template_name: str) -> list[str]:
+    """Нарушения по всей колоде: для предупреждения о переезде в тесный шаблон."""
+    out: list[str] = []
+    for i, s in enumerate(deck.slides, 1):
+        out += check_slide(s, declared, n=i, template_name=template_name)
+    return out

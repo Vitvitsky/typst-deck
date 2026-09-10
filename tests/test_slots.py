@@ -1,4 +1,7 @@
-from typst_deck.slots import SCHEMA, apply_to_schema, clamp
+import pytest
+
+from typst_deck.model import Deck
+from typst_deck.slots import SCHEMA, apply_to_schema, check_deck, check_slide, clamp
 
 
 def _props(schema: dict, stype: str) -> dict:
@@ -89,3 +92,63 @@ def test_count_on_list_of_objects():
     s = apply_to_schema(clamp({"bar-chart": {"data": {"count": 6, "max": 30}}}))
     assert _props(s, "bar-chart")["data"]["maxItems"] == 6
     assert "maxLength" not in _props(s, "bar-chart")["data"].get("items", {})
+
+
+TIGHT = clamp({"title": {"title": {"max": 60}, "subtitle": {"lines": 2, "max": 90}},
+               "image": {"bullets": {"count": 3, "max": 40}}})
+
+
+def _slide(**kw):
+    return Deck(slides=[kw]).slides[0]
+
+
+def test_check_reports_chars_field_and_template():
+    s = _slide(type="title", title="Э" * 80)
+    msgs = check_slide(s, TIGHT, n=1, template_name="Тесный")
+    assert msgs == ["слайд 1, поле «Заголовок»: 80 знаков при пределе 60 в шаблоне «Тесный»"]
+
+
+def test_check_counts_explicit_line_breaks():
+    """Порог 2026-09-09: три перевода собирались, четыре — нет."""
+    ok = _slide(type="title", title="A", subtitle="а\nб")
+    bad = _slide(type="title", title="A", subtitle="а\nб\nв\nг")
+    assert check_slide(ok, TIGHT, n=1, template_name="Тесный") == []
+    assert check_slide(bad, TIGHT, n=1, template_name="Тесный") == [
+        "слайд 1, поле «Подзаголовок»: 4 строки при пределе 2 в шаблоне «Тесный»"
+    ]
+
+
+def test_check_counts_list_items_and_longest_item():
+    s = _slide(type="image", title="A", bullets=["раз", "два", "три", "Э" * 50])
+    msgs = check_slide(s, TIGHT, n=2, template_name="Тесный")
+    assert msgs == [
+        "слайд 2, поле «Тезисы»: 4 элемента при пределе 3 в шаблоне «Тесный»",
+        "слайд 2, поле «Тезисы»: 50 знаков при пределе 40 в шаблоне «Тесный»",
+    ]
+
+
+def test_check_without_declaration_finds_nothing():
+    assert check_slide(_slide(type="title", title="Э" * 119), {}, n=1, template_name="Простой") == []
+
+
+def test_check_lets_through_an_edit_that_reduces_the_violation():
+    """Иначе колода, созданная до появления пределов, стала бы нередактируемой."""
+    was = _slide(type="title", title="Э" * 110)
+    now = _slide(type="title", title="Э" * 100)
+    assert check_slide(now, TIGHT, n=1, template_name="Тесный", before=was) == []
+    worse = _slide(type="title", title="Э" * 111)
+    assert check_slide(worse, TIGHT, n=1, template_name="Тесный", before=was) != []
+
+
+def test_check_deck_numbers_slides_from_one():
+    d = Deck(slides=[{"type": "final"}, {"type": "title", "title": "Э" * 80}])
+    assert check_deck(d, TIGHT, "Тесный") == [
+        "слайд 2, поле «Заголовок»: 80 знаков при пределе 60 в шаблоне «Тесный»"
+    ]
+
+
+@pytest.mark.parametrize("n,word", [(1, "знак"), (2, "знака"), (5, "знаков"), (11, "знаков"), (21, "знак")])
+def test_plural_of_measures(n, word):
+    from typst_deck.slots import _phrase
+
+    assert _phrase("max", n) == f"{n} {word}"

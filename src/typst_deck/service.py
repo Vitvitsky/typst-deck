@@ -90,6 +90,15 @@ class DeckService:
             raise not_found("страница образца")
         return p
 
+    def _slots(self, deck: Deck) -> tuple[dict, str]:
+        """Объявленная ёмкость слотов шаблона колоды и его имя для сообщений.
+        Пропавший шаблон не должен ломать правку: без объявления действуют глобальные пределы."""
+        try:
+            t = self.templates.get(deck.template)
+        except TemplateNotFound:
+            return {}, deck.template
+        return t.slots, t.name
+
     # --- история обращений по всем колодам
     def history(self, limit: int = 200) -> list[dict]:
         items = []
@@ -281,8 +290,10 @@ class DeckService:
             try:
                 if job:
                     job.phase = "model"
+                declared, template_name = self._slots(deck)
                 out = await run_agent(llm, deck, message, files, history, self.store.assets(deck_id),
-                                      templates=[t.public() for t in self.templates.list()])
+                                      templates=[t.public() for t in self.templates.list()],
+                                      slots=declared, template_name=template_name)
                 if out.changed:
                     if job:
                         job.phase = "render"

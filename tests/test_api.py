@@ -299,6 +299,28 @@ async def test_generate_logs_stages_with_deck_and_job(client, fake_llm, caplog):
 
 
 @requires_typst
+async def test_generate_gives_the_model_template_limits(client, fake_llm, monkeypatch):
+    """Сервис обязан передать агенту объявление шаблона колоды, а не пустое."""
+    from typst_deck.model import Deck
+
+    seen = {}
+    import typst_deck.service as service_module
+    real = service_module.run_agent
+
+    async def spy(*a, **kw):
+        seen.update(kw)
+        return await real(*a, **kw)
+
+    monkeypatch.setattr(service_module, "run_agent", spy)
+    store = client.app.state.store
+    d = store.create(Deck(title="T", template="dark", slides=[{"type": "final"}]))
+    fake_llm._queue += [Completion("", [ToolCall("c1", "finish", {"summary": "готово"})])]
+    r = await client.post(f"/api/decks/{d.id}/messages", json={"text": "привет"})
+    await wait_job(client, r.json()["job_id"])
+    assert seen["template_name"] == "Тёмный" and seen["slots"] == {}
+
+
+@requires_typst
 async def test_failed_generation_logs_job_failed(client, fake_llm, caplog):
     caplog.set_level("INFO", logger="typst_deck.service")
     r = await client.post("/api/decks", json={"brief": "x", "upload_ids": []})

@@ -66,6 +66,55 @@ def test_executor_add_remove_move_finish():
     assert ex.finished and ex.summary == "готово"
 
 
+TIGHT = {"title": {"title": {"max": 60}, "subtitle": {"lines": 2}},
+         "image": {"bullets": {"count": 3}}}
+
+
+def _tight_executor(deck=None):
+    return ToolExecutor(deck if deck is not None else Deck(), slots=TIGHT, template_name="Тесный")
+
+
+def test_executor_rejects_text_over_the_declared_limit():
+    ex = _tight_executor(Deck(slides=[{"type": "title", "title": "Итоги"}]))
+    sid = ex.deck.slides[0].id
+    r = ex.call("update_slide", {"slide_id": sid, "patch": {"title": "Э" * 80}})
+    assert r.startswith("ERROR") and "«Заголовок»" in r and "60" in r and "Тесный" in r
+    assert ex.deck.slides[0].title == "Итоги" and not ex.changed and ex.ops == []
+
+
+def test_executor_rejects_four_line_breaks_in_subtitle():
+    """Ровно та правка, которая уронила боевую колоду 2026-09-09, — до рендера."""
+    ex = _tight_executor(Deck(slides=[{"type": "title", "title": "Итоги", "subtitle": "Q3"}]))
+    sid = ex.deck.slides[0].id
+    assert ex.call("update_slide", {"slide_id": sid, "patch": {"subtitle": "а\nб\nв\nг"}}).startswith("ERROR")
+    assert ex.deck.slides[0].subtitle == "Q3"
+    assert ex.call("update_slide", {"slide_id": sid, "patch": {"subtitle": "а\nб"}}).startswith("OK")
+    assert ex.deck.slides[0].subtitle == "а\nб"
+
+
+def test_executor_rejects_extra_bullets_and_rolls_back_added_slide():
+    ex = _tight_executor(Deck(slides=[{"type": "final"}]))
+    r = ex.call("add_slide", {"slide": {"type": "image", "title": "A",
+                                        "bullets": ["раз", "два", "три", "четыре"]}, "after": None})
+    assert r.startswith("ERROR") and "«Тезисы»" in r
+    assert len(ex.deck.slides) == 1 and ex.changes == []
+
+
+def test_executor_set_deck_rejects_whole_deck_and_keeps_the_old_one():
+    ex = _tight_executor(Deck(title="Старое", slides=[{"type": "final"}]))
+    r = ex.call("set_deck", {"title": "Новое", "slides": [
+        {"type": "title", "title": "Ок"}, {"type": "title", "title": "Э" * 80}]})
+    assert r.startswith("ERROR") and "слайд 2" in r
+    assert ex.deck.title == "Старое" and len(ex.deck.slides) == 1
+
+
+def test_executor_without_slots_keeps_global_limits():
+    ex = ToolExecutor(Deck(slides=[{"type": "title", "title": "Итоги"}]))
+    sid = ex.deck.slides[0].id
+    assert ex.call("update_slide", {"slide_id": sid, "patch": {"title": "Э" * 80}}).startswith("OK")
+    assert ex.call("update_slide", {"slide_id": sid, "patch": {"title": "Э" * 500}}).startswith("ERROR")
+
+
 def test_system_prompt_mentions_schema_deck_assets():
     d = Deck(title="T", slides=[{"type": "final"}])
     p = build_system_prompt(d, ["a1.png"])
@@ -232,9 +281,10 @@ async def test_run_agent_passes_limits_to_prompt_and_executor():
         Completion("", [ToolCall("c1", "update_slide", {"slide_id": sid, "patch": {"title": "Э" * 80}})]),
         Completion("", [ToolCall("c2", "finish", {"summary": "готово"})]),
     ])
-    await run_agent(llm, d, "правь", [], [], [], slots=clamp({"title": {"title": {"max": 60}}}),
-                    template_name="Тесный")
+    out = await run_agent(llm, d, "правь", [], [], [], slots=clamp({"title": {"title": {"max": 60}}}),
+                          template_name="Тесный")
     assert '"maxLength":60' in llm.calls[0][0]["content"].replace(" ", "")
+    assert out.deck.slides[0].title == "Итоги"
 
 
 async def test_run_agent_passes_render_errors_as_valid_role():

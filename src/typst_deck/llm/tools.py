@@ -6,6 +6,7 @@ import re
 from pydantic import ValidationError
 
 from ..model import TEMPLATE_PATTERN, Deck, slide_schema
+from ..slots import check_deck, check_slide
 
 
 def _fn(name: str, description: str, params: dict) -> dict:
@@ -76,20 +77,38 @@ class ToolExecutor:
         except (KeyError, ValueError) as e:
             return f"ERROR: {e}"
 
+    def _fits(self, slide, before=None) -> str | None:
+        """Нарушения пределов шаблона одной строкой или None."""
+        bad = check_slide(slide, self.slots, n=self.deck.index_of(slide.id) + 1,
+                          template_name=self.template_name, before=before)
+        return "; ".join(bad) if bad else None
+
     def _set_deck(self, title: str, slides: list[dict]) -> str:
         new = Deck(id=self.deck.id, title=title, slides=slides)
+        bad = check_deck(new, self.slots, self.template_name)
+        if bad:
+            return "ERROR: " + "; ".join(bad[:5])
         self.deck.title, self.deck.slides = new.title, new.slides
         self._done("set_deck", {"kind": "rebuilt", "count": len(self.deck.slides)})
         ids = ", ".join(f"{i + 1}={s.id}" for i, s in enumerate(self.deck.slides))
         return f"OK: {len(self.deck.slides)} слайдов; id: {ids}"
 
     def _update_slide(self, slide_id: str, patch: dict) -> str:
+        old = self.deck.find(slide_id)
         slide = self.deck.apply_patch(slide_id, patch)
+        bad = self._fits(slide, before=old)
+        if bad:
+            self.deck.slides[self.deck.index_of(slide_id)] = old  # правка не применяется целиком
+            return f"ERROR: {bad}"
         self._done(f"update_slide {slide_id}", self._ref("updated", slide, fields=sorted(patch)))
         return f"OK: слайд {slide_id} обновлён"
 
     def _add_slide(self, slide: dict, after: str | None = None) -> str:
         s = self.deck.add_slide(slide, after)
+        bad = self._fits(s)
+        if bad:
+            self.deck.remove_slide(s.id)
+            return f"ERROR: {bad}"
         self._done(f"add_slide {s.id}", self._ref("added", s))
         return f"OK: добавлен слайд {s.id} на позицию {self.deck.index_of(s.id) + 1}"
 
