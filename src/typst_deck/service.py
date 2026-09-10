@@ -56,7 +56,8 @@ class TokenMeter:
 class DeckService:
     def __init__(self, store: DeckStore, jobs: JobRegistry, llm: LLM | None, settings: Settings):
         self.store, self.jobs, self.llm, self.settings = store, jobs, llm, settings
-        self.templates = TemplateRegistry(settings.template_dir, settings.templates_dirs)
+        self.templates = TemplateRegistry(settings.template_dir, settings.templates_dirs,
+                                          settings.template_alias_map)
         self.meter = TokenMeter()
         self._preview_locks: dict[str, asyncio.Lock] = {}
 
@@ -274,6 +275,7 @@ class DeckService:
 
     def new_deck_from_brief(self, brief: str, files: list[IngestedFile], template: str = "default") -> tuple[Deck, Job]:
         self.require_llm()
+        template = self.templates.resolve(template)
         self.template_dir(template)
         first_line = (brief.strip().splitlines() or [""])[0].strip()
         deck = self.store.create(Deck(title=first_line[:120] or "Презентация", template=template))
@@ -321,9 +323,11 @@ class DeckService:
                 infos = self.templates.list()
                 # пределы всех шаблонов, а не только текущего: модель может сменить
                 # шаблон через set_template, и правки после этого проверяются по новому
+                limits = {t.id: (t.slots, t.name) for t in infos}
+                # колода могла остаться на старом id — пределы у него те же, что у нового
+                limits |= {old: limits[new] for old, new in self.templates.aliases.items() if new in limits}
                 out = await run_agent(llm, deck, message, files, history, self.store.assets(deck_id),
-                                      templates=[t.public() for t in infos],
-                                      limits={t.id: (t.slots, t.name) for t in infos})
+                                      templates=[t.public() for t in infos], limits=limits)
                 if out.changed:
                     if job:
                         job.phase = "render"
@@ -377,6 +381,7 @@ class DeckService:
         Пределы нового шаблона проверяются не здесь: переезд даёт предупреждение
         в ответе колоды, а не отказ (спека §7).
         """
+        template = self.templates.resolve(template)
         self.template_dir(template)
         return await self.manual(deck_id, lambda d: setattr(d, "template", template), check_slots=False)
 

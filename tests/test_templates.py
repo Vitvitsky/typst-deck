@@ -99,6 +99,18 @@ def test_registry_reads_and_clamps_slots(tmp_path):
     assert reg.get("tight").slots == {"title": {"title": {"max": 60, "lines": 2}, "subtitle": {"max": 120}}}
 
 
+def test_registry_resolves_old_ids(tmp_path):
+    d = tmp_path / "templates" / "new-id"
+    d.mkdir(parents=True)
+    (d / "deck.typ").write_text("// stub")
+    (d / "template.json").write_text(json.dumps({"name": "Новый"}))
+    reg = TemplateRegistry(TEMPLATE_DIR, tmp_path / "templates", {"old-id": "new-id"})
+    assert reg.get("old-id").id == "new-id" and reg.get("old-id").name == "Новый"
+    assert reg.dir_for("old-id") == d
+    assert [t.id for t in reg.list()] == ["default", "new-id"]  # в списке только действующий id
+    assert reg.resolve("old-id") == "new-id" and reg.resolve("other") == "other"
+
+
 def test_registry_without_slots_declares_nothing(tmp_path):
     """template.json без slots — поведение ровно как сегодня, глобальные пределы."""
     d = tmp_path / "templates" / "plain"

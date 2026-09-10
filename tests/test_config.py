@@ -1,6 +1,8 @@
 import os
 
-from typst_deck.config import get_settings
+import pytest
+
+from typst_deck.config import Settings, get_settings
 
 
 def test_defaults(monkeypatch):
@@ -50,3 +52,14 @@ def test_logging_from_env(monkeypatch):
     s = get_settings()
     assert s.log_level == "DEBUG"
     assert s.log_format == "json"
+
+
+def test_template_aliases_parse():
+    s = Settings(_env_file=None, template_aliases=" lmru-hr:lemana-tech , a:b ,")
+    assert s.template_alias_map == {"lmru-hr": "lemana-tech", "a": "b"}
+    assert Settings(_env_file=None).template_alias_map == {}
+
+
+def test_template_aliases_refuse_a_malformed_pair():
+    with pytest.raises(ValueError, match="старый:новый"):
+        Settings(_env_file=None, template_aliases="lmru-hr").template_alias_map

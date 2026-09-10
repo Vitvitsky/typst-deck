@@ -59,12 +59,15 @@ SAMPLE_DECK = Deck(id="templatepreview", title="Образец шаблона", 
 
 
 class TemplateRegistry:
-    def __init__(self, default_dir: Path, templates_dirs: Path | str | Iterable[Path | str]):
+    def __init__(self, default_dir: Path, templates_dirs: Path | str | Iterable[Path | str],
+                 aliases: dict[str, str] | None = None):
         self.default_dir = Path(default_dir)
         roots = [templates_dirs] if isinstance(templates_dirs, (str, Path)) else list(templates_dirs)
         self.templates_dirs = [Path(r) for r in roots]
         self._warned: set[Path] = set()
         self.incomplete: dict[str, list[str]] = {}  # id → чего не хватает; наполняется в _scan
+        # старый id → действующий: колоды и внешние вызовы могли запомнить прежний
+        self.aliases = dict(aliases or {})
         self._scan()  # предупреждения о неполных каталогах — при старте, в лог
 
     def _warn(self, path: Path, msg: str) -> None:
@@ -131,7 +134,12 @@ class TemplateRegistry:
         out += [self._info(tid, d) for tid, d in self._scan().items()]
         return out
 
+    def resolve(self, tid: str) -> str:
+        """Старый id шаблона → действующий; неизвестный id возвращается как есть."""
+        return self.aliases.get(tid, tid)
+
     def get(self, tid: str) -> TemplateInfo:
+        tid = self.resolve(tid)
         if tid == "default" and (self.default_dir / "deck.typ").exists():
             return self._info("default", self.default_dir)
         if "/" in tid or ".." in tid or tid.startswith((".", "_")):

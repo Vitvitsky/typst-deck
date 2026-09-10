@@ -799,3 +799,24 @@ async def test_pdf_is_built_with_the_template_fonts(settings, fake_llm, tmp_path
     monkeypatch.setattr(service_module, "compile_pdf", fake_pdf)
     await svc_.pdf(d.id)
     assert seen["fonts"] == t / "typst-deck" / "fonts"
+
+
+@requires_typst
+async def test_old_template_id_is_stored_as_the_new_one(settings, fake_llm):
+    """Бот мог зашить старый id: создание и переезд принимают его и пишут новый."""
+    import httpx
+
+    from typst_deck.app import create_app
+    from typst_deck.model import Deck
+
+    app = create_app(settings.model_copy(update={"template_aliases": "old-dark:dark"}), llm=fake_llm)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        fake_llm._queue += [Completion("", [ToolCall("c1", "finish", {"summary": "ok"})])]
+        r = await c.post("/api/decks", json={"brief": "Итоги", "template": "old-dark"})
+        assert r.status_code == 202
+        await wait_job(c, r.json()["job_id"])
+        assert (await c.get(f"/api/decks/{r.json()['deck_id']}")).json()["deck"]["template"] == "dark"
+        assert "old-dark" not in [t["id"] for t in (await c.get("/api/templates")).json()]
+        d = app.state.store.create(Deck(title="T", slides=[{"type": "final"}]))
+        r = await c.post(f"/api/decks/{d.id}/template", json={"template": "old-dark"})
+        assert r.status_code == 200 and r.json()["deck"]["template"] == "dark"

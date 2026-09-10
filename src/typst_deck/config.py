@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     data_dir: Path = Path("data")
     template_dir: Path = Path("template")      # шаблон по умолчанию (id "default")
     templates_dir: str = "templates"           # корни дополнительных шаблонов <корень>/<id>/deck.typ; несколько — через ":" как PATH
+    template_aliases: str = ""                 # старые id шаблонов: "старый:новый,старый2:новый2"
     typst_bin: str = "typst"
     public_base_url: str = ""
     llm_api_base: str = ""
@@ -26,6 +27,19 @@ class Settings(BaseSettings):
     @property
     def templates_dirs(self) -> list[Path]:
         return [Path(p) for p in self.templates_dir.split(os.pathsep) if p]
+
+    @property
+    def template_alias_map(self) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for pair in self.template_aliases.split(","):
+            pair = pair.strip()
+            if not pair:
+                continue
+            old, sep, new = pair.partition(":")
+            if not sep or not old.strip() or not new.strip():
+                raise ValueError(f"TYPST_DECK_TEMPLATE_ALIASES: «{pair}» — ожидается старый:новый")
+            out[old.strip()] = new.strip()
+        return out
 
 
 def get_settings() -> Settings:
