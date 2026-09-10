@@ -42,6 +42,33 @@ SCHEMA = slide_schema()
 DEFS = _by_type(SCHEMA)
 
 
+def _kind(prop: dict) -> str | None:
+    """Вид поля по его JSON Schema: "text" — строка свободного текста, "strings" —
+    список строк, "list" — список прочего (объекты data, series), None — всё иное.
+
+    str | None (anyOf) — не строковое поле: в схеме у него нет maxLength, и предел
+    ушёл бы в проверку, минуя модель. enum и const — выбор из готовых значений,
+    а не текст, у которого бывает ёмкость.
+    """
+    if "enum" in prop or "const" in prop:
+        return None
+    if prop.get("type") == "string":
+        return "text"
+    if prop.get("type") == "array":
+        items = prop.get("items")
+        return "strings" if isinstance(items, dict) and items.get("type") == "string" else "list"
+    return None
+
+
+# Таблица применимости из спеки §3: ключ → виды полей, к которым он применим,
+# и объяснение для лога, почему остальным он не подходит.
+APPLIES = {
+    "max": ({"text", "strings"}, "max применим только к строковым полям и спискам строк"),
+    "lines": ({"text"}, "lines применим только к строковым полям"),
+    "count": ({"strings", "list"}, "count применим только к спискам"),
+}
+
+
 def _ceiling(prop: dict, key: str) -> int | None:
     """Глобальный предел из model.py для этого ключа, если он там задан."""
     if key == "lines":
@@ -55,8 +82,10 @@ def _ceiling(prop: dict, key: str) -> int | None:
 def clamp(raw: object, where: str = "") -> dict:
     """Объявление slots, очищенное от неизвестного и зажатое глобальным потолком.
 
-    Всё отброшенное и зажатое пишется в лог: опечатка в template.json иначе
-    молча ничего не ограничивает.
+    Остаются только ключи, применимые к виду поля (таблица спеки §3): тогда
+    каждый оставшийся ключ и попадает в схему (apply_to_schema), и проверяется
+    (check_slide). Всё отброшенное и зажатое пишется в лог: опечатка в
+    template.json иначе молча ничего не ограничивает.
     """
     out: dict[str, dict[str, dict[str, int]]] = {}
     if not isinstance(raw, dict):
@@ -84,6 +113,12 @@ def clamp(raw: object, where: str = "") -> dict:
                 if key not in KEYS or not isinstance(value, int) or isinstance(value, bool) or value < 1:
                     log.warning("шаблон %s: %s.%s.%s — неизвестный ключ или не целое положительное число",
                                 where, stype, field, key)
+                    continue
+                kinds, why = APPLIES[key]
+                if _kind(prop) not in kinds:
+                    # иначе ключ попал бы в схему и не в проверку или наоборот (спека §4)
+                    log.warning("шаблон %s: %s.%s.%s — ключ не применим к этому полю (%s), пропущено",
+                                where, stype, field, key, why)
                     continue
                 ceiling = _ceiling(prop, key)
                 if ceiling is not None and value > ceiling:

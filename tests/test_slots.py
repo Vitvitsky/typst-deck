@@ -220,3 +220,76 @@ def test_lmru_bar_chart_bullets_over_capacity_are_rejected():
                       "bullets": bullets}]).slides[0]
     msgs = check_slide(s, declared, n=1, template_name="Lemana Tech")
     assert any("«Тезисы»" in m and "200 знаков" in m for m in msgs), msgs
+
+
+def test_clamp_drops_keys_that_do_not_apply_to_the_field(caplog):
+    """Таблица §3: lines — только строковым полям, count — только спискам, max —
+    строковым полям и спискам строк. image — str | None (anyOf), это не строковое поле."""
+    with caplog.at_level("WARNING", logger="typst_deck.slots"):
+        out = clamp({"image": {"bullets": {"lines": 1, "max": 90}, "image": {"max": 5},
+                               "title": {"count": 2, "max": 70}},
+                     "bar-chart": {"data": {"max": 30, "count": 6}}}, "tight")
+    assert out == {"image": {"bullets": {"max": 90}, "title": {"max": 70}},
+                   "bar-chart": {"data": {"count": 6}}}
+    messages = [r.getMessage() for r in caplog.records]
+    assert len(messages) == 4
+    assert all("не применим" in m for m in messages), messages
+    assert any("image.bullets.lines" in m and "строковым полям" in m for m in messages)
+    assert any("image.title.count" in m and "спискам" in m for m in messages)
+
+
+# Минимальный правильный слайд каждого типа; в списках по два элемента, чтобы
+# count: 1 нарушался уже ими, а подписи chart держали длину рядов.
+BASE = {
+    "title": {"type": "title", "title": "А"},
+    "section": {"type": "section", "title": "А"},
+    "image": {"type": "image", "title": "А"},
+    "bar-chart": {"type": "bar-chart", "title": "А",
+                  "data": [{"label": "а", "value": 1}, {"label": "б", "value": 2}]},
+    "chart": {"type": "chart", "title": "А", "labels": ["а", "б"],
+              "series": [{"name": "р", "values": [1, 2]}, {"name": "с", "values": [3, 4]}]},
+    "final": {"type": "final"},
+}
+
+
+def _violating(prop: dict, key: str, base: object) -> object:
+    """Значение поля, нарушающее предел 1 по этому ключу."""
+    if key == "lines":
+        return "а\nб"
+    if key == "count":
+        return base if isinstance(base, list) and len(base) >= 2 else ["а", "б"]
+    if prop.get("type") == "array":  # max у списка строк — длина элемента
+        return ["аб"] * max(len(base or []), 1)
+    return "аб"
+
+
+def test_every_key_clamp_keeps_reaches_the_schema_and_is_enforced():
+    """Схема и проверка согласованы не на примерах, а по всем сочетаниям:
+    каждый ключ, переживший clamp, модель видит в схеме и check_slide проверяет."""
+    from typst_deck.slots import DEFS, FIELD_RU, KEYS
+
+    raw = {t: {f: {k: 1 for k in KEYS} for f in d["properties"]} for t, d in DEFS.items()}
+    declared = clamp(raw, "все сочетания")
+    combos = [(t, f, k) for t, fields in declared.items() for f, lim in fields.items() for k in lim]
+    # сверка с таблицей §3 на известных полях, чтобы тест не прошёл на пустом объявлении
+    assert ("image", "bullets", "max") in combos and ("image", "bullets", "count") in combos
+    assert ("title", "subtitle", "lines") in combos and ("chart", "series", "count") in combos
+    for gone in [("image", "bullets", "lines"), ("image", "image", "max"),
+                 ("image", "title", "count"), ("bar-chart", "data", "max")]:
+        assert gone not in combos, gone
+
+    schema_props = {t: _props(apply_to_schema(declared), t) for t in DEFS}
+    for stype, field, key in combos:
+        prop = schema_props[stype][field]
+        if key == "max":
+            target = prop["items"] if prop.get("type") == "array" else prop
+            assert target.get("maxLength") == 1, (stype, field, key)
+        elif key == "count":
+            assert prop.get("maxItems") == 1, (stype, field, key)
+        else:
+            assert "одна строка" in prop.get("description", ""), (stype, field, key)
+
+        value = _violating(DEFS[stype]["properties"][field], key, BASE[stype].get(field))
+        slide = Deck(slides=[BASE[stype] | {field: value}]).slides[0]
+        msgs = check_slide(slide, {stype: {field: {key: 1}}}, n=1, template_name="Т")
+        assert len(msgs) == 1 and f"«{FIELD_RU.get(field, field)}»" in msgs[0], (stype, field, key, msgs)
