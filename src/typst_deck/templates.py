@@ -14,10 +14,11 @@ import logging
 import re
 import sys
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .model import Deck
+from .slots import clamp
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +33,8 @@ class TemplateInfo:
     name: str
     description: str
     path: Path
+    # объявленная ёмкость слотов; пусто — действуют глобальные пределы model.py
+    slots: dict = field(default_factory=dict)
 
     def public(self) -> dict:
         return {"id": self.id, "name": self.name, "description": self.description}
@@ -110,7 +113,7 @@ class TemplateRegistry:
             except ValueError:
                 meta = {}
         name = meta.get("name") or ("Корпоративный" if tid == "default" else tid)
-        return TemplateInfo(tid, name, meta.get("description", ""), path)
+        return TemplateInfo(tid, name, meta.get("description", ""), path, clamp(meta.get("slots"), tid))
 
     def list(self) -> list[TemplateInfo]:
         out = []

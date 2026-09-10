@@ -85,3 +85,26 @@ def test_check_reports_incomplete_template(tmp_path):
     reg = TemplateRegistry(TEMPLATE_DIR, tmp_path / "templates")
     errors = check(reg, "typst", tmp_path / "work")
     assert any("half" in e and "slides_template.typ" in e for e in errors)
+
+
+def test_registry_reads_and_clamps_slots(tmp_path):
+    d = tmp_path / "templates" / "tight"
+    d.mkdir(parents=True)
+    (d / "deck.typ").write_text("// stub")
+    (d / "template.json").write_text(json.dumps({
+        "name": "Тесный",
+        "slots": {"title": {"title": {"max": 60, "lines": 2}, "subtitle": {"max": 300}}},
+    }, ensure_ascii=False))
+    reg = TemplateRegistry(TEMPLATE_DIR, tmp_path / "templates")
+    assert reg.get("tight").slots == {"title": {"title": {"max": 60, "lines": 2}, "subtitle": {"max": 120}}}
+
+
+def test_registry_without_slots_declares_nothing(tmp_path):
+    """template.json без slots — поведение ровно как сегодня, глобальные пределы."""
+    d = tmp_path / "templates" / "plain"
+    d.mkdir(parents=True)
+    (d / "deck.typ").write_text("// stub")
+    (d / "template.json").write_text(json.dumps({"name": "Простой"}))
+    reg = TemplateRegistry(TEMPLATE_DIR, tmp_path / "templates")
+    assert reg.get("plain").slots == {} and reg.get("default").slots == {}
+    assert reg.get("plain").public() == {"id": "plain", "name": "Простой", "description": ""}
