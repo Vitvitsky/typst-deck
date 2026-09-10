@@ -24,16 +24,24 @@
   body
 }
 
-// Заголовок слайда: если в 19pt не помещается в одну строку, уменьшается до 15pt.
+// Кегль по месту: первый из размеров, при котором содержимое влезает в высоту h,
+// иначе последний. Пределы из template.json приблизительны — широкие знаки всё
+// равно вылезают, и это последний рубеж перед обрезкой.
+#let fit-text(h, sizes, body, ..args) = layout(sz => context {
+  let pick = sizes.last()
+  for s in sizes {
+    if measure(width: sz.width, text(size: s, ..args, body)).height <= h {
+      pick = s
+      break
+    }
+  }
+  text(size: pick, ..args, body)
+})
+
+// Заголовок слайда: если в 19pt не помещается в полторы строки, уменьшается до 15pt.
 #let heading-block(title) = {
   block(width: 100%, inset: (bottom: 5pt), stroke: (bottom: 1.2pt + accent))[
-    #if title == none { v(19pt) } else {
-      layout(sz => context {
-        let big = text(size: 19pt, weight: "bold", title)
-        let m = measure(width: sz.width, big)
-        if m.height > 19pt * 1.5 { text(size: 15pt, weight: "bold", title) } else { big }
-      })
-    }
+    #if title == none { v(19pt) } else { fit-text(19pt * 1.5, (19pt, 15pt), title, weight: "bold") }
   ]
   v(0.3cm)
 }
@@ -42,9 +50,9 @@
   background: place(top, rect(width: 100%, height: 1.1cm, fill: accent)),
 )[
   #v(1fr)
-  #if title != none { text(size: 28pt, weight: "bold", title) }
+  #if title != none { fit-text(2.4cm, (28pt, 22pt, 17pt, 14pt), title, weight: "bold") }
   #v(0.35cm)
-  #if subtitle != none { text(size: 14pt, fill: muted, subtitle) }
+  #if subtitle != none { fit-text(1.1cm, (14pt, 12pt, 10pt), subtitle, fill: muted) }
   #v(1.4fr)
   // автор и департамент — отдельные блоки контракта, прижаты к низу слайда;
   // порядок подписи: сначала человек, потом подразделение
@@ -55,8 +63,8 @@
 #let slide-section(title: none, subtitle: none) = slide(fill: accent)[
   #set text(fill: white)
   #v(1fr)
-  #if title != none { text(size: 26pt, weight: "bold", title) }
-  #if subtitle != none { v(0.3cm); text(size: 13pt, subtitle) }
+  #if title != none { fit-text(2.4cm, (26pt, 20pt, 16pt), title, weight: "bold") }
+  #if subtitle != none { v(0.3cm); fit-text(1.0cm, (13pt, 11pt), subtitle) }
   #v(1fr)
 ]
 

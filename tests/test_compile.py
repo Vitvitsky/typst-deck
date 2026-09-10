@@ -248,3 +248,47 @@ def test_author_is_printed_above_department(deck_dir, tid):
 def test_author_above_department_in_default_template(deck_dir):
     r = compile_deck(_title_deck(), deck_dir, TEMPLATE_DIR)
     assert _y_of(r.positions, "author") < _y_of(r.positions, "department")
+
+
+MM = 2.83465  # мм в пунктах: зоны в шаблонах заданы в мм, positions отдаёт пункты
+LONG_TITLE = ("Итоги квартала по направлению данных и аналитики и планы полугодия " * 2)[:120]
+
+
+def _field(positions, name):
+    return next(p for p in positions if p["field"] == name)
+
+
+def test_long_title_shrinks_into_its_zone(deck_dir):
+    """Автокегль: длинный заголовок укладывается в зону, а не растёт пропорционально длине.
+
+    Замер 2026-09-10 на этом шаблоне: короткий заголовок 21.3 pt, длинный
+    без автокегля — 258.1 pt при зоне 68.0 pt. Лесенка из трёх размеров
+    (28/22/17pt) из плана не укладывала его в зону даже на последней ступени
+    (84.8 pt) — добавлена четвёртая, 14pt, с которой автокегль даёт 50.1 pt.
+    """
+    short = compile_deck(Deck(slides=[{"type": "title", "title": "Итоги"}]), deck_dir, TEMPLATE_DIR)
+    one_line = _field(short.positions, "title")["h"]
+    long_ = compile_deck(Deck(slides=[{"type": "title", "title": LONG_TITLE}]), deck_dir, TEMPLATE_DIR)
+    h = _field(long_.positions, "title")["h"]
+    assert h > one_line        # длиннее одной строки — иначе тест ничего не проверяет
+    assert h <= 24 * MM        # но в зону 2.4cm укладывается
+    assert len([p for p in long_.positions if p["field"] == "title"]) == 1  # measure не задвоил маркер
+
+
+@pytest.mark.parametrize("tid", sorted(p.name for p in (TEMPLATE_DIR.parent / "templates").iterdir() if (p / "deck.typ").exists()))
+def test_long_section_title_stays_on_one_page(deck_dir, tid):
+    r = compile_deck(Deck(slides=[{"type": "section", "title": LONG_TITLE, "subtitle": LONG_TITLE}]),
+                     deck_dir, TEMPLATE_DIR.parent / "templates" / tid)
+    assert len(r.svgs) == 1
+
+
+def test_lmru_long_title_fits_the_slot_instead_of_being_clipped(deck_dir):
+    """Замер 2026-09-10: заголовок в 120 знаков — 163.2 pt с автокеглем при слоте
+    60mm (170.1 pt) и 380.0 pt без него, то есть больше половины текста обрезалось."""
+    lmru = TEMPLATE_DIR.parent / "templates" / "lmru-hr"
+    if not (lmru / "deck.typ").exists():
+        pytest.skip("канон lmru-hr не подтянут")
+    r = compile_deck(Deck(slides=[{"type": "title", "title": LONG_TITLE, "subtitle": "Q3 2026"}]),
+                     deck_dir, lmru)
+    assert len(r.svgs) == 1
+    assert _field(r.positions, "title")["h"] <= 60 * MM

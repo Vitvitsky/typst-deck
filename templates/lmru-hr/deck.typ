@@ -21,6 +21,19 @@
 // Тело слайда: обрезанный box фиксированной высоты — переполнение не создаёт вторую страницу.
 #let body-box(content) = box(width: 100%, height: body-height, clip: true, content)
 
+// Кегль по месту: первый из размеров канона, при котором текст влезает в слот.
+// Канон это предусматривает — size-h1 и size-h1-compact объявлены им самим.
+#let fit-text(h, sizes, body, ..args) = layout(sz => context {
+  let pick = sizes.last()
+  for s in sizes {
+    if measure(width: sz.width, text(size: s, ..args, body)).height <= h {
+      pick = s
+      break
+    }
+  }
+  text(size: pick, ..args, body)
+})
+
 // Канонический title-slide: пустые строки между блоками текста (title, subtitle,
 // department, author, date) — это параграф-брейки, раздувающие вертикальный
 // интервал пропорционально кеглю (после 80pt заголовка ~33mm). Длинный заголовок
@@ -31,8 +44,10 @@
 // page(), обернуть его в box(clip: true) нельзя, поэтому границу держим на входе.
 // Пустое значение остаётся пустой строкой: канон проверяет `subtitle != ""`, и
 // бокс нулевого содержимого всё равно занял бы свою высоту.
-#let slot(h, x) = if x == none or x == "" { "" } else {
-  box(width: 100%, height: h, clip: true, x)
+// sizes — лесенка кеглей канона: текст сначала пробует набраться крупным.
+#let slot(h, x, sizes: none, ..args) = if x == none or x == "" { "" } else {
+  box(width: 100%, height: h, clip: true,
+      if sizes == none { x } else { fit-text(h, sizes, x, ..args) })
 }
 
 // Бюджет страницы 381mm: поля 50+30, плюс жёсткие v(50mm) и v(80mm) внутри
@@ -48,7 +63,9 @@
   // Оба слота набраны одинаково (lm-dark, size-body, body-font), так что
   // визуально это ровно перестановка строк.
   title-slide(
-    title: slot(60mm, title), subtitle: slot(30mm, subtitle),
+    title: slot(60mm, title, sizes: (size-title, size-h1, size-h1-compact),
+                weight: "bold", font: title-font),
+    subtitle: slot(30mm, subtitle, sizes: (size-h2, size-body), font: title-font),
     department: slot(12mm, author),   // верхняя строка подписи
     author: slot(12mm, department),   // нижняя строка подписи
   )
