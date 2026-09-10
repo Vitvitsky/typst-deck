@@ -3,9 +3,10 @@
 
 Скрипт просит typst померить высоту текста настоящим шрифтом шаблона на наборе
 длин-кандидатов и берёт наибольшую, которая ещё влезает в высоту слота. Тем же
-способом меряется допустимое число явных строк. Число тезисов в списке —
-через высоту одного оформленного тезиса (с маркером и интервалами списка,
-как в deck.typ), а не через угаданную константу.
+способом (список кандидатов, наибольший подходящий) меряется допустимое число
+явных строк и число тезисов в списке — для тезисов список из k штук набран
+маркером и интервалами deck.typ, чтобы учесть spacing между ними, а не только
+высоту одного тезиса без соседей.
 
 Запуск:  uv run python scripts/measure_slots.py lmru-hr
 Вывод — готовый раздел slots для template.json.
@@ -65,13 +66,18 @@ PROBE_TYP = """#import "slides_template.typ": *
 # сама вызывает page() и столкнётся с #set page пробы. Эту копию держать в
 # шаге с deck.typ вручную — другого способа нет, deck() не выставляет список
 # отдельной функцией.
-ITEM_TYP = """#import "slides_template.typ": *
+# spacing: 0.7em стоит МЕЖДУ тезисами: высота списка из k штук — не k, умноженное
+# на высоту одного (тот вовсе без соседей и без этого отступа), а честно
+# измеренный список из k элементов — тем же приёмом largest_fitting, что и
+# для chars/lines: список кандидатов k батчится в один вызов typst.
+COUNT_TYP = """#import "slides_template.typ": *
 #set page(width: {width}, height: auto, margin: 0pt)
 #set list(marker: text(fill: lm-yellow, size: 1.2em)[•], spacing: 0.7em, indent: 0pt, body-indent: 0.5em)
 #let base = "{sample}"
 #let sample(n) = {{ let s = ""; while s.clusters().len() < n {{ s = s + base }}; s.clusters().slice(0, n).join() }}
-#let item = list(text(size: {size}, weight: "{weight}", font: {font}, sample({max})))
-#context [#metadata(measure(width: {width}, item).height.mm()) <item>]
+#let one = text(size: {size}, weight: "{weight}", font: {font}, sample({max}))
+#let h(k) = measure(width: {width}, list(..range(k).map(i => one))).height.mm()
+#context [#metadata({ks}.map(k => (k, h(k)))) <count>]
 """
 
 
@@ -100,21 +106,22 @@ def measure(tdir: Path, probe: tuple) -> dict:
         src.unlink(missing_ok=True)
 
 
-def measure_item(tdir: Path, probe: tuple, max_chars: int) -> float:
-    """Высота в мм одного оформленного тезиса (маркер + интервалы списка) на
-    max_chars знаках — тех самых, что и в итоговом max этого поля."""
+def measure_count(tdir: Path, probe: tuple, max_chars: int) -> list[list]:
+    """Высоты в мм списков из k оформленных тезисов (max_chars знаков каждый,
+    маркер и интервалы deck.typ) для набора k-кандидатов — один вызов typst."""
     _stype, _field, width, _cap, _item, size, weight, font = probe
-    src = tdir / "_measure_item.typ"
-    src.write_text(ITEM_TYP.format(width=width, sample=SAMPLE, size=size, weight=weight,
-                                   font=font, max=max_chars))
+    ks = list(range(1, 21))
+    src = tdir / "_measure_count.typ"
+    src.write_text(COUNT_TYP.format(width=width, sample=SAMPLE, size=size, weight=weight,
+                                    font=font, max=max_chars, ks=typ_value(ks)))
     try:
         fonts = tdir / "fonts"
         font_args = ["--font-path", str(fonts)] if fonts.is_dir() else []
-        cmd = ["typst", "eval", "query(<item>).map(it => it.value)", "--root", str(tdir),
+        cmd = ["typst", "eval", "query(<count>).map(it => it.value)", "--root", str(tdir),
                *font_args, "--in", str(src), "--format", "json"]
         r = subprocess.run(cmd, capture_output=True, text=True)
         if r.returncode != 0:
-            raise SystemExit(f"typst не смог померить высоту тезиса {probe[0]}.{probe[1]}:\n{r.stderr}")
+            raise SystemExit(f"typst не смог померить список тезисов {probe[0]}.{probe[1]}:\n{r.stderr}")
         return json.loads(r.stdout)[0]
     finally:
         src.unlink(missing_ok=True)
@@ -140,11 +147,12 @@ def main(tid: str) -> int:
         chars = largest_fitting(m["chars"], item_mm)
         limits["max"] = max(chars - chars % 5, 5)
         if item:
-            # count — не догадка cap_mm // item_mm (item_mm лишь ограничивает max
-            # сверху), а слот, делённый на реально померенную высоту одного
-            # оформленного тезиса ровно на max знаках.
-            item_h = measure_item(tdir, probe, limits["max"])
-            limits["count"] = max(int(cap_mm // item_h), 1)
+            # count — не деление cap_mm // на высоту одного тезиса (тот без
+            # соседей не несёт spacing между элементами списка и завысил бы
+            # count), а largest_fitting по честно измеренным спискам из k
+            # тезисов — тем же приёмом, что уже использован для chars и lines.
+            counts = measure_count(tdir, probe, limits["max"])
+            limits["count"] = max(largest_fitting(counts, cap_mm), 1)
         else:
             limits["lines"] = max(largest_fitting(m["lines"], cap_mm), 1)
         out.setdefault(stype, {})[fld] = limits
