@@ -179,17 +179,38 @@ def _phrase(key: str, n: int) -> str:
 def _measures(value: object) -> dict[str, int]:
     """Замеры значения поля по тем же ключам, что и в объявлении.
 
-    У списка строк «max» — длина самого длинного элемента: сообщение всё равно
-    называет поле целиком, а модель правит его целиком.
+    «max» у списка строк сюда не входит: его элементы судятся поштучно (_excess).
     """
     if isinstance(value, str):
         return {"max": len(value), "lines": value.count("\n") + 1}
     if isinstance(value, list):
-        m = {"count": len(value)}
-        if value and all(isinstance(x, str) for x in value):
-            m["max"] = max(len(x) for x in value)
-        return m
+        return {"count": len(value)}
     return {}
+
+
+def _excess(key: str, limit: int, now: object, was: object) -> int | None:
+    """Замер, который нарушает предел и стал хуже прежнего; None — нарушения нет.
+
+    was — значение поля до правки (None, если сравнивать не с чем).
+    """
+    if key == "max" and isinstance(now, list):
+        # Элементы списка судятся поштучно, а не по самому длинному: иначе новый
+        # длинный тезис рядом со старым проходил бы — самый длинный ведь не вырос.
+        # Длинные элементы до и после сортируются и сопоставляются попарно:
+        # каждому новому нужен свой старый не короче его (спека §8 — сокращённый
+        # старый тезис проходит), а длинных не может стать больше, чем было.
+        over = sorted((len(x) for x in now if isinstance(x, str) and len(x) > limit), reverse=True)
+        kept = sorted((len(x) for x in was if isinstance(x, str) and len(x) > limit),
+                      reverse=True) if isinstance(was, list) else []
+        bad = [n for i, n in enumerate(over) if i >= len(kept) or n > kept[i]]
+        return max(bad) if bad else None
+    actual = _measures(now).get(key)
+    if actual is None or actual <= limit:
+        return None
+    prev = _measures(was).get(key)
+    if prev is not None and actual <= prev:
+        return None
+    return actual
 
 
 def check_slide(slide, declared: dict, *, n: int, template_name: str, before=None) -> list[str]:
@@ -205,13 +226,11 @@ def check_slide(slide, declared: dict, *, n: int, template_name: str, before=Non
     same_type = before is not None and before.type == slide.type
     out: list[str] = []
     for field, limits in fields.items():
-        got = _measures(getattr(slide, field, None))
-        was = _measures(getattr(before, field, None)) if same_type else {}
+        now = getattr(slide, field, None)
+        was = getattr(before, field, None) if same_type else None
         for key, limit in limits.items():
-            actual = got.get(key)
-            if actual is None or actual <= limit:
-                continue
-            if was.get(key) is not None and actual <= was[key]:
+            actual = _excess(key, limit, now, was)
+            if actual is None:
                 continue
             out.append(f"слайд {n}, поле «{FIELD_RU.get(field, field)}»: "
                        f"{_phrase(key, actual)} при пределе {limit} в шаблоне «{template_name}»")

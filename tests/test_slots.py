@@ -293,3 +293,36 @@ def test_every_key_clamp_keeps_reaches_the_schema_and_is_enforced():
         slide = Deck(slides=[BASE[stype] | {field: value}]).slides[0]
         msgs = check_slide(slide, {stype: {field: {key: 1}}}, n=1, template_name="Т")
         assert len(msgs) == 1 and f"«{FIELD_RU.get(field, field)}»" in msgs[0], (stype, field, key, msgs)
+
+
+def test_list_max_lets_an_untouched_old_long_bullet_through():
+    """Старый длинный тезис, которого правка не касалась, не мешает править слайд."""
+    was = _slide(type="image", title="A", bullets=["Э" * 100])
+    now = _slide(type="image", title="Б", bullets=["Э" * 100, "короткий"])
+    assert check_slide(now, TIGHT, n=1, template_name="Тесный", before=was) == []
+
+
+def test_list_max_rejects_a_new_long_bullet_next_to_an_old_one():
+    """Самый длинный элемент не вырос, но поле стало хуже: длинных тезисов стало два."""
+    was = _slide(type="image", title="A", bullets=["Э" * 100])
+    now = _slide(type="image", title="A", bullets=["Э" * 100, "Ю" * 90])
+    assert check_slide(now, TIGHT, n=1, template_name="Тесный", before=was) == [
+        "слайд 1, поле «Тезисы»: 90 знаков при пределе 40 в шаблоне «Тесный»"
+    ]
+
+
+def test_list_max_lets_a_shortened_old_bullet_through():
+    """Спека §8: правка, уменьшающая нарушение, проходит и у элемента списка —
+    старый тезис в 100 знаков, сокращённый до 60 при пределе 40, не отвергается."""
+    was = _slide(type="image", title="A", bullets=["Э" * 100])
+    now = _slide(type="image", title="A", bullets=["Э" * 60])
+    assert check_slide(now, TIGHT, n=1, template_name="Тесный", before=was) == []
+
+
+def test_list_max_rejects_shortening_one_bullet_to_make_room_for_another():
+    """Сокращённый старый тезис не даёт права добавить рядом ещё один длинный."""
+    was = _slide(type="image", title="A", bullets=["Э" * 100])
+    now = _slide(type="image", title="A", bullets=["Э" * 60, "Ю" * 50])
+    assert check_slide(now, TIGHT, n=1, template_name="Тесный", before=was) == [
+        "слайд 1, поле «Тезисы»: 50 знаков при пределе 40 в шаблоне «Тесный»"
+    ]
