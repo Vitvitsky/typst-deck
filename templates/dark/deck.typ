@@ -64,7 +64,7 @@
 #let slide-section(title: none, subtitle: none) = slide(fill: accent)[
   #set text(fill: white)
   #v(1fr)
-  #if title != none { fit-text(2.4cm, (26pt, 20pt, 16pt), title, weight: "bold") }
+  #if title != none { fit-text(2.4cm, (26pt, 20pt, 16pt, 14pt), title, weight: "bold") }
   #if subtitle != none { v(0.3cm); fit-text(1.0cm, (13pt, 11pt), subtitle) }
   #v(1fr)
 ]

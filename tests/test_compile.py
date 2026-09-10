@@ -275,11 +275,24 @@ def test_long_title_shrinks_into_its_zone(deck_dir):
     assert len([p for p in long_.positions if p["field"] == "title"]) == 1  # measure не задвоил маркер
 
 
-@pytest.mark.parametrize("tid", sorted(p.name for p in (TEMPLATE_DIR.parent / "templates").iterdir() if (p / "deck.typ").exists()))
-def test_long_section_title_stays_on_one_page(deck_dir, tid):
-    r = compile_deck(Deck(slides=[{"type": "section", "title": LONG_TITLE, "subtitle": LONG_TITLE}]),
-                     deck_dir, TEMPLATE_DIR.parent / "templates" / tid)
-    assert len(r.svgs) == 1
+@pytest.mark.parametrize("tdir", [TEMPLATE_DIR, TEMPLATE_DIR.parent / "templates" / "dark"], ids=["default", "dark"])
+def test_long_section_title_shrinks_into_its_zone(deck_dir, tdir):
+    """Автокегль разделительного слайда: длинный заголовок укладывается в зону 2.4cm.
+
+    Замер 2026-09-10, default и dark одинаково: короткий заголовок 19.8 pt,
+    длинный без автокегля — 239.7 pt при зоне 68.0 pt. Лесенка 26/20/16pt не
+    укладывала его и на последней ступени (79.8 pt) — добавлена 14pt, как у
+    титульного слайда, с ней 50.1 pt.
+    """
+    short = compile_deck(Deck(slides=[{"type": "section", "title": "Итоги"}]), deck_dir, tdir)
+    one_line = _field(short.positions, "title")["h"]
+    long_ = compile_deck(Deck(slides=[{"type": "section", "title": LONG_TITLE, "subtitle": LONG_TITLE}]),
+                         deck_dir, tdir)
+    h = _field(long_.positions, "title")["h"]
+    assert h > one_line        # длиннее одной строки — иначе тест ничего не проверяет
+    assert h <= 24 * MM        # но в зону 2.4cm укладывается
+    assert len([p for p in long_.positions if p["field"] == "title"]) == 1  # measure не задвоил маркер
+    assert len(long_.svgs) == 1
 
 
 def test_lmru_long_title_fits_the_slot_instead_of_being_clipped(deck_dir):
