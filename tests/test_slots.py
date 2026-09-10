@@ -175,53 +175,6 @@ def test_plural_of_measures(n, word):
     assert _phrase("max", n) == f"{n} {word}"
 
 
-def test_lmru_declaration_rejects_the_2026_09_09_incident():
-    """Четыре перевода строки в подзаголовке титульного слайда — отказ до рендера.
-
-    Это ровно инцидент 2026-09-09: модель вписала переносы строк в subtitle
-    титульного слайда, и слайд переполнился. Замер (scripts/measure_slots.py)
-    показывает, что зона подзаголовка lmru-hr (30mm при size-h2) вмещает только
-    одну строку, поэтому «здоровый» пример ниже — без переноса строки вовсе,
-    а не с одним переносом: единственный перенос там уже вышел бы за предел
-    ровно потому, что вправду не помещается в слот, а не по прихоти теста.
-    """
-    import json
-    from pathlib import Path
-
-    from typst_deck.slots import check_slide, clamp
-
-    root = Path(__file__).resolve().parents[1] / "templates" / "lmru-hr" / "template.json"
-    declared = clamp(json.loads(root.read_text()).get("slots"), "lmru-hr")
-    assert declared, "у lmru-hr должен быть объявлен раздел slots"
-    bad = Deck(slides=[{"type": "title", "title": "Итоги квартала",
-                        "subtitle": "«Лемана ПРО»" + "\n" * 4 + "хвост"}]).slides[0]
-    assert check_slide(bad, declared, n=1, template_name="Lemana Tech")
-    ok = Deck(slides=[{"type": "title", "title": "Итоги квартала",
-                       "subtitle": "«Лемана ПРО» Q3 2026"}]).slides[0]
-    assert check_slide(ok, declared, n=1, template_name="Lemana Tech") == []
-
-
-def _lmru_declared() -> dict:
-    import json
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parents[1] / "templates" / "lmru-hr" / "template.json"
-    return clamp(json.loads(root.read_text()).get("slots"), "lmru-hr")
-
-
-def test_lmru_bar_chart_bullets_over_capacity_are_rejected():
-    """bar-chart и chart делят chart-layout (колонка тезисов 38% в body-box с clip):
-    четыре тезиса по 200 знаков на bar-chart замерены в 267.3mm при зоне 250mm —
-    последний молча обрезался. Тот же текст обязан отвергаться, как на chart."""
-    declared = _lmru_declared()
-    assert "bar-chart" in declared, "у lmru-hr bar-chart должен быть объявлен, как chart"
-    bullets = [("Итоги квартала по направлению данных и аналитики " * 5)[:200]] * 4
-    s = Deck(slides=[{"type": "bar-chart", "title": "Итоги", "data": [{"label": "Центр", "value": 42}],
-                      "bullets": bullets}]).slides[0]
-    msgs = check_slide(s, declared, n=1, template_name="Lemana Tech")
-    assert any("«Тезисы»" in m and "200 знаков" in m for m in msgs), msgs
-
-
 def test_clamp_drops_keys_that_do_not_apply_to_the_field(caplog):
     """Таблица §3: lines — только строковым полям, count — только спискам, max —
     строковым полям и спискам строк. image — str | None (anyOf), это не строковое поле."""

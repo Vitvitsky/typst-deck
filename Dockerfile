@@ -14,8 +14,8 @@ COPY template ./template
 COPY templates ./templates
 RUN uv sync --frozen --no-dev
 ENV TYPST_DECK_DATA_DIR=/data TYPST_DECK_TEMPLATE_DIR=/app/template TYPST_DECK_TEMPLATES_DIR=/app/templates PATH="/app/.venv/bin:$PATH"
-# Каждый шаблон в образе собирает образец. Сборка падает, если templates/ на хосте неполный —
-# например, канон lmru-hr не подтянут scripts/sync-lmru-template.sh (см. README).
+# Встроенные шаблоны (default, dark) проверяются по контракту при сборке. Корпоративные
+# в образ не попадают: их монтируют при запуске, и сервис проверяет их при старте.
 RUN python -m typst_deck.templates
 VOLUME /data
 EXPOSE 8000

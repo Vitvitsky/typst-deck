@@ -92,7 +92,7 @@ def test_roundtrip_json():
 
 
 def test_title_slide_has_author_and_department():
-    """Канон lmru-hr верстает автора и департамент отдельными блоками —
+    """Канон Lemana Tech верстает автора и департамент отдельными блоками —
     без этих полей их приходилось запихивать в подзаголовок переносами строк."""
     from typst_deck.model import TitleSlide
 

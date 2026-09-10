@@ -191,8 +191,8 @@ async def test_job_phase_and_changes_in_chat(client, fake_llm):
 async def test_templates_history_and_template_choice(client, fake_llm):
     ts = (await client.get("/api/templates")).json()
     ids = [t["id"] for t in ts]
-    # только шаблоны, которые есть в git: lmru-hr на свежем клоне отсутствует, и его
-    # отсутствие ловят test_compile.py и сборка образа, а не тест про выбор шаблона
+    # только шаблоны из git: корпоративные подключаются монтированием, их проверяют
+    # tests/test_corporate.py и сервис при старте
     assert ids[0] == "default" and "dark" in ids and ts[ids.index("dark")]["name"] == "Тёмный"
     svg = await client.get("/api/templates/dark/preview/1.svg")
     assert svg.status_code == 200 and svg.headers["content-type"].startswith("image/svg+xml")

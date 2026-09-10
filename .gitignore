@@ -6,14 +6,6 @@ data/
 build.tmp/
 *.pdf
 
-# Корпоративный шаблон Lemana Tech: канон, компоненты и шрифты подтягивает scripts/sync-lmru-template.sh
-# из закрытого репозитория и в git не хранятся. В git — своё: адаптер контракта deck.typ, template.json
-# и CANON_REV (ревизия канона, с которой адаптер проверен).
-templates/lmru-hr/*
-!templates/lmru-hr/deck.typ
-!templates/lmru-hr/template.json
-!templates/lmru-hr/CANON_REV
-
 # артефакты graphify (граф репозитория, пересобирается)
 graphify-out/
 

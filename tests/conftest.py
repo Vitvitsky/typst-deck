@@ -1,5 +1,6 @@
 """Общие фикстуры тестов."""
 import base64
+import os
 import shutil
 from pathlib import Path
 
@@ -9,6 +10,24 @@ ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE_DIR = ROOT / "template"
 HAS_TYPST = shutil.which("typst") is not None
 requires_typst = pytest.mark.skipif(not HAS_TYPST, reason="typst не установлен")
+
+NO_CORP = ("нет корпоративных шаблонов: задайте TYPST_DECK_TEST_TEMPLATES "
+           "(корни через «:», как TYPST_DECK_TEMPLATES_DIR)")
+
+
+def corp_templates() -> list:
+    """Корпоративные шаблоны для общих тестов — все шаблоны корней из TYPST_DECK_TEST_TEMPLATES."""
+    raw = os.environ.get("TYPST_DECK_TEST_TEMPLATES", "")
+    if not raw:
+        return []
+    from typst_deck.templates import TemplateRegistry
+
+    roots = [Path(p).expanduser() for p in raw.split(os.pathsep) if p]
+    return [t for t in TemplateRegistry(TEMPLATE_DIR, roots).list() if t.id != "default"]
+
+
+CORP_PARAMS = ([pytest.param(t, id=t.id) for t in corp_templates()]
+               or [pytest.param(None, id="no-corp", marks=pytest.mark.skip(reason=NO_CORP))])
 
 PNG_1PX = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="

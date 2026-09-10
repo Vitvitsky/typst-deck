@@ -125,7 +125,7 @@ def test_compile_pdf_without_build_is_error(deck_dir):
 
 def _template_without_clip(tmp_path):
     """Шаблон без защитной обрезки: титульный слайд переливается на вторую страницу.
-    Ровно так ведёт себя адаптер lmru-hr, у которого clip есть только на
+    Ровно так ведёт себя корпоративный адаптер Lemana Tech, у которого clip есть только на
     содержательных слайдах."""
     d = tmp_path / "leaky"
     d.mkdir()
@@ -214,19 +214,6 @@ def test_template_survives_oversized_section_slide(deck_dir, tid):
     assert len(r.svgs) == 1
 
 
-def test_title_slide_survives_many_line_breaks(deck_dir):
-    """Ровно тот вход, который уронил боевую колоду 2026-09-09."""
-    from typst_deck.model import Deck
-
-    lmru = TEMPLATE_DIR.parent / "templates" / "lmru-hr"
-    if not (lmru / "deck.typ").exists():
-        pytest.skip("канон lmru-hr не подтянут")
-    deck = Deck(slides=[{"type": "title", "title": "Итоги квартала",
-                         "subtitle": "«Лемана ПРО»" + "\n" * 8 + "хвост"}])
-    r = compile_deck(deck, deck_dir, lmru)
-    assert len(r.svgs) == 1
-
-
 def _title_deck():
     from typst_deck.model import Deck
 
@@ -293,32 +280,3 @@ def test_long_section_title_shrinks_into_its_zone(deck_dir, tdir):
     assert h <= 24 * MM        # но в зону 2.4cm укладывается
     assert len([p for p in long_.positions if p["field"] == "title"]) == 1  # measure не задвоил маркер
     assert len(long_.svgs) == 1
-
-
-def test_lmru_long_title_fits_the_slot_instead_of_being_clipped(deck_dir):
-    """Замер 2026-09-10: заголовок в 120 знаков — 163.2 pt с автокеглем при слоте
-    60mm (170.1 pt) и 380.0 pt без него, то есть больше половины текста обрезалось."""
-    lmru = TEMPLATE_DIR.parent / "templates" / "lmru-hr"
-    if not (lmru / "deck.typ").exists():
-        pytest.skip("канон lmru-hr не подтянут")
-    r = compile_deck(Deck(slides=[{"type": "title", "title": LONG_TITLE, "subtitle": "Q3 2026"}]),
-                     deck_dir, lmru)
-    assert len(r.svgs) == 1
-    assert _field(r.positions, "title")["h"] <= 60 * MM
-
-
-def test_lmru_text_at_declared_limits_fits_on_one_page(deck_dir):
-    """Предел, который сам не помещается в вёрстку, — не предел, а ложное обещание."""
-    import json
-
-    lmru = TEMPLATE_DIR.parent / "templates" / "lmru-hr"
-    if not (lmru / "deck.typ").exists():
-        pytest.skip("канон lmru-hr не подтянут")
-    slots = json.loads((lmru / "template.json").read_text())["slots"]["title"]
-    fill = lambda n: ("Итоги квартала " * 40)[:n]
-    r = compile_deck(Deck(slides=[{"type": "title",
-                                   "title": fill(slots["title"]["max"]),
-                                   "subtitle": fill(slots["subtitle"]["max"]),
-                                   "author": fill(slots["author"]["max"]),
-                                   "department": fill(slots["department"]["max"])}]), deck_dir, lmru)
-    assert len(r.svgs) == 1

@@ -15,7 +15,6 @@ pytestmark = requires_typst
 TEMPLATES = {
     "default": (TEMPLATE_DIR, "#3b6ea5", "#c0392b"),
     "dark": (ROOT / "templates" / "dark", "#d97a2b", "#e5534b"),
-    "lmru-hr": (ROOT / "templates" / "lmru-hr", "#ffde00", "#ff2e00"),
 }
 
 
@@ -30,8 +29,6 @@ def signed_deck() -> Deck:
 
 def compile_in(tid, deck_dir):
     path, pos, neg = TEMPLATES[tid]
-    if not (path / "deck.typ").exists() or (tid == "lmru-hr" and not (path / "slides_template.typ").exists()):
-        pytest.skip(f"шаблон {tid} не синхронизирован")
     return compile_deck(signed_deck(), deck_dir, path), pos, neg
 
 

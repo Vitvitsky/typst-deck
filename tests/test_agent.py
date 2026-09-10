@@ -16,14 +16,14 @@ def test_tool_specs_shape():
 
 
 def test_tool_specs_set_template_enum():
-    names = [s["function"]["name"] for s in tool_specs(["default", "dark", "lmru-hr"])]
+    names = [s["function"]["name"] for s in tool_specs(["default", "dark", "corp"])]
     assert names == ["set_deck", "update_slide", "add_slide", "remove_slide", "move_slide", "set_template", "finish"]
-    st = next(s for s in tool_specs(["default", "dark", "lmru-hr"]) if s["function"]["name"] == "set_template")
-    assert st["function"]["parameters"]["properties"]["template"]["enum"] == ["default", "dark", "lmru-hr"]
+    st = next(s for s in tool_specs(["default", "dark", "corp"]) if s["function"]["name"] == "set_template")
+    assert st["function"]["parameters"]["properties"]["template"]["enum"] == ["default", "dark", "corp"]
 
 
 def test_executor_set_template():
-    ex = ToolExecutor(Deck(), template_ids=["default", "dark", "lmru-hr"])
+    ex = ToolExecutor(Deck(), template_ids=["default", "dark", "corp"])
     r = ex.call("set_template", {"template": "dark"})
     assert r.startswith("OK") and ex.changed and ex.deck.template == "dark"
     assert ex.ops == ["set_template dark"]
@@ -35,8 +35,8 @@ def test_executor_set_template():
 
 def test_executor_set_template_unknown_ok_without_whitelist():
     ex = ToolExecutor(Deck())
-    assert ex.call("set_template", {"template": "lmru-hr"}).startswith("OK")
-    assert ex.deck.template == "lmru-hr"
+    assert ex.call("set_template", {"template": "corp"}).startswith("OK")
+    assert ex.deck.template == "corp"
     assert ex.call("set_template", {"template": "Bad/Name"}).startswith("ERROR")
 
 
@@ -146,11 +146,11 @@ def test_executor_set_deck_grandfathers_an_unchanged_over_limit_slide():
 def test_executor_checks_limits_of_the_template_switched_to_mid_run():
     """set_template посреди прогона: следующая правка проверяется пределами нового
     шаблона, а не того, с которого прогон начался, и ошибка называет новый шаблон."""
-    limits = {"default": ({}, "Корпоративный"), "lmru-hr": (TIGHT, "Lemana Tech")}
+    limits = {"default": ({}, "Корпоративный"), "corp": (TIGHT, "Lemana Tech")}
     ex = ToolExecutor(Deck(slides=[{"type": "title", "title": "Итоги"}]),
-                      template_ids=["default", "lmru-hr"], limits=limits)
+                      template_ids=["default", "corp"], limits=limits)
     sid = ex.deck.slides[0].id
-    assert ex.call("set_template", {"template": "lmru-hr"}).startswith("OK")
+    assert ex.call("set_template", {"template": "corp"}).startswith("OK")
     r = ex.call("update_slide", {"slide_id": sid, "patch": {"title": "Э" * 80}})
     assert r.startswith("ERROR") and "«Заголовок»" in r and "Lemana Tech" in r, r
     assert ex.deck.slides[0].title == "Итоги"
