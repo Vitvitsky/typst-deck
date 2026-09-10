@@ -51,9 +51,12 @@ def format_validation(e: ValidationError) -> str:
 class ToolExecutor:
     """Применяет вызовы инструментов к колоде; ошибки возвращает текстом, не исключением."""
 
-    def __init__(self, deck: Deck, template_ids: list[str] | None = None):
+    def __init__(self, deck: Deck, template_ids: list[str] | None = None,
+                 slots: dict | None = None, template_name: str = ""):
         self.deck = deck
         self.template_ids = template_ids
+        self.slots = slots or {}
+        self.template_name = template_name
         self.changed = False
         self.ops: list[str] = []
         self.changes: list[dict] = []  # для интерфейса: что и с каким слайдом случилось

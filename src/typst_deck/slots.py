@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import copy
 import logging
 
 from .model import slide_schema
@@ -93,3 +94,31 @@ def clamp(raw: object, where: str = "") -> dict:
             if clean:
                 out.setdefault(stype, {})[field] = clean
     return out
+
+
+def apply_to_schema(declared: dict) -> dict:
+    """Схема слайда, суженная объявлением шаблона: ровно её видит модель в промпте.
+
+    Схема и проверка (check_slide) строятся из одного объявления, поэтому
+    разъехаться не могут: модель не получит предел, которого не будет в проверке.
+    """
+    schema = copy.deepcopy(SCHEMA)
+    defs = _by_type(schema)
+    for stype, fields in declared.items():
+        props = defs.get(stype, {}).get("properties", {})
+        for field, limits in fields.items():
+            prop = props.get(field)
+            if prop is None:
+                continue
+            if "max" in limits:
+                target = prop.get("items") if prop.get("type") == "array" else prop
+                if isinstance(target, dict) and target.get("type") == "string":
+                    target["maxLength"] = limits["max"]
+            if "count" in limits and prop.get("type") == "array":
+                prop["maxItems"] = limits["count"]
+            if "lines" in limits:
+                n = limits["lines"]
+                note = ("одна строка, без переводов строки" if n == 1
+                        else f"не больше {n} строк: переводов строки не больше {n - 1}")
+                prop["description"] = f"{prop['description']} {note}" if prop.get("description") else note
+    return schema

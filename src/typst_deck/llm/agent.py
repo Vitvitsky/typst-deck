@@ -8,7 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..logs import log_event
-from ..model import Deck, slide_schema
+from ..model import Deck
+from ..slots import apply_to_schema
 from .client import LLM
 from .tools import ToolExecutor, tool_specs
 
@@ -37,10 +38,11 @@ def _template_list(templates: list[dict] | None) -> str:
     return "\n".join(f"- {t['id']} — {t['name']}" for t in templates)
 
 
-def build_system_prompt(deck: Deck, assets: list[str], templates: list[dict] | None = None) -> str:
+def build_system_prompt(deck: Deck, assets: list[str], templates: list[dict] | None = None,
+                        slots: dict | None = None) -> str:
     return (
         PROMPT
-        .replace("{{SCHEMA}}", json.dumps(slide_schema(), ensure_ascii=False))
+        .replace("{{SCHEMA}}", json.dumps(apply_to_schema(slots or {}), ensure_ascii=False))
         .replace("{{ASSETS}}", ", ".join(assets) if assets else "(нет)")
         .replace("{{TEMPLATES}}", _template_list(templates))
         .replace("{{DECK_JSON}}", deck.model_dump_json(include={"title", "template", "slides"}))
@@ -66,12 +68,14 @@ def _user_content(message: str, files: list[tuple[str, str]]) -> str:
 async def run_agent(
     llm: LLM, deck: Deck, user_message: str, files: list[tuple[str, str]],
     history: list[dict], assets: list[str], templates: list[dict] | None = None,
+    slots: dict | None = None, template_name: str = "",
     max_iter: int = 12,
 ) -> Outcome:
     template_ids = [t["id"] for t in templates] if templates else None
-    ex = ToolExecutor(deck, template_ids)
+    ex = ToolExecutor(deck, template_ids, slots=slots, template_name=template_name)
     tools = tool_specs(template_ids)
-    messages: list[dict] = [{"role": "system", "content": build_system_prompt(deck, assets, templates)}]
+    messages: list[dict] = [{"role": "system",
+                             "content": build_system_prompt(deck, assets, templates, slots)}]
     messages += [_history_message(m) for m in history]
     messages.append({"role": "user", "content": _user_content(user_message, files)})
 

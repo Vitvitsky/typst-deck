@@ -4,6 +4,7 @@ from typst_deck.llm.agent import Outcome, build_system_prompt, run_agent
 from typst_deck.llm.client import Completion, FakeLLM, ToolCall
 from typst_deck.llm.tools import ToolExecutor, tool_specs
 from typst_deck.model import Deck
+from typst_deck.slots import clamp
 
 
 def test_tool_specs_shape():
@@ -208,6 +209,32 @@ async def test_run_agent_logs_each_llm_call(caplog):
     assert done[0].fields["tok_out"] == 200
     assert done[0].fields["cached"] == 800
     assert done[0].fields["iter"] == 1
+
+
+def test_system_prompt_uses_template_limits():
+    d = Deck(title="T", slides=[{"type": "title", "title": "A"}])
+    declared = clamp({"title": {"title": {"max": 60, "lines": 1}}})
+    p = build_system_prompt(d, [], slots=declared)
+    assert '"maxLength":60' in p.replace(" ", "") and "без переводов строки" in p
+    assert '"maxLength":120' in p.replace(" ", "")  # у остальных полей предел прежний
+
+
+def test_system_prompt_without_slots_shows_global_limits():
+    d = Deck(title="T", slides=[{"type": "title", "title": "A"}])
+    p = build_system_prompt(d, [])
+    assert '"maxLength":120' in p.replace(" ", "") and '"maxLength":60' not in p.replace(" ", "")
+
+
+async def test_run_agent_passes_limits_to_prompt_and_executor():
+    d = Deck(title="T", slides=[{"type": "title", "title": "Итоги"}])
+    sid = d.slides[0].id
+    llm = FakeLLM([
+        Completion("", [ToolCall("c1", "update_slide", {"slide_id": sid, "patch": {"title": "Э" * 80}})]),
+        Completion("", [ToolCall("c2", "finish", {"summary": "готово"})]),
+    ])
+    await run_agent(llm, d, "правь", [], [], [], slots=clamp({"title": {"title": {"max": 60}}}),
+                    template_name="Тесный")
+    assert '"maxLength":60' in llm.calls[0][0]["content"].replace(" ", "")
 
 
 async def test_run_agent_passes_render_errors_as_valid_role():
