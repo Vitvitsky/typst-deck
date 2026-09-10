@@ -334,3 +334,16 @@ def test_first_few_keeps_five_and_counts_the_rest():
     assert first_few([]) == []
     assert first_few(list("абвгд")) == list("абвгд")
     assert first_few(list("абвгдеж")) == list("абвгд") + ["и ещё 2"]
+
+
+def test_field_names_match_the_interface():
+    """Имена полей в сообщениях — те же, что в интерфейсе (static/api.js): иначе
+    человек видит в плашке «image», а в панели свойств — «Картинка»."""
+    import re
+    from pathlib import Path
+
+    from typst_deck.slots import FIELD_RU
+
+    js = (Path(__file__).resolve().parents[1] / "src" / "typst_deck" / "static" / "api.js").read_text()
+    block = js.split("export const FIELD_RU = {", 1)[1].split("};", 1)[0]
+    assert FIELD_RU == dict(re.findall(r'(\w+): "([^"]+)"', block))
