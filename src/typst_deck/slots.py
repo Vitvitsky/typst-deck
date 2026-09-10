@@ -63,14 +63,20 @@ def clamp(raw: object, where: str = "") -> dict:
             log.warning("шаблон %s: slots не объект — раздел пропущен", where)
         return out
     for stype, fields in raw.items():
-        if stype not in DEFS or not isinstance(fields, dict):
+        if stype not in DEFS:
             log.warning("шаблон %s: неизвестный тип слайда «%s» в slots — пропущен", where, stype)
+            continue
+        if not isinstance(fields, dict):
+            log.warning("шаблон %s: %s — значение не объект, пропущено", where, stype)
             continue
         props = DEFS[stype].get("properties", {})
         for field, limits in fields.items():
             prop = props.get(field)
-            if prop is None or not isinstance(limits, dict):
+            if prop is None:
                 log.warning("шаблон %s: у слайда «%s» нет поля «%s» — пропущено", where, stype, field)
+                continue
+            if not isinstance(limits, dict):
+                log.warning("шаблон %s: %s.%s — значение не объект, пропущено", where, stype, field)
                 continue
             clean: dict[str, int] = {}
             for key, value in limits.items():
