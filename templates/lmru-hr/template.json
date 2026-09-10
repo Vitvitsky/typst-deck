@@ -1,1 +1,20 @@
-{"name": "Lemana Tech", "description": "Корпоративный шаблон Лемана Тех: жёлтый титул, канонические компоненты, TT Interphases Pro"}
+{
+  "name": "Lemana Tech",
+  "description": "Корпоративный шаблон Лемана Тех: жёлтый титул, канонические компоненты, TT Interphases Pro",
+  "slots": {
+    "title": {
+      "title": {"max": 70, "lines": 2},
+      "subtitle": {"max": 65, "lines": 1},
+      "author": {"max": 110, "lines": 1},
+      "department": {"max": 110, "lines": 1}
+    },
+    "image": {
+      "title": {"max": 120, "lines": 2},
+      "bullets": {"count": 6, "max": 200}
+    },
+    "chart": {
+      "title": {"max": 120, "lines": 2},
+      "bullets": {"count": 4, "max": 120}
+    }
+  }
+}

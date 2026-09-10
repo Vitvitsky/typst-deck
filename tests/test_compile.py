@@ -292,3 +292,20 @@ def test_lmru_long_title_fits_the_slot_instead_of_being_clipped(deck_dir):
                      deck_dir, lmru)
     assert len(r.svgs) == 1
     assert _field(r.positions, "title")["h"] <= 60 * MM
+
+
+def test_lmru_text_at_declared_limits_fits_on_one_page(deck_dir):
+    """Предел, который сам не помещается в вёрстку, — не предел, а ложное обещание."""
+    import json
+
+    lmru = TEMPLATE_DIR.parent / "templates" / "lmru-hr"
+    if not (lmru / "deck.typ").exists():
+        pytest.skip("канон lmru-hr не подтянут")
+    slots = json.loads((lmru / "template.json").read_text())["slots"]["title"]
+    fill = lambda n: ("Итоги квартала " * 40)[:n]
+    r = compile_deck(Deck(slides=[{"type": "title",
+                                   "title": fill(slots["title"]["max"]),
+                                   "subtitle": fill(slots["subtitle"]["max"]),
+                                   "author": fill(slots["author"]["max"]),
+                                   "department": fill(slots["department"]["max"])}]), deck_dir, lmru)
+    assert len(r.svgs) == 1
