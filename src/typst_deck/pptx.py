@@ -309,6 +309,14 @@ def _image_file(s, assets_dir: Path, tmp: Path, typst_bin: str, warnings: list[s
         warnings.append(f"слайд {n}: картинка {s.image} не найдена")
         return None
     if src.suffix.lower() != ".svg":
+        try:
+            with Image.open(src) as im:
+                fmt = im.format
+        except OSError:  # в т.ч. PIL.UnidentifiedImageError — подтип OSError
+            fmt = None
+        if fmt not in {"PNG", "JPEG", "GIF", "BMP", "TIFF"}:
+            warnings.append(f"слайд {n}: картинка {s.image} не читается")
+            return None
         return src
     try:
         return rasterize_svg(src, tmp / f"{src.stem}.png", typst_bin)

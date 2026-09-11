@@ -136,6 +136,16 @@ def test_missing_image_leaves_bullets_the_whole_zone(tdir, tmp_path):
     assert (text.left, text.width) == (int(ZONE[0] * MM), int(ZONE[2] * MM))
 
 
+def test_unreadable_image_leaves_bullets_the_whole_zone(tdir, tmp_path):
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets" / "pic.png").write_bytes(b"not an image")
+    warnings: list[str] = []
+    slide = export(tdir, image_deck(), assets=tmp_path / "assets", warnings=warnings).slides[0]
+    assert pictures(slide) == [] and "pic.png не читается" in warnings[0]
+    [text] = boxes(slide)
+    assert (text.left, text.width) == (int(ZONE[0] * MM), int(ZONE[2] * MM))
+
+
 def test_image_cannot_escape_assets(tdir, tmp_path):
     (tmp_path / "assets").mkdir()
     png(tmp_path / "secret.png")
