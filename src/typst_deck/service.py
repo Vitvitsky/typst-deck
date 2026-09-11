@@ -20,6 +20,7 @@ from .llm.client import LLM
 from .llm.tools import format_validation
 from .logs import log_event
 from .model import Deck, utcnow
+from .pptx import MappingError, export_pptx
 from .render import CompileError, CompileResult, compile_deck, compile_pdf, page_size
 from .slots import check_deck, first_few
 from .store import DeckNotFound, DeckStore
@@ -168,9 +169,11 @@ class DeckService:
         wp = build / "warnings.json"
         warnings = json.loads(wp.read_text()) if wp.exists() else []
         base = self.settings.public_base_url.rstrip("/")
+        has_pptx = False
         try:
             info = self.templates.get(deck.template)
             template = info.public()
+            has_pptx = info.pptx is not None
             # пределы проверяются на лету, а не запоминаются: предупреждение
             # исчезает вместе с причиной, как только текст сократили
             # check_deck без before намеренно: предупреждение перечисляет все текущие нарушения, в отличие от manual
@@ -186,6 +189,8 @@ class DeckService:
             "version": deck.version,
             "slide_count": len(deck.slides),
             "pdf_url": f"{base}/api/decks/{deck_id}/deck.pdf",
+            # только у шаблона с PowerPoint-мастером; ключ есть всегда, чтобы схема не менялась
+            "pptx_url": f"{base}/api/decks/{deck_id}/deck.pptx" if has_pptx else None,
             "edit_url": f"{base}/d/{deck_id}",
             "warnings": warnings,
             "last_error": last.error if last else None,
@@ -199,16 +204,26 @@ class DeckService:
 
     def list_decks(self) -> list[dict]:
         out = []
+        pptx: dict[str, bool] = {}  # шаблон → есть ли мастер; реестр читает template.json на каждый get
         for d in self.store.list_decks():
             active, last = self.jobs.active_for(d.id), self.jobs.last_for(d.id)
             status = "generating" if active else ("failed" if last and last.status == "failed" else "ready")
+            if d.template not in pptx:
+                pptx[d.template] = self._has_pptx(d.template)
             out.append({
                 "id": d.id, "title": d.title, "slide_count": len(d.slides), "version": d.version,
                 "created_at": d.created_at.isoformat(), "updated_at": d.updated_at.isoformat(),
                 "status": status,
                 "has_build": (self.store.deck_dir(d.id) / "build" / "slide-1.svg").exists(),
+                "pptx": pptx[d.template],
             })
         return out
+
+    def _has_pptx(self, tid: str) -> bool:
+        try:
+            return self.templates.get(tid).pptx is not None
+        except TemplateNotFound:
+            return False
 
     def outline(self, deck: Deck) -> list[dict]:
         return [{"n": i + 1, "type": s.type, "title": getattr(s, "title", "")} for i, s in enumerate(deck.slides)]
@@ -217,7 +232,8 @@ class DeckService:
         r = self.deck_response(deck_id)
         replies = [m for m in self.store.read_chat(deck_id) if m["role"] == "assistant"]
         return {
-            "deck_id": deck_id, "status": r["status"], "pdf_url": r["pdf_url"], "edit_url": r["edit_url"],
+            "deck_id": deck_id, "status": r["status"], "pdf_url": r["pdf_url"],
+            "pptx_url": r["pptx_url"], "edit_url": r["edit_url"],
             "outline": self.outline(self.load(deck_id)),
             "reply": replies[-1]["content"] if replies else "",
             "last_error": r["last_error"],
@@ -266,6 +282,35 @@ class DeckService:
                 return await asyncio.to_thread(compile_pdf, build, self.settings.typst_bin, fonts_dir=t.fonts)
             except CompileError as e:
                 raise ApiError(500, "render", f"{e}: {e.stderr[:2000]}")
+
+    async def pptx(self, deck_id: str) -> tuple[bytes, str]:
+        """PPTX на мастере шаблона — на каждый запрос, без кэша (24 слайда — 0,3 с).
+
+        Колода читается снимком, без блокировки: экспорт ничего не пишет —
+        ни версии, ни записи в чате, build/ не трогает.
+        """
+        t0 = time.perf_counter_ns()
+        deck = self.load(deck_id)
+        t = self.template(deck.template)  # сломанный или пропавший шаблон — 422 с причиной
+        if t.pptx is None:
+            reason = self.templates.pptx_off.get(t.id)
+            if reason:
+                raise ApiError(422, "validation", f"экспорт в PPTX у шаблона «{t.id}» выключен: {reason}")
+            raise ApiError(422, "validation", f"у шаблона «{t.id}» нет PowerPoint-мастера")
+        warnings: list[str] = []
+        try:
+            data = await asyncio.to_thread(export_pptx, deck, t.path, t.pptx, self.store.deck_dir(deck_id) / "assets",
+                                           self.settings.typst_bin, warnings)
+        except MappingError as e:
+            # канон обновили после старта — причина та же, что дала бы стартовая проверка
+            raise ApiError(422, "validation", f"экспорт в PPTX у шаблона «{t.id}»: {e}")
+        except Exception as e:
+            log.exception("экспорт PPTX упал: колода %s", deck_id)
+            raise ApiError(500, "render", f"экспорт в PPTX не удался: {type(e).__name__}: {e}")
+        for w in warnings:
+            log_event(log, "pptx.warning", deck=deck_id, warning=w, level=logging.WARNING)
+        log_event(log, "pptx.done", deck=deck_id, slides=len(deck.slides), kb=len(data) // 1024, ms=_ms(t0))
+        return data, deck.title
 
     # --- ручные правки
     async def manual(self, deck_id: str, fn: Callable[[Deck], object], check_slots: bool = True) -> dict:

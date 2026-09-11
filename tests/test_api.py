@@ -1,10 +1,15 @@
 import asyncio
+import io
+import json
+from urllib.parse import quote
 
 import httpx
 import pytest
+from pptx import Presentation
 
 from tests.conftest import requires_typst
 from typst_deck.llm.client import Completion, ToolCall
+from typst_deck.model import Deck
 
 
 async def wait_job(client, job_id):
@@ -943,3 +948,63 @@ async def test_health_names_templates_with_pptx_off(client):
     client.app.state.service.templates.pptx_off["x"] = "в мастере нет макета «Y»"
     t = (await client.get("/api/health")).json()["templates"]
     assert t["pptx_off"] == {"x": "в мастере нет макета «Y»"}
+
+
+PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
+
+def put_deck(client, template="withpptx"):
+    return client.app.state.store.create(Deck(title="Итоги квартала", template=template, slides=[
+        {"type": "title", "title": "Итоги"}, {"type": "final"}]))
+
+
+async def test_pptx_download_changes_nothing(pptx_client):
+    deck = put_deck(pptx_client)
+    r = await pptx_client.get(f"/api/decks/{deck.id}/deck.pptx")
+    assert r.status_code == 200 and r.headers["content-type"] == PPTX_MIME
+    assert r.headers["content-disposition"] == "attachment; filename*=utf-8''" + quote("Итоги квартала.pptx")
+    assert len(Presentation(io.BytesIO(r.content)).slides) == 2
+    d = (await pptx_client.get(f"/api/decks/{deck.id}")).json()
+    assert d["version"] == deck.version, "скачивание PPTX не даёт новой версии"
+    assert (await pptx_client.get(f"/api/decks/{deck.id}/chat")).json() == []
+
+
+async def test_pptx_url_and_flags_follow_the_master(pptx_client):
+    with_master, without = put_deck(pptx_client), put_deck(pptx_client, template="default")
+    d = (await pptx_client.get(f"/api/decks/{with_master.id}")).json()
+    assert d["pptx_url"] == f"http://t/api/decks/{with_master.id}/deck.pptx" and d["template"]["pptx"] is True
+    assert (await pptx_client.get(f"/api/decks/{without.id}")).json()["pptx_url"] is None
+    flags = {x["id"]: x["pptx"] for x in (await pptx_client.get("/api/decks")).json()}
+    assert flags == {with_master.id: True, without.id: False}
+    tpl = {t["id"]: t["pptx"] for t in (await pptx_client.get("/api/templates")).json()}
+    assert tpl == {"default": False, "withpptx": True}
+    r = await pptx_client.get(f"/api/decks/{without.id}/deck.pptx")
+    assert r.status_code == 422 and "нет PowerPoint-мастера" in r.json()["error"]["message"]
+
+
+async def test_pptx_off_and_broken_mapping_are_422_with_reason(pptx_client):
+    svc = pptx_client.app.state.service
+    deck = put_deck(pptx_client)
+    svc.templates.pptx_off["withpptx"] = "в мастере нет макета «X»"
+    r = await pptx_client.get(f"/api/decks/{deck.id}/deck.pptx")
+    assert r.status_code == 422 and "выключен: в мастере нет макета «X»" in r.json()["error"]["message"]
+    svc.templates.pptx_off.clear()
+    mp = svc.templates.get("withpptx").path / "pptx.json"
+    m = json.loads(mp.read_text())
+    m["slides"]["final"]["layout"] = "Пропал"
+    mp.write_text(json.dumps(m, ensure_ascii=False))
+    r = await pptx_client.get(f"/api/decks/{deck.id}/deck.pptx")
+    assert r.status_code == 422 and "нет макета «Пропал»" in r.json()["error"]["message"]
+    assert (await pptx_client.get("/api/decks/nope/deck.pptx")).status_code == 404
+
+
+async def test_pptx_export_failure_is_500(pptx_client, monkeypatch):
+    import typst_deck.service as service
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("битый мастер")
+
+    monkeypatch.setattr(service, "export_pptx", boom)
+    r = await pptx_client.get(f"/api/decks/{put_deck(pptx_client).id}/deck.pptx")
+    assert r.status_code == 500 and r.json()["error"]["code"] == "render"
+    assert "битый мастер" in r.json()["error"]["message"]

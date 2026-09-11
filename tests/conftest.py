@@ -203,3 +203,26 @@ async def tight_client(tight_settings, fake_llm):
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
         c.app = app
         yield c
+
+
+@pytest.fixture
+def pptx_settings(tmp_path):
+    """Корень шаблонов с одним шаблоном «withpptx», у которого есть PowerPoint-мастер."""
+    from typst_deck.config import Settings
+
+    root = tmp_path / "templates"
+    make_pptx_template(root, "withpptx")
+    return Settings(data_dir=tmp_path / "data", template_dir=TEMPLATE_DIR, templates_dir=str(root),
+                    public_base_url="http://t", llm_model="deepseek-chat", check_templates_on_start=False)
+
+
+@pytest.fixture
+async def pptx_client(pptx_settings, fake_llm):
+    import httpx
+
+    from typst_deck.app import create_app
+
+    app = create_app(pptx_settings, llm=fake_llm)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        c.app = app
+        yield c

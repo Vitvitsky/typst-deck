@@ -22,6 +22,7 @@ async def test_agent_create_and_revise(client, fake_llm):
     assert j["status"] == "ready" and j["reply"] == "Собрано"
     assert j["outline"] == [{"n": 1, "type": "title", "title": "A"}, {"n": 2, "type": "final", "title": "Спасибо"}]
     assert j["pdf_url"].endswith(f"/api/decks/{j['deck_id']}/deck.pdf")
+    assert j["pptx_url"] is None  # у шаблона default нет PowerPoint-мастера
     assert j["edit_url"].endswith(f"/d/{j['deck_id']}")
     assert "цифры" in fake_llm.calls[0][-1]["content"]
 
@@ -54,3 +55,11 @@ async def test_agent_bad_file(client):
     assert r.status_code == 422
     r = await client.post("/api/agent/create_deck", json={"brief": "x", "files": [{"name": "x.txt", "content_base64": "@@"}]})
     assert r.status_code == 422
+
+
+async def test_agent_gets_pptx_url_when_the_template_has_a_master(pptx_client):
+    from typst_deck.model import Deck
+
+    deck = pptx_client.app.state.store.create(Deck(title="T", template="withpptx", slides=[{"type": "final"}]))
+    j = (await pptx_client.get(f"/api/agent/decks/{deck.id}")).json()
+    assert j["pptx_url"] == f"http://t/api/decks/{deck.id}/deck.pptx"

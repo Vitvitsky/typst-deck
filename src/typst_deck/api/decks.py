@@ -1,5 +1,6 @@
 """Колоды: создание, чтение сборки, ручные правки, версии, чат."""
 import json
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request, UploadFile
 from fastapi.responses import FileResponse, Response
@@ -109,6 +110,18 @@ async def pdf(deck_id: str, s: DeckService = Depends(svc)):
     deck = s.load(deck_id)
     p = await s.pdf(deck_id)
     return FileResponse(p, media_type="application/pdf", filename=f"{deck.title[:60] or 'deck'}.pdf")
+
+
+PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
+
+@router.get("/{deck_id}/deck.pptx")
+async def pptx(deck_id: str, s: DeckService = Depends(svc)):
+    data, title = await s.pptx(deck_id)
+    name = f"{title[:60] or 'deck'}.pptx"
+    # filename* — имя по-русски; так же его кодирует FileResponse у PDF
+    return Response(data, media_type=PPTX_MIME,
+                    headers={"Content-Disposition": f"attachment; filename*=utf-8''{quote(name)}"})
 
 
 @router.get("/{deck_id}/positions")
