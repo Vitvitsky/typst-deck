@@ -301,6 +301,9 @@ def _image_file(s, assets_dir: Path, tmp: Path, typst_bin: str, warnings: list[s
     как у PDF: слайд собирается без неё."""
     if not s.image:
         return None
+    if Path(s.image).name != s.image:  # «/», «..»-путь или абсолютный путь — за пределы assets/
+        warnings.append(f"слайд {n}: картинка {s.image} не найдена")
+        return None
     src = Path(assets_dir) / s.image
     if not src.is_file():
         warnings.append(f"слайд {n}: картинка {s.image} не найдена")

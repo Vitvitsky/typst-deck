@@ -136,6 +136,15 @@ def test_missing_image_leaves_bullets_the_whole_zone(tdir, tmp_path):
     assert (text.left, text.width) == (int(ZONE[0] * MM), int(ZONE[2] * MM))
 
 
+def test_image_cannot_escape_assets(tdir, tmp_path):
+    (tmp_path / "assets").mkdir()
+    png(tmp_path / "secret.png")
+    warnings: list[str] = []
+    slide = export(tdir, image_deck(image="../secret.png"), assets=tmp_path / "assets",
+                   warnings=warnings).slides[0]
+    assert pictures(slide) == [] and "не найдена" in warnings[0]
+
+
 @requires_typst
 def test_svg_goes_in_as_png(tdir, tmp_path):
     (tmp_path / "vec.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="100">'
