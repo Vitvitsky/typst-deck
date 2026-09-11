@@ -982,7 +982,7 @@ async def test_pptx_url_and_flags_follow_the_master(pptx_client):
     assert r.status_code == 422 and "нет PowerPoint-мастера" in r.json()["error"]["message"]
 
 
-async def test_pptx_off_and_broken_mapping_are_422_with_reason(pptx_client):
+async def test_pptx_off_and_broken_mapping_are_422_with_reason(pptx_client, caplog):
     svc = pptx_client.app.state.service
     deck = put_deck(pptx_client)
     svc.templates.pptx_off["withpptx"] = "в мастере нет макета «X»"
@@ -993,8 +993,11 @@ async def test_pptx_off_and_broken_mapping_are_422_with_reason(pptx_client):
     m = json.loads(mp.read_text())
     m["slides"]["final"]["layout"] = "Пропал"
     mp.write_text(json.dumps(m, ensure_ascii=False))
+    caplog.set_level("INFO", logger="typst_deck.service")
     r = await pptx_client.get(f"/api/decks/{deck.id}/deck.pptx")
     assert r.status_code == 422 and "нет макета «Пропал»" in r.json()["error"]["message"]
+    logged = [x for x in caplog.records if x.msg == "pptx.mapping_error"]
+    assert len(logged) == 1 and logged[0].fields["template"] == "withpptx" and "Пропал" in logged[0].fields["err"]
     assert (await pptx_client.get("/api/decks/nope/deck.pptx")).status_code == 404
 
 

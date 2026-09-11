@@ -302,7 +302,9 @@ class DeckService:
             data = await asyncio.to_thread(export_pptx, deck, t.path, t.pptx, self.store.deck_dir(deck_id) / "assets",
                                            self.settings.typst_bin, warnings)
         except MappingError as e:
-            # канон обновили после старта — причина та же, что дала бы стартовая проверка
+            # канон обновили после старта — причина та же, что дала бы стартовая проверка;
+            # без лога оператор узнаёт о сломанном каноне только от пользователей
+            log_event(log, "pptx.mapping_error", deck=deck_id, template=t.id, err=str(e), level=logging.WARNING)
             raise ApiError(422, "validation", f"экспорт в PPTX у шаблона «{t.id}»: {e}")
         except Exception as e:
             log.exception("экспорт PPTX упал: колода %s", deck_id)
