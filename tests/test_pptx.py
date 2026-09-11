@@ -251,6 +251,7 @@ BROKEN = {
     "bad-color": (lambda m: m["chart"].update(negative="red"), "chart.negative"),
     "no-layout": (lambda m: m["slides"]["section"].update(layout="Нет такого"), "нет макета «Нет такого»"),
     "no-idx": (lambda m: m["slides"]["title"]["ph"].update(author=42), "нет заполнителя idx 42"),
+    "slide-number-idx": (lambda m: m["slides"]["title"]["ph"].update(subtitle=12), "нет заполнителя idx 12"),
     "zone-outside": (lambda m: m["slides"]["chart"].update(body=[600, 80, 200, 260]), "выходит за слайд"),
 }
 

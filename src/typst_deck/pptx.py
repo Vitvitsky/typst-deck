@@ -157,6 +157,12 @@ def _layouts(prs) -> dict:
     return out
 
 
+# add_slide не копирует эти заполнители макета (кроме номера слайда — его
+# переносит _slide_number отдельно): поле, сопоставленное на их idx,
+# провалилось бы молча, поэтому open_master их из «have» не считает.
+_NOT_COPIED = {PP_PLACEHOLDER.DATE, PP_PLACEHOLDER.FOOTER, PP_PLACEHOLDER.SLIDE_NUMBER}
+
+
 def open_master(template_dir: Path, m: Mapping):
     """Мастер шаблона, сверенный с сопоставлением: макеты, заполнители, зоны."""
     try:
@@ -171,7 +177,8 @@ def open_master(template_dir: Path, m: Mapping):
         if layout is None:
             problems.append(f"slides.{stype}: в мастере нет макета «{sm.layout}»")
             continue
-        have = {ph.placeholder_format.idx for ph in layout.placeholders}
+        have = {ph.placeholder_format.idx for ph in layout.placeholders
+                if ph.placeholder_format.type not in _NOT_COPIED}
         problems += [f"slides.{stype}.ph.{f}: в макете «{sm.layout}» нет заполнителя idx {i}"
                      for f, i in sm.ph.items() if i not in have]
         if sm.body is not None:
