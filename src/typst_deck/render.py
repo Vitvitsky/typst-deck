@@ -42,15 +42,23 @@ def page_size(svg: Path) -> dict[str, float]:
     return {"w": float(m[1]), "h": float(m[2])} if m else dict(DEFAULT_PAGE)
 
 
+def inside_template(template_dir: Path, rel: object, name: str) -> Path:
+    """Путь из template.json от корня шаблона; name — имя поля для сообщения.
+
+    Путь наружу — ValueError: в контейнере шаблон смонтирован, и цели снаружи
+    там нет. Существование не проверяется — это дело вызывающего.
+    """
+    if not isinstance(rel, str) or not rel or Path(rel).is_absolute() or ".." in Path(rel).parts:
+        raise ValueError(f"{name}={rel!r}: путь должен вести внутрь шаблона")
+    return Path(template_dir) / rel
+
+
 def resolve_fonts(template_dir: Path, rel: object = "fonts") -> Path | None:
     """Каталог шрифтов шаблона: rel — поле fonts из template.json, от корня шаблона.
 
-    None — каталога нет, typst обойдётся системными шрифтами. Путь наружу из
-    шаблона — ValueError: в контейнере шаблон смонтирован, и цели снаружи там нет.
+    None — каталога нет, typst обойдётся системными шрифтами.
     """
-    if not isinstance(rel, str) or not rel or Path(rel).is_absolute() or ".." in Path(rel).parts:
-        raise ValueError(f"fonts={rel!r}: путь должен вести внутрь шаблона")
-    d = Path(template_dir) / rel
+    d = inside_template(template_dir, rel, "fonts")
     return d if d.is_dir() else None
 
 
@@ -313,4 +321,24 @@ def compile_pdf(build_dir: Path, typst_bin: str = "typst", timeout: int = 60,
     if r.returncode != 0:
         raise CompileError("ошибка сборки PDF", r.stderr)
     log_event(log, "pdf.done", kb=out.stat().st_size // 1024, ms=ms)
+    return out
+
+
+RASTER_TYP = '#set page(width: auto, height: auto, margin: 0pt)\n#image("image.svg")\n'
+
+
+def rasterize_svg(svg: Path, out: Path, typst_bin: str = "typst", ppi: int = 200, timeout: int = 60) -> Path:
+    """SVG → PNG средствами typst: python-pptx SVG не вставляет, а колода их принимает.
+
+    typst уже есть в образе, так что растеризатор не тянет новых зависимостей.
+    Рабочий каталог — рядом с out: песочница typst видит только его.
+    """
+    work = out.parent / f"{out.stem}.raster"
+    work.mkdir(parents=True, exist_ok=True)
+    shutil.copy(svg, work / "image.svg")
+    (work / "raster.typ").write_text(RASTER_TYP)
+    r, _ = _run([typst_bin, "compile", "--root", str(work), "--format", "png", "--ppi", str(ppi),
+                 str(work / "raster.typ"), str(out)], timeout)
+    if r.returncode != 0:
+        raise CompileError("SVG не растеризуется", r.stderr)
     return out

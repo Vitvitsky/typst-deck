@@ -1,10 +1,11 @@
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
-from tests.conftest import TEMPLATE_DIR
+from tests.conftest import TEMPLATE_DIR, requires_typst
 from typst_deck.model import Deck
-from typst_deck.render import render_typ, typ_str, typ_value
+from typst_deck.render import CompileError, inside_template, render_typ, rasterize_svg, typ_str, typ_value
 
 GOLDEN = Path(__file__).parent / "golden" / "full.typ"
 
@@ -228,3 +229,35 @@ def test_resolve_fonts(tmp_path):
     for bad in ("../outside", "/abs", "", 5):
         with pytest.raises(ValueError):
             resolve_fonts(tmp_path, bad)
+
+
+def test_inside_template_keeps_paths_inside(tmp_path):
+    assert inside_template(tmp_path, "typst-deck/pptx.json", "pptx") == tmp_path / "typst-deck/pptx.json"
+    for bad in ("../x.json", "/etc/x.json", "", None, 5):
+        with pytest.raises(ValueError, match=r"pptx=.*путь должен вести внутрь шаблона"):
+            inside_template(tmp_path, bad, "pptx")
+
+
+def test_resolve_fonts_message_is_unchanged(tmp_path):
+    from typst_deck.render import resolve_fonts
+
+    with pytest.raises(ValueError, match=r"^fonts='\.\./x': путь должен вести внутрь шаблона$"):
+        resolve_fonts(tmp_path, "../x")
+
+
+@requires_typst
+def test_rasterize_svg_keeps_proportions(tmp_path):
+    svg = tmp_path / "vec.svg"
+    svg.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="100">'
+                   '<rect width="300" height="100" fill="#00FFE0"/></svg>')
+    out = rasterize_svg(svg, tmp_path / "vec.png")
+    with Image.open(out) as im:
+        assert im.format == "PNG" and abs(im.width / im.height - 3) < 0.05
+
+
+@requires_typst
+def test_rasterize_broken_svg_is_a_compile_error(tmp_path):
+    svg = tmp_path / "bad.svg"
+    svg.write_text("<svg")
+    with pytest.raises(CompileError):
+        rasterize_svg(svg, tmp_path / "bad.png")
