@@ -320,7 +320,11 @@ def _image_body(slide, s, sm: SlideMap, style: TextStyle, img: Path | None) -> N
         if s.bullets:
             _bullets(slide, box, s.bullets, style)
         return
-    text_box, img_box = _columns(box, 100 - sm.image_width[s.image_size], sm.gap)
+    # картинка — ровно image_width % зоны справа, тезисы слева — остаток за вычетом зазора (спека §5.3)
+    x, y, w, h = box
+    iw = int(w * sm.image_width[s.image_size] / 100)
+    g = int(sm.gap * MM)
+    text_box, img_box = (x, y, w - iw - g, h), (x + w - iw, y, iw, h)
     if s.bullets:
         _bullets(slide, text_box, s.bullets, style)
     x, y, w, h = img_box

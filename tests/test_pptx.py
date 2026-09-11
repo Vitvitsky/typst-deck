@@ -116,6 +116,18 @@ def test_image_keeps_proportions_inside_the_zone(tdir, tmp_path):
     assert widths == sorted(widths) and len(set(widths)) == 3
 
 
+def test_image_takes_exactly_its_share_and_bullets_absorb_the_gap(tdir, tmp_path):
+    (tmp_path / "assets").mkdir()
+    png(tmp_path / "assets" / "pic.png", 400, 100)
+    slide = export(tdir, image_deck("medium"), assets=tmp_path / "assets").slides[0]
+    [pic] = pictures(slide)
+    text, _caption = boxes(slide)
+    zone_w = int(ZONE[2] * MM)
+    img_w = int(zone_w * 42 / 100)
+    assert abs(pic.width - img_w) <= 1  # картинка — ровно 42 % зоны
+    assert text.width == zone_w - img_w - 15 * MM  # зазор вычтен из тезисов
+
+
 def test_missing_image_leaves_bullets_the_whole_zone(tdir, tmp_path):
     warnings: list[str] = []
     slide = export(tdir, image_deck(), assets=tmp_path, warnings=warnings).slides[0]
