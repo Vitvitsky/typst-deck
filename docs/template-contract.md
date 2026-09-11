@@ -186,6 +186,35 @@ for i, m in enumerate(prs.slide_masters, 1):
                           if p.placeholder_format.type not in skip])" <мастер.pptx>
 ```
 
+### Подключить мастер — по шагам
+
+1. Положите мастер `.pptx` в репозиторий канона, например в `references/`.
+2. Посмотрите макеты и idx скриптом выше и выберите макет на каждый из шести
+   типов слайда.
+3. Напишите `typst-deck/pptx.json` по образцу выше. Зону тела удобно
+   отмерить от заполнителя заголовка: тот же левый край, ниже заголовка, выше
+   номера слайда.
+4. Добавьте в `template.json` поле `"pptx": "typst-deck/pptx.json"`.
+5. Проверьте шаблон — правило 7 сверит сопоставление с мастером и выгрузит
+   образец (раздел «Проверка»).
+6. Выгрузите образец в файл и откройте его в PowerPoint:
+
+   ```sh
+   uv run --project ~/projects/typst-deck python -c "
+   import sys; from pathlib import Path
+   from typst_deck.contract import SAMPLE_DECK; from typst_deck.pptx import export_pptx
+   t = Path(sys.argv[1]); Path('sample.pptx').write_bytes(export_pptx(SAMPLE_DECK, t, sys.argv[2], t))" \
+     <корень шаблона> typst-deck/pptx.json
+   ```
+
+   Файл должен открыться без предложения восстановить, текст — стоять в зонах
+   мастера, «Изменить данные» у графиков — работать.
+7. Шрифт из `font` в файл не встраивается: выбирайте тот, что есть у
+   получателей (Calibri есть в любой установке Office).
+
+Если шаблон уже подключён к серверу, шаги 1–7 делайте на копии канона, а не в
+каталоге, который смонтирован в сервис, — см. «Подключение».
+
 ## Проверка
 
 ```sh
@@ -230,6 +259,24 @@ Environment=TYPST_DECK_TEMPLATES_DIR=/app/templates:/corp
 
 Локально — ссылкой: `ln -sfn ~/projects/<канон> ~/corp-templates/<id>`;
 `scripts/dev.sh` подключает `~/corp-templates` сам.
+
+**Смонтированный канон — это прод.** Сервис читает `template.json`,
+`pptx.json` и файлы Typst при каждой сборке и каждом экспорте, поэтому правка
+в смонтированном каталоге — даже незакоммиченная — сразу видна пользователям;
+рестарт нужен только стартовой проверке. Отсюда два правила:
+
+- новое поле в `template.json` или `pptx.json` появляется в каноне только
+  после того, как выкачена версия typst-deck, которая его знает: старая
+  отвергает неизвестные ключи `pptx.json`, и экспорт в PPTX отвечает 422;
+- правку готовят на копии — например, в git worktree канона:
+
+  ```sh
+  git -C ~/projects/<канон> worktree add ~/projects/<канон>-wip -b wip
+  python -m typst_deck.templates ~/projects/<канон>-wip   # из рабочей копии typst-deck
+  TYPST_DECK_TEMPLATES_DIR=templates:<каталог со ссылкой <id> на копию> scripts/dev.sh
+  ```
+
+  и только проверенную вливают в ветку, которую видит сервис.
 
 Сменили id — задайте алиас, пока внешние вызовы помнят старый:
 `TYPST_DECK_TEMPLATE_ALIASES=старый:новый`. Колоды переносит

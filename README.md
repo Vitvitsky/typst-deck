@@ -191,6 +191,13 @@ GET  /api/agent/decks/{deck_id}
 меряет `scripts/measure_slots.py <корень шаблона>` по геометрии из
 `measure.json` шаблона.
 
+Экспорт в редактируемый PPTX есть у шаблона с PowerPoint-мастером: поле `pptx`
+в `template.json` ведёт к сопоставлению макетов, шрифт всего текста задаёт его
+поле `font` (у Lemana Tech — Calibri; тема её мастера — Helvetica). Как
+подключить мастер по шагам — `docs/template-contract.md`, раздел
+«PowerPoint-мастер». Канон смонтирован в сервис живым каталогом: порядок правки
+— в разделе «Выкатка и откат».
+
 ## Проверено 2026-09-08
 
 - 67 автотестов: модель, рендер, компиляция, хранилище, извлечение текста,
@@ -231,9 +238,8 @@ GET  /api/agent/decks/{deck_id}
   `Volume=%h/projects/lmru--hr-analytics--design-template:/corp/lemana-tech:ro`,
   `Environment=TYPST_DECK_TEMPLATES_DIR=/app/templates:/corp`,
   `Environment=TYPST_DECK_TEMPLATE_ALIASES=lmru-hr:lemana-tech`;
-- выкатка после правки кода — два шага, образ и юнит разведены намеренно:
-  `podman build -t localhost/typst-deck:latest ~/projects/typst-deck` и
-  `systemctl --user restart typst-deck`;
+- выкатка после правки кода — сборка образа и рестарт юнита, они разведены
+  намеренно; порядок с меткой отката и проверками — «Выкатка и откат» ниже;
 - ключ и модель из уже существующих `DEEPSEEK_API_KEY`, `DEEPSEEK_API_BASE`,
   `DEEPSEEK_MODEL`; замена на внутренний эндпоинт — две переменные;
 - путь `/deck/` в `nginx/portfolio.conf` по образцу `/deepseek/`: Basic Auth,
@@ -241,6 +247,42 @@ GET  /api/agent/decks/{deck_id}
   (`<base href>`), поэтому префикс им не мешает;
 - колоды и загрузки в volume `typst-deck-data` — он в хранилище пользователя,
   а не системном: смотреть `podman volume ls`, а не из-под root.
+
+## Выкатка и откат
+
+1. Тесты на том, что выкатывается, — обычные и с корпоративными шаблонами:
+   `uv run pytest -q` и `TYPST_DECK_TEST_TEMPLATES=~/corp-templates uv run pytest -q`.
+2. Метка отката на текущий образ:
+   `podman tag localhost/typst-deck:latest localhost/typst-deck:pre-<что>`.
+3. Сборка: `podman build -t localhost/typst-deck:latest ~/projects/typst-deck`.
+   Последний шаг сборки проверяет встроенные шаблоны по контракту и роняет
+   сборку, если какой-то его нарушил.
+4. `systemctl --user restart typst-deck`.
+5. Проверка на живом сервисе:
+
+   ```sh
+   curl -s 127.0.0.1:8088/api/health | python3 -m json.tool   # templates: checked true, broken {}, pptx_off {}
+   curl -s 127.0.0.1:8088/api/templates                        # pptx: true у шаблонов с мастером
+   curl -s -o /dev/null -w "%{http_code}\n" 127.0.0.1:8088/api/decks/<id>/deck.pdf
+   curl -s -o /dev/null -w "%{http_code}\n" 127.0.0.1:8088/api/decks/<id>/deck.pptx
+   ```
+
+Откат — вернуть метку и перезапустить:
+`podman tag localhost/typst-deck:pre-<что> localhost/typst-deck:latest && systemctl --user restart typst-deck`.
+Колоды откат не трогает: они в volume `typst-deck-data`.
+
+### Правка канона
+
+Канон Lemana Tech смонтирован в сервис живым каталогом: правка его файлов —
+даже незакоммиченная — сразу видна пользователям, рестарт не нужен.
+
+- Новое поле в `template.json` или `pptx.json` — сначала выкатить typst-deck,
+  который его знает (шаги выше), потом править канон. Старая версия отвергает
+  неизвестные ключи `pptx.json`, и экспорт в PPTX отвечает 422 — так 2026-09-11
+  сломалось поле `font`, пока его не откатили.
+- Правку готовить на копии канона (git worktree) и проверять там:
+  `docs/template-contract.md`, раздел «Подключение».
+- После правки — пункт 5 выше: `/api/health` и выгрузка PDF и PPTX.
 
 ## Открытые вопросы
 
