@@ -105,6 +105,10 @@ function renderTopbar() {
   const pdf = $("pdf");
   pdf.href = `api/decks/${deckId}/deck.pdf`;
   pdf.classList.toggle("hidden", !state.info.has_build);
+  // PPTX собирается из модели на лету и сборки не ждёт; есть только у шаблона с PowerPoint-мастером
+  const pptx = $("pptx");
+  pptx.href = `api/decks/${deckId}/deck.pptx`;
+  pptx.classList.toggle("hidden", !(state.info.template.pptx && state.info.slide_count > 0));
 }
 
 $("tplname").addEventListener("change", (e) => changeTemplate(e.target.value));

@@ -27,3 +27,9 @@ async def test_static_and_pages_revalidate(client):
     for path in ("/static/deck.js", "/", "/d/x"):
         r = await client.get(path)
         assert "no-cache" in r.headers.get("cache-control", ""), path
+
+
+async def test_pptx_buttons_are_wired(client):
+    assert 'id="pptx"' in (await client.get("/d/x")).text
+    for name in ("deck.js", "decks.js"):
+        assert "deck.pptx" in (await client.get(f"/static/{name}")).text, name

@@ -34,6 +34,7 @@ function render() {
         el("div", { class: "row" },
           el("a", { class: "btn sm primary", href: `d/${d.id}` }, "Открыть"),
           d.has_build ? el("a", { class: "btn sm", href: `api/decks/${d.id}/deck.pdf`, download: true }, "PDF") : null,
+          d.pptx && d.slide_count ? el("a", { class: "btn sm", href: `api/decks/${d.id}/deck.pptx`, download: true }, "PPTX") : null,
           el("span", { class: "sp" }), del)));
   }));
 }
