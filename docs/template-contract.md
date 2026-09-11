@@ -154,24 +154,27 @@ uv run --project ~/projects/typst-deck python ~/projects/typst-deck/scripts/meas
 | `slides.<тип>.layout` | имя макета мастера |
 | `slides.<тип>.ph` | поле → idx заполнителя макета; у заголовка idx 0 |
 | `body` | зона тела `[x, y, w, h]` в мм — у `image`, `bar-chart`, `chart` |
-| `image_width` | ширина картинки в % от зоны для `small`/`medium`/`large` |
-| `text_width` | ширина колонки тезисов у графиков, % от зоны |
+| `image_width` | ширина картинки в % от зоны для `small`/`medium`/`large`, число 1–90 |
+| `text_width` | ширина колонки тезисов у графиков, % от зоны, число 1–90 |
 | `gap` | зазор между колонками, мм |
 | `heading` | заголовок колонки тезисов у графиков, необязателен |
 
-Все ключи, кроме `heading`, обязательны, неизвестные — ошибка. Каждое поле,
-которое не идёт в зону тела, обязано быть в `ph`: у `title` — `title`,
-`subtitle`, `author`, `department`; у `section` — `title`, `subtitle`; у
-`final` — `title`, `contact`; у остальных — `title`. Несколько полей на одном
-idx становятся абзацами в порядке модели. Заполнитель макета, которому нечего
-дать, удаляется со слайда; номер слайда переносится, если он есть в макете.
-Посмотреть имена макетов и idx заполнителей:
+Все ключи, кроме `heading`, обязательны, неизвестные — ошибка. Цвета — hex
+`RRGGBB`, без `#`. Каждое поле, которое не идёт в зону тела, обязано быть в
+`ph`: у `title` — `title`, `subtitle`, `author`, `department`; у `section` —
+`title`, `subtitle`; у `final` — `title`, `contact`; у остальных — `title`.
+Несколько полей на одном idx становятся абзацами в порядке модели. Заполнитель
+макета, которому нечего дать, удаляется со слайда; номер слайда переносится,
+если он есть в макете. Посмотреть имена макетов и idx заполнителей (экспорт
+объединяет макеты всех мастеров файла, а не только первого):
 
 ```sh
 uv run --project ~/projects/typst-deck python -c "
 from pptx import Presentation; import sys
-for l in Presentation(sys.argv[1]).slide_layouts:
-    print(l.name, [(p.placeholder_format.idx, p.name) for p in l.placeholders])" <мастер.pptx>
+prs = Presentation(sys.argv[1])
+for m in prs.slide_masters:
+    for l in m.slide_layouts:
+        print(l.name, [(p.placeholder_format.idx, p.name) for p in l.placeholders])" <мастер.pptx>
 ```
 
 ## Проверка
