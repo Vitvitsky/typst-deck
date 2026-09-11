@@ -115,6 +115,20 @@ def _completeness(m: Mapping) -> list[str]:
                 problems.append(f"slides.{stype}: {key} у этого типа не бывает")
         if sm.image_width is not None and len(sm.image_width) != 3:
             problems.append(f"slides.{stype}.image_width: нужны small, medium и large")
+        if stype == "image" and sm.body is not None and sm.image_width is not None and sm.gap is not None:
+            body_w, body_h = sm.body[2], sm.body[3]
+            p = max(sm.image_width.values())
+            if not (body_w * (100 - p) / 100 - sm.gap > 0):
+                problems.append(f"slides.image: при image_width {p:g} % и gap {sm.gap:g} мм "
+                                 "колонке тезисов не остаётся места")
+            if not (body_h > CAPTION_STRIP):
+                problems.append(f"slides.image.body: высота {body_h:g} мм не больше "
+                                 f"полосы подписи {CAPTION_STRIP} мм")
+        if stype in ("bar-chart", "chart") and sm.body is not None and sm.text_width is not None and sm.gap is not None:
+            body_w = sm.body[2]
+            if not (body_w * (100 - sm.text_width) / 100 - sm.gap > 0):
+                problems.append(f"slides.{stype}: при text_width {sm.text_width:g} % и gap {sm.gap:g} мм "
+                                 "графику не остаётся места")
     return problems
 
 

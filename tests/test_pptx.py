@@ -252,6 +252,13 @@ BROKEN = {
     "no-layout": (lambda m: m["slides"]["section"].update(layout="Нет такого"), "нет макета «Нет такого»"),
     "no-idx": (lambda m: m["slides"]["title"]["ph"].update(author=42), "нет заполнителя idx 42"),
     "slide-number-idx": (lambda m: m["slides"]["title"]["ph"].update(subtitle=12), "нет заполнителя idx 12"),
+    "image-no-room-for-text": (lambda m: m["slides"]["image"].update(
+        image_width={"small": 90, "medium": 90, "large": 90}, gap=100),
+        "при image_width 90 % и gap 100 мм колонке тезисов не остаётся места"),
+    "chart-no-room-for-chart": (lambda m: m["slides"]["chart"].update(text_width=90, gap=70),
+        "при text_width 90 % и gap 70 мм графику не остаётся места"),
+    "image-body-too-short": (lambda m: m["slides"]["image"].update(body=[20, 80, 600, 10]),
+        "высота 10 мм не больше полосы подписи 15 мм"),
     "zone-outside": (lambda m: m["slides"]["chart"].update(body=[600, 80, 200, 260]), "выходит за слайд"),
 }
 
