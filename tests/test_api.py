@@ -937,3 +937,9 @@ async def test_app_checks_templates_in_background_on_start(settings, fake_llm):
             break
         await asyncio.sleep(0.05)
     assert app.state.service.templates.checked
+
+
+async def test_health_names_templates_with_pptx_off(client):
+    client.app.state.service.templates.pptx_off["x"] = "в мастере нет макета «Y»"
+    t = (await client.get("/api/health")).json()["templates"]
+    assert t["pptx_off"] == {"x": "в мастере нет макета «Y»"}

@@ -2,7 +2,8 @@ import json
 
 import pytest
 
-from tests.conftest import FALLBACK_FONT, TEMPLATE_DIR, TWO_PAGES, make_template, requires_typst
+from tests.conftest import (FALLBACK_FONT, TEMPLATE_DIR, TWO_PAGES, make_pptx_template, make_template,
+                            requires_typst)
 from typst_deck.templates import TemplateBroken, TemplateNotFound, TemplateRegistry, check
 
 
@@ -119,7 +120,7 @@ def test_registry_without_slots_declares_nothing(tmp_path):
     (d / "template.json").write_text(json.dumps({"name": "Простой"}))
     reg = TemplateRegistry(TEMPLATE_DIR, tmp_path / "templates")
     assert reg.get("plain").slots == {} and reg.get("default").slots == {}
-    assert reg.get("plain").public() == {"id": "plain", "name": "Простой", "description": ""}
+    assert reg.get("plain").public() == {"id": "plain", "name": "Простой", "description": "", "pptx": False}
 
 
 def test_registry_resolves_fonts_dir(tmp_path):
@@ -203,3 +204,33 @@ def test_check_all_uses_a_snapshot_of_incomplete_not_the_live_dict(tmp_path, mon
     reg.check_all("typst", tmp_path / "work")  # не должно падать RuntimeError на итерации
     assert reg.broken["half"] == "нет slides_template.typ"
     assert "late" not in reg.broken  # мутация случилась после снимка — в итог не попала
+
+
+def test_registry_reads_the_pptx_mapping_path(tmp_path, caplog):
+    root = tmp_path / "templates"
+    for name, meta in (("with", {"name": "С", "pptx": "typst-deck/pptx.json"}),
+                       ("without", {"name": "Без"}),
+                       ("outside", {"name": "Н", "pptx": "../pptx.json"})):
+        d = root / name
+        d.mkdir(parents=True)
+        (d / "deck.typ").write_text("// stub")
+        (d / "template.json").write_text(json.dumps(meta, ensure_ascii=False))
+    reg = TemplateRegistry(TEMPLATE_DIR, root)
+    assert reg.get("with").pptx == "typst-deck/pptx.json" and reg.get("with").public()["pptx"] is True
+    assert reg.get("without").pptx is None and reg.get("without").public()["pptx"] is False
+    assert reg.get("outside").pptx is None
+    assert "экспорт в PPTX выключен" in caplog.text
+
+
+@requires_typst
+def test_start_check_turns_pptx_off_but_keeps_the_template(tmp_path):
+    root = tmp_path / "templates"
+    make_pptx_template(root, "badpptx",
+                       mapping_edit=lambda m: m["slides"]["section"].update(layout="Нет такого"))
+    make_pptx_template(root, "goodpptx")
+    reg = TemplateRegistry(TEMPLATE_DIR, root)
+    reg.check_all("typst", tmp_path / "work")
+    assert "badpptx" not in reg.broken and "нет макета «Нет такого»" in reg.pptx_off["badpptx"]
+    assert reg.get("badpptx").pptx is None and reg.get("badpptx").public()["pptx"] is False
+    assert "goodpptx" not in reg.pptx_off and reg.get("goodpptx").pptx == "pptx.json"
+    assert any("нет макета" in w for w in reg.warnings["badpptx"])

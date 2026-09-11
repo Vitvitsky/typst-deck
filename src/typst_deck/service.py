@@ -101,7 +101,7 @@ class DeckService:
         t = self.templates
         return {"checked": t.checked, "ok": [x.id for x in t.list()],
                 "broken": dict(t.broken), "warnings": dict(t.warnings),
-                "error": self.template_check_error}
+                "pptx_off": dict(t.pptx_off), "error": self.template_check_error}
 
     def template_dir(self, tid: str):
         return self.template(tid).path

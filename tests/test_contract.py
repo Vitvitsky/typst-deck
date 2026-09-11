@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from tests.conftest import (FALLBACK_FONT, NO_CLIP_FINAL, NO_CONTACT, ROOT, TEMPLATE_DIR, TWO_PAGES,
-                            make_template, requires_typst)
+                            make_pptx_template, make_template, requires_typst)
 from typst_deck.contract import check_template, filled_slide
 from typst_deck.model import Deck
 
@@ -130,3 +130,23 @@ def test_filled_slide_respects_limits():
     assert len(c["bullets"]) == 4 and all(len(b) == 120 for b in c["bullets"])
     assert all(len(sr["values"]) == len(c["labels"]) == 5 for sr in c["series"])
     Deck(slides=[s, c, filled_slide("bar-chart", {"data": {"count": 6}}), filled_slide("final", {})])
+
+
+@requires_typst
+def test_good_pptx_mapping_passes_the_full_contract(tmp_path):
+    rep = check_template(make_pptx_template(tmp_path), "typst", tmp_path / "w")
+    assert rep.errors == [] and rep.pptx == []
+
+
+@requires_typst
+def test_broken_pptx_is_an_error_in_full_mode_and_a_warning_at_start(tmp_path):
+    d = make_pptx_template(tmp_path, mapping_edit=lambda m: m["slides"]["title"]["ph"].update(author=42))
+    full = check_template(d, "typst", tmp_path / "w1")
+    start = check_template(d, "typst", tmp_path / "w2", full=False)
+    assert any(e.startswith("pptx:") and "idx 42" in e for e in full.errors)
+    assert start.errors == [] and start.pptx and any("idx 42" in w for w in start.warnings)
+
+
+@requires_typst
+def test_template_without_pptx_has_no_rule_7_findings(tmp_path):
+    assert check_template(TEMPLATE_DIR, "typst", tmp_path).pptx == []

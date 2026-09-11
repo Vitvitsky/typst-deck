@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .contract import SAMPLE_DECK, check_template
-from .render import resolve_fonts
+from .render import inside_template, resolve_fonts
 from .slots import clamp
 
 log = logging.getLogger(__name__)
@@ -39,9 +39,13 @@ class TemplateInfo:
     slots: dict = field(default_factory=dict)
     # каталог шрифтов шаблона (поле fonts в template.json) или None
     fonts: Path | None = None
+    # поле pptx из template.json — путь к сопоставлению с PowerPoint-мастером от корня
+    # шаблона; None — поля нет, путь ведёт наружу или стартовая проверка выключила PPTX
+    pptx: str | None = None
 
     def public(self) -> dict:
-        return {"id": self.id, "name": self.name, "description": self.description}
+        return {"id": self.id, "name": self.name, "description": self.description,
+                "pptx": self.pptx is not None}
 
 
 class TemplateNotFound(KeyError):
@@ -68,6 +72,7 @@ class TemplateRegistry:
         self.aliases = dict(aliases or {})
         self.broken: dict[str, str] = {}          # id → причина; заполняет check_all
         self.warnings: dict[str, list[str]] = {}  # id → предупреждения стартовой проверки
+        self.pptx_off: dict[str, str] = {}        # id → почему экспорт в PPTX выключен; заполняет check_all
         self.checked = False
         self._scan()  # предупреждения о неполных каталогах — при старте, в лог
 
@@ -124,9 +129,18 @@ class TemplateRegistry:
         except ValueError as e:
             self._warn(mp, f"{e} — взят каталог fonts/")
             fonts = resolve_fonts(path)
+        pptx = meta.get("pptx")
+        if pptx is not None:
+            try:
+                inside_template(path, pptx, "pptx")
+            except ValueError as e:
+                self._warn(mp, f"{e} — экспорт в PPTX выключен")
+                pptx = None
+        if tid in self.pptx_off:
+            pptx = None
         name = meta.get("name") or ("Корпоративный" if tid == "default" else tid)
         return TemplateInfo(tid, name, meta.get("description", ""), path,
-                            clamp(meta.get("slots"), tid), fonts)
+                            clamp(meta.get("slots"), tid), fonts, pptx)
 
     def all(self) -> list[TemplateInfo]:
         """Все шаблоны, включая сломанные: их проверяет check_all."""
@@ -173,15 +187,19 @@ class TemplateRegistry:
         incomplete = dict(self.incomplete)
         broken: dict[str, str] = {}
         warnings: dict[str, list[str]] = {}
+        pptx_off: dict[str, str] = {}
         for t in templates:
             rep = check_template(t.path, typst_bin, work_dir / t.id, full=False)
             if rep.errors:
                 broken[t.id] = "; ".join(rep.errors)
             if rep.warnings:
                 warnings[t.id] = rep.warnings
+            if rep.pptx:
+                # шаблон работает, выключается только экспорт в PPTX (правило 7)
+                pptx_off[t.id] = "; ".join(rep.pptx)
         for tid, missing in incomplete.items():
             broken[tid] = f"нет {', '.join(missing)}"
-        self.broken, self.warnings, self.checked = broken, warnings, True
+        self.broken, self.warnings, self.pptx_off, self.checked = broken, warnings, pptx_off, True
 
 
 def check(registry: TemplateRegistry, typst_bin: str, work_dir: Path, full: bool = True) -> list[str]:

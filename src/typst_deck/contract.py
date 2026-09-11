@@ -1,12 +1,16 @@
 """Проверка шаблона на контракт typst-deck (docs/template-contract.md).
 
-Два режима. Полный — для автора шаблона и CI: шесть правил, строго.
+Два режима. Полный — для автора шаблона и CI: семь правил, строго.
 Стартовый — для работающего сервиса: сломанным считается только шаблон, который
 не может работать; шрифты и ключи slots там — предупреждения, а не поломка,
 иначе одна опечатка в корпоративной вёрстке остановила бы все колоды на ней.
+
+Правило 7 (PowerPoint-мастер) при старте тоже мягкое: нарушение выключает
+экспорт в PPTX у шаблона, а PDF продолжает работать.
 """
 from __future__ import annotations
 
+import io
 import json
 import logging
 import re
@@ -14,7 +18,10 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from pptx import Presentation
+
 from .model import Deck
+from .pptx import MappingError, export_pptx
 from .render import CompileError, CompileResult, compile_deck, resolve_fonts
 from .slots import clamp
 
@@ -40,6 +47,8 @@ FILL = "Итоги квартала по направлению данных и 
 class Report:
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    # правило 7 отдельно: при старте по нему выключается экспорт в PPTX, а не шаблон
+    pptx: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -192,6 +201,22 @@ def _rule_declared_fit(path: Path, typst_bin: str, work_dir: Path, fonts: Path |
     return []
 
 
+def _rule_pptx(path: Path, meta: dict, typst_bin: str, work_dir: Path) -> list[str]:
+    """Правило 7: сопоставление читается, мастер с ним сходится, образец экспортируется."""
+    if "pptx" not in meta:
+        return []
+    try:
+        data = export_pptx(SAMPLE_DECK, path, meta["pptx"], work_dir / "no-assets", typst_bin)
+    except MappingError as e:
+        return [f"pptx: {e}"]
+    except Exception as e:  # сбой python-pptx на мастере — нарушение, а не падение проверки
+        return [f"pptx: образец не экспортируется: {type(e).__name__}: {e}"]
+    n = len(Presentation(io.BytesIO(data)).slides)
+    if n != len(SAMPLE_DECK.slides):
+        return [f"pptx: в файле {n} слайдов при {len(SAMPLE_DECK.slides)} в образце"]
+    return []
+
+
 def check_template(path: Path, typst_bin: str, work_dir: Path, full: bool = True) -> Report:
     """Правила контракта для каталога шаблона; full=False — стартовый режим сервиса."""
     path, work_dir = Path(path), Path(work_dir)
@@ -202,6 +227,8 @@ def check_template(path: Path, typst_bin: str, work_dir: Path, full: bool = True
         return report
     declared, notes = _clamp_collect(meta.get("slots"), path.name)
     strict.extend(f"slots: {m}" for m in notes)
+    report.pptx = _rule_pptx(path, meta, typst_bin, work_dir)
+    strict.extend(report.pptx)
     try:
         fonts = resolve_fonts(path, meta.get("fonts", "fonts"))
     except ValueError as e:
