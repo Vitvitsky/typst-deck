@@ -340,11 +340,17 @@ def _number_format(unit: str) -> str:
 
 
 def _bar_chart(slide, s, box, cs: ChartStyle) -> None:
-    """Гистограмма: цвет столбца по знаку — рост palette[0], падение negative."""
-    fmt = _number_format(s.unit)
-    data = CategoryChartData(number_format=fmt)
+    """Гистограмма: цвет столбца по знаку — рост palette[0], падение negative.
+
+    number_format не идёт в CategoryChartData: python-pptx пишет его в
+    <c:formatCode> текстовым узлом без экранирования (pptx/chart/xmlwriter.py),
+    и «&», «<» в unit ломают XML графика. plot.data_labels.number_format —
+    атрибут, его пишет lxml и экранирует сам (спека §5.5)."""
+    unit = clean(s.unit)
+    fmt = _number_format(unit)
+    data = CategoryChartData()
     data.categories = [clean(d.label) for d in s.data]
-    data.add_series(clean(s.unit) or "Значение", [d.value for d in s.data])
+    data.add_series(unit or "Значение", [d.value for d in s.data])
     x, y, w, h = box
     chart = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Emu(x), Emu(y), Emu(w), Emu(h), data).chart
     chart.has_legend = False

@@ -156,6 +156,13 @@ def test_bar_colors_follow_the_sign(tdir):
     assert not chart.has_legend
 
 
+def test_bar_chart_survives_special_characters_in_unit(tdir):
+    deck = Deck(slides=[{"type": "bar-chart", "title": "Итоги", "unit": "R&D <x>\x01",
+                         "data": [{"label": "Центр", "value": 42}]}])
+    chart = chart_of(export(tdir, deck).slides[0])
+    assert chart.plots[0].data_labels.number_format == 'General" R&D <x>"'
+
+
 def test_line_series_cycle_the_palette(tdir):
     deck = Deck(slides=[{"type": "chart", "title": "Итоги", "unit": "млн", "labels": ["Q1", "Q2"],
                          "series": [{"name": f"Ряд {j}", "values": [j, j + 1]} for j in range(4)]}])
