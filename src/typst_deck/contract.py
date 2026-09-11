@@ -207,11 +207,11 @@ def _rule_pptx(path: Path, meta: dict, typst_bin: str, work_dir: Path) -> list[s
         return []
     try:
         data = export_pptx(SAMPLE_DECK, path, meta["pptx"], work_dir / "no-assets", typst_bin)
+        n = len(Presentation(io.BytesIO(data)).slides)
     except MappingError as e:
         return [f"pptx: {e}"]
-    except Exception as e:  # сбой python-pptx на мастере — нарушение, а не падение проверки
+    except Exception as e:  # сбой python-pptx на мастере или на повторном открытии — нарушение, а не падение проверки
         return [f"pptx: образец не экспортируется: {type(e).__name__}: {e}"]
-    n = len(Presentation(io.BytesIO(data)).slides)
     if n != len(SAMPLE_DECK.slides):
         return [f"pptx: в файле {n} слайдов при {len(SAMPLE_DECK.slides)} в образце"]
     return []
