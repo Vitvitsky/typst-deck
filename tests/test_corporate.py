@@ -3,14 +3,17 @@ TYPST_DECK_TEST_TEMPLATES. Раньше они были прибиты к templa
 корпоративный шаблон живёт в репозитории своего канона (docs/template-contract.md).
 На этом сервере: TYPST_DECK_TEST_TEMPLATES=~/corp-templates uv run pytest
 """
+import io
 import json
 
 import pytest
+from pptx import Presentation
 
 from tests.conftest import CORP_PARAMS, requires_typst
 from tests.test_charts import signed_deck
-from typst_deck.contract import check_template, filled_slide
+from typst_deck.contract import check_template, filled_slide, SAMPLE_DECK
 from typst_deck.model import Deck
+from typst_deck.pptx import export_pptx
 from typst_deck.render import compile_deck
 from typst_deck.slots import check_slide, clamp
 
@@ -81,3 +84,21 @@ def test_corp_declared_text_fits_its_measured_zone(t, tmp_path):
 @pytest.mark.parametrize("t", CORP_PARAMS)
 def test_corp_signed_charts_keep_one_page_per_slide(t, deck_dir):
     assert len(compile_deck(signed_deck(), deck_dir, t.path, fonts_dir=t.fonts).svgs) == 2
+
+
+@pytest.mark.parametrize("t", CORP_PARAMS)
+def test_corp_pptx_exports_the_sample_and_declared_limits(t, tmp_path):
+    if t.pptx is None:
+        pytest.skip(f"{t.id}: нет PowerPoint-мастера")
+    declared = Deck(slides=[filled_slide(s, lim) for s, lim in t.slots.items()])
+    for deck in (SAMPLE_DECK, declared):
+        data = export_pptx(deck, t.path, t.pptx, tmp_path, "typst")
+        assert len(Presentation(io.BytesIO(data)).slides) == len(deck.slides)
+
+
+def test_corp_lemana_tech_has_a_master():
+    """Страховка от тихого отката: у канона Lemana Tech мастер обязан быть подключён."""
+    lemana = [t for t in (p.values[0] for p in CORP_PARAMS) if t is not None and t.id == "lemana-tech"]
+    if not lemana:
+        pytest.skip("lemana-tech не подключён в TYPST_DECK_TEST_TEMPLATES")
+    assert lemana[0].pptx == "typst-deck/pptx.json"
