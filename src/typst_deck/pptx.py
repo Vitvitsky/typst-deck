@@ -26,6 +26,7 @@ from pptx.dml.color import RGBColor
 from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION, XL_LEGEND_POSITION
 from pptx.enum.shapes import PP_PLACEHOLDER
 from pptx.enum.text import MSO_AUTO_SIZE
+from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.oxml.ns import qn
 from pptx.util import Emu, Mm, Pt
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -93,6 +94,8 @@ class SlideMap(_Strict):
 
 class Mapping(_Strict):
     master: str
+    # шрифт всего текста в PPTX; None — шрифты мастера как есть (см. _set_font)
+    font: str | None = Field(default=None, min_length=1)
     text: TextStyle
     chart: ChartStyle
     slides: dict[Literal["title", "section", "image", "bar-chart", "chart", "final"], SlideMap]
@@ -215,6 +218,51 @@ def _drop_slides(prs) -> None:
     for sld in list(ids):
         ids.remove(sld)
         prs.part.drop_rel(sld.rId)
+
+
+def _retype(root, font: str) -> None:
+    """Явные латинские гарнитуры (a:latin) — на font. Ссылки на шрифт темы
+    (+mj-lt, +mn-lt) остаются ссылками, слоты ea/cs/sym не трогаются: кириллицу
+    и латиницу PowerPoint набирает из a:latin."""
+    for latin in root.iter(qn("a:latin")):
+        if not latin.get("typeface", "").startswith("+"):
+            latin.set("typeface", font)
+
+
+def _retype_part(part, font: str) -> None:
+    """Мастера и макеты python-pptx разбирает в XML, а темы и мастер раздаточных
+    материалов держит байтами — те правятся как XML и кладутся обратно."""
+    if hasattr(part, "_element"):
+        _retype(part._element, font)
+        return
+    root = etree.fromstring(part.blob)
+    _retype(root, font)
+    part._blob = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def _set_font(prs, font: str) -> None:
+    """Шрифт шаблона для всего текста: мастера слайдов с макетами, мастер заметок и
+    мастер раздаточных материалов — и тема каждого (заголовки, основной текст,
+    умолчания новых фигур). Отсутствующие мастера не создаются. Зовётся после
+    сборки слайдов: мастер заметок python-pptx заводит на первой заметке."""
+    parts = []
+    for master in prs.slide_masters:
+        parts += [master.part, *(layout.part for layout in master.slide_layouts)]
+    for reltype in (RT.NOTES_MASTER, RT.HANDOUT_MASTER):
+        try:
+            parts.append(prs.part.part_related_by(reltype))
+        except KeyError:
+            pass
+    themes = []
+    for part in parts:
+        try:
+            theme = part.part_related_by(RT.THEME)
+        except KeyError:  # у макетов своей темы нет
+            continue
+        if theme not in themes:
+            themes.append(theme)
+    for part in parts + themes:
+        _retype_part(part, font)
 
 
 def _fill(slide, s, sm: SlideMap) -> None:
@@ -462,6 +510,8 @@ def export_pptx(deck: Deck, template_dir: Path, mapping_rel: object, assets_dir:
                 _chart_body(slide, s, sm, m)
             if s.notes.strip():
                 slide.notes_slide.notes_text_frame.text = clean(s.notes)
+        if m.font:
+            _set_font(prs, m.font)
         buf = io.BytesIO()
         prs.save(buf)
     return buf.getvalue()

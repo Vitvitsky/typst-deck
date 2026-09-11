@@ -123,13 +123,14 @@ uv run --project ~/projects/typst-deck python ~/projects/typst-deck/scripts/meas
 
 Если у шаблона есть PowerPoint-мастер, typst-deck умеет отдавать колоду
 редактируемым PPTX: текст в заполнителях и зонах мастера, нативные графики,
-заметки докладчика. Шрифт не задаётся — текст берёт шрифты темы мастера.
-Мастер и сопоставление лежат в шаблоне, поле `pptx` в `template.json` — путь к
-сопоставлению:
+заметки докладчика. Шрифт текста задаёт поле `font` (см. ниже); без него текст
+берёт шрифты мастера как есть. Мастер и сопоставление лежат в шаблоне, поле
+`pptx` в `template.json` — путь к сопоставлению:
 
 ```json
 {
   "master": "references/master.pptx",
+  "font": "Calibri",
   "text": {"size": 28, "bullet": "FFDE00", "caption": "666666"},
   "chart": {"palette": ["FFDE00", "1E1E1E", "00FFE0", "FF8700"], "negative": "FF2E00"},
   "slides": {
@@ -149,6 +150,7 @@ uv run --project ~/projects/typst-deck python ~/projects/typst-deck/scripts/meas
 | ключ | смысл |
 |---|---|
 | `master` | путь к `.pptx` от корня шаблона |
+| `font` | шрифт всего текста в PPTX, необязателен. Экспорт ставит его вместо явных латинских гарнитур в теме, мастерах и макетах (ссылки на шрифт темы остаются). В файл шрифт не встраивается — PowerPoint возьмёт установленный на машине |
 | `text.size`, `text.bullet`, `text.caption` | кегль тезисов (пт), цвет маркера, цвет подписи к картинке |
 | `chart.palette`, `chart.negative` | цвета серий по кругу (первый — рост у гистограммы), цвет падения |
 | `slides.<тип>.layout` | имя макета мастера |
@@ -159,22 +161,29 @@ uv run --project ~/projects/typst-deck python ~/projects/typst-deck/scripts/meas
 | `gap` | зазор между колонками, мм |
 | `heading` | заголовок колонки тезисов у графиков, необязателен |
 
-Все ключи, кроме `heading`, обязательны, неизвестные — ошибка. Цвета — hex
+Все ключи, кроме `font` и `heading`, обязательны, неизвестные — ошибка. Цвета — hex
 `RRGGBB`, без `#`. Каждое поле, которое не идёт в зону тела, обязано быть в
 `ph`: у `title` — `title`, `subtitle`, `author`, `department`; у `section` —
 `title`, `subtitle`; у `final` — `title`, `contact`; у остальных — `title`.
 Несколько полей на одном idx становятся абзацами в порядке модели. Заполнитель
 макета, которому нечего дать, удаляется со слайда; номер слайда переносится,
-если он есть в макете. Посмотреть имена макетов и idx заполнителей (экспорт
-объединяет макеты всех мастеров файла, а не только первого):
+если он есть в макете.
+
+Посмотреть имена макетов и idx заполнителей можно скриптом ниже. Экспорт
+объединяет макеты всех мастеров файла; при одинаковых именах берётся макет
+первого мастера — номер мастера скрипт печатает первым. Заполнители даты,
+колонтитула и номера слайда экспорт не переносит, их idx в `ph` не годятся —
+скрипт их не показывает:
 
 ```sh
 uv run --project ~/projects/typst-deck python -c "
-from pptx import Presentation; import sys
+from pptx import Presentation; from pptx.enum.shapes import PP_PLACEHOLDER as P; import sys
+skip = {P.DATE, P.FOOTER, P.SLIDE_NUMBER}
 prs = Presentation(sys.argv[1])
-for m in prs.slide_masters:
+for i, m in enumerate(prs.slide_masters, 1):
     for l in m.slide_layouts:
-        print(l.name, [(p.placeholder_format.idx, p.name) for p in l.placeholders])" <мастер.pptx>
+        print(i, l.name, [(p.placeholder_format.idx, p.name) for p in l.placeholders
+                          if p.placeholder_format.type not in skip])" <мастер.pptx>
 ```
 
 ## Проверка

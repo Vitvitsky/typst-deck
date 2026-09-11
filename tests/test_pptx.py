@@ -3,10 +3,13 @@ import io
 import re
 
 import pytest
+from lxml import etree
 from PIL import Image
 from pptx import Presentation
 from pptx.enum.chart import XL_LEGEND_POSITION
 from pptx.enum.shapes import MSO_SHAPE_TYPE
+from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+from pptx.oxml.ns import qn
 from pptx.util import Mm
 
 from tests.conftest import make_pptx_template, requires_typst
@@ -229,6 +232,49 @@ def test_text_at_global_limits_exports(tdir):
     assert len(export(tdir, deck).slides) == len(SLIDE_TYPES)
 
 
+def latin_faces(element) -> list[str]:
+    return [e.get("typeface") for e in element.iter(qn("a:latin"))]
+
+
+def theme_faces(prs) -> list[str]:
+    theme = prs.slide_masters[0].part.part_related_by(RT.THEME)
+    return latin_faces(etree.fromstring(theme.blob))
+
+
+def with_helvetica_layout(tdir):
+    """Явная гарнитура в макете «Title Only» — как у мастеров, где шрифт прописан мимо темы."""
+    prs = Presentation(str(tdir / "master.pptx"))
+    run = prs.slide_layouts.get_by_name("Title Only").placeholders[0].text_frame.paragraphs[0].add_run()
+    run.font.name = "Helvetica"
+    prs.save(str(tdir / "master.pptx"))
+
+
+def test_template_font_replaces_explicit_latin_faces(tmp_path):
+    tdir = make_pptx_template(tmp_path, mapping_edit=lambda m: m.update(font="Arial"))
+    with_helvetica_layout(tdir)
+    prs = export(tdir, SAMPLE_DECK)
+    assert set(theme_faces(prs)) == {"Arial"}  # основной текст, заголовки, умолчания новых фигур
+    master = prs.slide_masters[0]
+    assert set(latin_faces(master._element)) == {"+mj-lt", "+mn-lt"}  # ссылки на тему не трогаются
+    assert latin_faces(master.slide_layouts.get_by_name("Title Only")._element) == ["Arial"]
+
+
+def test_template_font_reaches_speaker_notes(tmp_path):
+    """Заметки набираются по теме мастера заметок: у Lemana Tech она своя, с Helvetica."""
+    tdir = make_pptx_template(tmp_path, mapping_edit=lambda m: m.update(font="Arial"))
+    prs = export(tdir, Deck(slides=[{"type": "final", "notes": "Сказать спасибо"}]))
+    notes_master = prs.part.part_related_by(RT.NOTES_MASTER)
+    assert set(latin_faces(etree.fromstring(notes_master.part_related_by(RT.THEME).blob))) == {"Arial"}
+
+
+def test_without_font_the_master_keeps_its_faces(tmp_path):
+    tdir = make_pptx_template(tmp_path)
+    with_helvetica_layout(tdir)
+    prs = export(tdir, SAMPLE_DECK)
+    assert set(theme_faces(prs)) == {"Calibri"}
+    assert latin_faces(prs.slide_masters[0].slide_layouts.get_by_name("Title Only")._element) == ["Helvetica"]
+
+
 # --- сопоставление
 
 def check(tdir):
@@ -249,6 +295,7 @@ BROKEN = {
     "no-body": (lambda m: m["slides"]["image"].pop("body"), "нет body"),
     "body-on-title": (lambda m: m["slides"]["title"].update(body=[0, 0, 10, 10]), "body у этого типа не бывает"),
     "bad-color": (lambda m: m["chart"].update(negative="red"), "chart.negative"),
+    "empty-font": (lambda m: m.update(font=""), "font"),
     "no-layout": (lambda m: m["slides"]["section"].update(layout="Нет такого"), "нет макета «Нет такого»"),
     "no-idx": (lambda m: m["slides"]["title"]["ph"].update(author=42), "нет заполнителя idx 42"),
     "slide-number-idx": (lambda m: m["slides"]["title"]["ph"].update(subtitle=12), "нет заполнителя idx 12"),
