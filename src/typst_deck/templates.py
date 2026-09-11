@@ -66,7 +66,7 @@ class TemplateRegistry:
         self.default_dir = Path(default_dir)
         roots = [templates_dirs] if isinstance(templates_dirs, (str, Path)) else list(templates_dirs)
         self.templates_dirs = [Path(r) for r in roots]
-        self._warned: set[Path] = set()
+        self._warned: set[tuple[Path, str]] = set()  # (путь, сообщение) — разные сообщения об одном пути не глушат друг друга
         self.incomplete: dict[str, list[str]] = {}  # id → чего не хватает; наполняется в _scan
         # старый id → действующий: колоды и внешние вызовы могли запомнить прежний
         self.aliases = dict(aliases or {})
@@ -77,8 +77,9 @@ class TemplateRegistry:
         self._scan()  # предупреждения о неполных каталогах — при старте, в лог
 
     def _warn(self, path: Path, msg: str) -> None:
-        if path not in self._warned:
-            self._warned.add(path)
+        key = (path, msg)
+        if key not in self._warned:
+            self._warned.add(key)
             log.warning("шаблон %s: %s", path, msg)
 
     def _missing(self, d: Path) -> list[str]:

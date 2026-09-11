@@ -222,6 +222,20 @@ def test_registry_reads_the_pptx_mapping_path(tmp_path, caplog):
     assert "экспорт в PPTX выключен" in caplog.text
 
 
+def test_registry_logs_both_fonts_and_pptx_warnings_for_one_template(tmp_path, caplog):
+    """Два разных предупреждения об одном template.json — оба в логе, а не только первое."""
+    d = tmp_path / "templates" / "both"
+    d.mkdir(parents=True)
+    (d / "deck.typ").write_text("// stub")
+    (d / "template.json").write_text(json.dumps({"name": "Оба", "fonts": "../f", "pptx": "../p.json"}))
+    reg = TemplateRegistry(TEMPLATE_DIR, tmp_path / "templates")
+    t = reg.get("both")
+    reg.get("both")  # повторный get не дублирует записи
+    assert t.pptx is None
+    assert caplog.text.count("взят каталог fonts/") == 1
+    assert caplog.text.count("экспорт в PPTX выключен") == 1
+
+
 @requires_typst
 def test_start_check_turns_pptx_off_but_keeps_the_template(tmp_path):
     root = tmp_path / "templates"
