@@ -23,7 +23,14 @@ def utcnow() -> datetime:
 
 Title = Annotated[str, Field(max_length=TITLE_MAX)]
 Bullet = Annotated[str, Field(min_length=1, max_length=BULLET_MAX)]
+Short = Annotated[str, Field(max_length=80)]        # пункт повестки, подпись картинки, подпись графика
+Heading = Annotated[str, Field(max_length=60)]      # заголовок блока, колонки, метрики
+Cell = Annotated[str, Field(max_length=60)]         # ячейка таблицы
 ImageSize = Literal["small", "medium", "large"]
+ChartKind = Literal["bar", "line"]
+
+SLIDE_TYPES = ("title", "agenda", "section", "text", "image", "columns", "comparison",
+               "quote", "chart", "dual-chart", "metrics", "table", "gallery", "video", "final")
 
 
 class _Strict(BaseModel):
@@ -35,6 +42,54 @@ class SlideBase(_Strict):
     notes: str = ""
 
 
+class Series(_Strict):
+    name: Title
+    values: list[float]
+
+
+def _same_length(labels: list, series: list[Series], kind: str) -> None:
+    """Общая проверка графика: значений столько же, сколько подписей; линии нужны две точки."""
+    for s in series:
+        if len(s.values) != len(labels):
+            raise ValueError(f"серия «{s.name}»: {len(s.values)} значений при {len(labels)} подписях")
+    if kind == "line" and len(labels) < 2:
+        raise ValueError("линейному графику нужно минимум две точки")
+
+
+class Block(_Strict):
+    heading: Heading = ""
+    text: Annotated[str, Field(min_length=1, max_length=300)]
+
+
+class Side(_Strict):
+    heading: Heading = ""
+    bullets: list[Annotated[str, Field(min_length=1, max_length=120)]] = Field(min_length=1, max_length=5)
+
+
+class Metric(_Strict):
+    value: Annotated[str, Field(min_length=1, max_length=16)]
+    label: Heading = ""
+    delta: Annotated[str, Field(max_length=12)] = ""
+
+
+class Picture(_Strict):
+    image: Annotated[str, Field(min_length=1)]
+    caption: Short = ""
+
+
+class ChartSide(_Strict):
+    caption: Short = ""
+    kind: ChartKind = "line"
+    labels: list[Title] = Field(min_length=1, max_length=12)
+    series: list[Series] = Field(min_length=1, max_length=3)
+    unit: str = ""
+
+    @model_validator(mode="after")
+    def _lengths(self):
+        _same_length(self.labels, self.series, self.kind)
+        return self
+
+
 class TitleSlide(SlideBase):
     type: Literal["title"]
     title: Title
@@ -44,54 +99,112 @@ class TitleSlide(SlideBase):
     department: Title = ""
 
 
+class AgendaSlide(SlideBase):
+    type: Literal["agenda"]
+    title: Title = "Повестка"
+    items: list[Short] = Field(min_length=3, max_length=7)
+
+
 class SectionSlide(SlideBase):
     type: Literal["section"]
     title: Title
     subtitle: Title = ""
 
 
+class TextSlide(SlideBase):
+    type: Literal["text"]
+    title: Title
+    bullets: list[Bullet] = Field(min_length=1, max_length=6)
+
+
 class ImageSlide(SlideBase):
     type: Literal["image"]
     title: Title
     bullets: list[Bullet] = Field(default_factory=list, max_length=6)
-    image: str | None = None
+    image: Annotated[str, Field(min_length=1)]  # без картинки бывает text, а не image
     image_size: ImageSize = "medium"
     caption: Title = ""
 
 
-class BarItem(_Strict):
-    label: Title
-    value: float
-
-
-class BarChartSlide(SlideBase):
-    type: Literal["bar-chart"]
+class ColumnsSlide(SlideBase):
+    type: Literal["columns"]
     title: Title
-    data: list[BarItem] = Field(min_length=1, max_length=12)
-    unit: str = ""
-    bullets: list[Bullet] = Field(default_factory=list, max_length=4)
+    blocks: list[Block] = Field(min_length=2, max_length=3)
 
 
-class Series(_Strict):
-    name: Title
-    values: list[float]
+class ComparisonSlide(SlideBase):
+    type: Literal["comparison"]
+    title: Title
+    left: Side
+    right: Side
+
+
+class QuoteSlide(SlideBase):
+    type: Literal["quote"]
+    text: Annotated[str, Field(min_length=1, max_length=300)]
+    author: Annotated[str, Field(max_length=120)] = ""
 
 
 class ChartSlide(SlideBase):
     type: Literal["chart"]
     title: Title
-    labels: list[Title] = Field(min_length=2, max_length=24)
+    kind: ChartKind = "line"
+    labels: list[Title] = Field(min_length=1, max_length=24)
     series: list[Series] = Field(min_length=1, max_length=4)
     unit: str = ""
     bullets: list[Bullet] = Field(default_factory=list, max_length=4)
 
     @model_validator(mode="after")
     def _lengths(self):
-        for s in self.series:
-            if len(s.values) != len(self.labels):
-                raise ValueError(
-                    f"серия «{s.name}»: {len(s.values)} значений при {len(self.labels)} подписях"
-                )
+        _same_length(self.labels, self.series, self.kind)
+        return self
+
+
+class DualChartSlide(SlideBase):
+    type: Literal["dual-chart"]
+    title: Title
+    left: ChartSide
+    right: ChartSide
+
+
+class MetricsSlide(SlideBase):
+    type: Literal["metrics"]
+    title: Title
+    items: list[Metric] = Field(min_length=2, max_length=4)
+
+
+class TableSlide(SlideBase):
+    type: Literal["table"]
+    title: Title
+    header: list[Annotated[str, Field(max_length=40)]] = Field(min_length=2, max_length=6)
+    rows: list[list[Cell]] = Field(min_length=1, max_length=8)
+
+    @model_validator(mode="after")
+    def _rows(self):
+        for i, row in enumerate(self.rows, 1):
+            if len(row) != len(self.header):
+                raise ValueError(f"строка {i}: {len(row)} ячеек при {len(self.header)} колонках шапки")
+        return self
+
+
+class GallerySlide(SlideBase):
+    type: Literal["gallery"]
+    title: Title
+    images: list[Picture] = Field(min_length=2, max_length=4)
+
+
+class VideoSlide(SlideBase):
+    type: Literal["video"]
+    title: Title
+    video: str = ""   # ассет .mp4 в колоде
+    url: str = ""     # внешняя ссылка
+    poster: str = ""  # ассет-картинка обложки
+    caption: Annotated[str, Field(max_length=120)] = ""
+
+    @model_validator(mode="after")
+    def _source(self):
+        if bool(self.video) == bool(self.url):
+            raise ValueError("у видео должно быть ровно одно: файл video или ссылка url")
         return self
 
 
@@ -102,7 +215,9 @@ class FinalSlide(SlideBase):
 
 
 Slide = Annotated[
-    Union[TitleSlide, SectionSlide, ImageSlide, BarChartSlide, ChartSlide, FinalSlide],
+    Union[TitleSlide, AgendaSlide, SectionSlide, TextSlide, ImageSlide, ColumnsSlide,
+          ComparisonSlide, QuoteSlide, ChartSlide, DualChartSlide, MetricsSlide,
+          TableSlide, GallerySlide, VideoSlide, FinalSlide],
     Field(discriminator="type"),
 ]
 SlideAdapter: TypeAdapter = TypeAdapter(Slide)

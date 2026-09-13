@@ -7,7 +7,7 @@ from typst_deck.model import Deck, SlideAdapter, slide_schema
 def deck():
     return Deck(title="Тест", slides=[
         {"type": "title", "title": "Итоги", "subtitle": "Q3"},
-        {"type": "image", "title": "Рост", "bullets": ["a", "b"]},
+        {"type": "text", "title": "Рост", "bullets": ["a", "b"]},
         {"type": "final"},
     ])
 
@@ -22,16 +22,15 @@ def test_ids_generated():
 def test_discriminator_and_defaults():
     s = SlideAdapter.validate_python({"type": "final"})
     assert s.title == "Спасибо" and s.contact == ""
-    img = SlideAdapter.validate_python({"type": "image", "title": "x"})
-    assert img.image is None and img.image_size == "medium" and img.bullets == []
+    img = SlideAdapter.validate_python({"type": "image", "title": "x", "image": "a.png"})
+    assert img.image == "a.png" and img.image_size == "medium" and img.bullets == []
 
 
 @pytest.mark.parametrize("bad", [
-    {"type": "image", "title": "x" * 121},
-    {"type": "image", "title": "x", "bullets": ["y" * 201]},
+    {"type": "chart", "title": "x", "labels": [], "series": [{"name": "s", "values": []}]},
+    {"type": "image", "title": "x", "image": "a1.png", "bullets": ["y" * 201]},
     {"type": "image", "title": "x", "bullets": ["1", "2", "3", "4", "5", "6", "7"]},
     {"type": "image", "title": "x", "image_size": "huge"},
-    {"type": "bar-chart", "title": "x", "data": []},
     {"type": "chart", "title": "x", "labels": ["a", "b"], "series": [{"name": "s", "values": [1]}]},
     {"type": "chart", "title": "x", "labels": ["a"], "series": [{"name": "s", "values": [1]}]},
     {"type": "unknown", "title": "x"},
@@ -42,11 +41,86 @@ def test_invalid(bad):
         SlideAdapter.validate_python(bad)
 
 
+def test_all_types_are_in_the_schema():
+    from typst_deck.model import SLIDE_TYPES
+
+    text = str(slide_schema())
+    assert len(SLIDE_TYPES) == 15
+    for t in SLIDE_TYPES:
+        assert f"'{t}'" in text
+
+
+def test_text_and_image_are_separate_types():
+    """image без картинки больше не бывает: для тезисов есть text."""
+    t = SlideAdapter.validate_python({"type": "text", "title": "Итоги", "bullets": ["раз"]})
+    assert t.bullets == ["раз"]
+    with pytest.raises(ValidationError):
+        SlideAdapter.validate_python({"type": "text", "title": "Итоги", "bullets": []})
+    img = SlideAdapter.validate_python({"type": "image", "title": "Рост", "image": "a1.png"})
+    assert img.image == "a1.png" and img.image_size == "medium"
+    with pytest.raises(ValidationError):
+        SlideAdapter.validate_python({"type": "image", "title": "Рост"})
+
+
+def test_chart_kinds_and_lengths():
+    bar = SlideAdapter.validate_python({"type": "chart", "title": "Итоги", "kind": "bar",
+                                        "labels": ["Центр"], "series": [{"name": "млн", "values": [42]}]})
+    assert bar.kind == "bar"
+    line = SlideAdapter.validate_python({"type": "chart", "title": "Итоги",
+                                         "labels": ["Q1", "Q2"], "series": [{"name": "Ряд", "values": [1, 2]}]})
+    assert line.kind == "line", "по умолчанию — линия"
+    with pytest.raises(ValidationError):  # линии нужна вторая точка
+        SlideAdapter.validate_python({"type": "chart", "title": "x", "kind": "line",
+                                      "labels": ["Q1"], "series": [{"name": "Ряд", "values": [1]}]})
+    with pytest.raises(ValidationError):  # значений столько же, сколько подписей
+        SlideAdapter.validate_python({"type": "chart", "title": "x", "kind": "bar",
+                                      "labels": ["a", "b"], "series": [{"name": "Ряд", "values": [1]}]})
+
+
+def test_table_rows_match_the_header():
+    ok = SlideAdapter.validate_python({"type": "table", "title": "Итоги",
+                                       "header": ["Регион", "Выручка"], "rows": [["Центр", "42"]]})
+    assert ok.rows == [["Центр", "42"]]
+    with pytest.raises(ValidationError):
+        SlideAdapter.validate_python({"type": "table", "title": "x",
+                                      "header": ["Регион", "Выручка"], "rows": [["Центр"]]})
+
+
+def test_video_takes_exactly_one_source():
+    f = SlideAdapter.validate_python({"type": "video", "title": "Ролик", "video": "a1.mp4"})
+    assert f.video == "a1.mp4" and f.url == ""
+    u = SlideAdapter.validate_python({"type": "video", "title": "Ролик", "url": "https://v/1"})
+    assert u.url == "https://v/1"
+    for bad in ({}, {"video": "a1.mp4", "url": "https://v/1"}):
+        with pytest.raises(ValidationError):
+            SlideAdapter.validate_python({"type": "video", "title": "Ролик", **bad})
+
+
+@pytest.mark.parametrize("bad", [
+    {"type": "agenda", "title": "x", "items": ["раз", "два"]},                      # меньше трёх
+    {"type": "agenda", "title": "x", "items": ["п"] * 8},                            # больше семи
+    {"type": "columns", "title": "x", "blocks": [{"text": "один"}]},                 # меньше двух
+    {"type": "columns", "title": "x", "blocks": [{"text": "т" * 301}, {"text": "б"}]},
+    {"type": "comparison", "title": "x", "left": {"bullets": []}, "right": {"bullets": ["б"]}},
+    {"type": "quote", "text": "ц" * 301},
+    {"type": "metrics", "title": "x", "items": [{"value": "1", "label": "a"}]},      # меньше двух
+    {"type": "metrics", "title": "x", "items": [{"value": "1" * 17, "label": "a"}, {"value": "2", "label": "b"}]},
+    {"type": "table", "title": "x", "header": ["одна"], "rows": [["a"]]},            # меньше двух колонок
+    {"type": "gallery", "title": "x", "images": [{"image": "a1.png"}]},              # меньше двух
+    {"type": "dual-chart", "title": "x",
+     "left": {"labels": ["a", "b"], "series": [{"name": "s", "values": [1, 2]}]},
+     "right": {"labels": ["a", "b"], "series": [{"name": "s", "values": [1]}]}},     # длины не совпали
+])
+def test_invalid_new_types(bad):
+    with pytest.raises(ValidationError):
+        SlideAdapter.validate_python(bad)
+
+
 def test_apply_patch():
     d = deck()
     sid = d.slides[1].id
-    s = d.apply_patch(sid, {"title": "Новый", "image_size": "large"})
-    assert s.title == "Новый" and s.image_size == "large" and s.bullets == ["a", "b"]
+    s = d.apply_patch(sid, {"title": "Новый"})
+    assert s.title == "Новый" and s.bullets == ["a", "b"]
     assert d.slides[1] is s and s.id == sid
 
 
@@ -62,7 +136,7 @@ def test_patch_invalid_keeps_slide():
     d = deck()
     sid = d.slides[1].id
     with pytest.raises(ValidationError):
-        d.apply_patch(sid, {"title": "x" * 500})
+        d.apply_patch(sid, {"title": "x" * 121})
     assert d.find(sid).title == "Рост"
 
 
@@ -81,8 +155,9 @@ def test_add_remove_move():
 
 
 def test_schema_has_all_types():
+    from typst_deck.model import SLIDE_TYPES
     text = str(slide_schema())
-    for t in ["title", "section", "image", "bar-chart", "chart", "final"]:
+    for t in SLIDE_TYPES:
         assert f"'{t}'" in text
 
 
