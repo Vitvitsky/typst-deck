@@ -29,6 +29,9 @@ FIELD_RU = {
     "department": "Подразделение", "unit": "Единица измерения",
     "labels": "Подписи по оси", "data": "Данные диаграммы", "series": "Ряды данных",
     "notes": "Заметки докладчика", "image": "Картинка", "image_size": "Размер картинки",
+    "items": "Пункты", "blocks": "Блоки текста", "left": "Левая колонка", "right": "Правая колонка",
+    "text": "Текст", "header": "Шапка таблицы", "rows": "Строки таблицы", "images": "Картинки",
+    "video": "Видео", "url": "Ссылка", "poster": "Обложка", "kind": "Вид графика",
 }
 
 
@@ -80,6 +83,24 @@ def _ceiling(prop: dict, key: str) -> int | None:
     return target.get("maxLength") if isinstance(target, dict) else None
 
 
+def _resolve(props: dict, defs: dict, path: str) -> dict | None:
+    """Свойство по пути «поле» или «поле.подполе»: у массива объектов спускаемся в items.
+
+    Один шаг вглубь достаточен: вложенные модели (Block, Side, ChartSide) сами не
+    вкладывают других моделей, а table.rows — список списков строк без $ref, так что
+    путь «rows.что-то» ничего не находит и не выдумывает несуществующий синтаксис.
+    """
+    head, _, tail = path.partition(".")
+    prop = props.get(head)
+    if prop is None or not tail:
+        return prop
+    target = prop.get("items", prop) if prop.get("type") == "array" else prop
+    ref = target.get("$ref")
+    if ref:
+        target = defs.get(ref.rsplit("/", 1)[1], {})
+    return target.get("properties", {}).get(tail)
+
+
 def clamp(raw: object, where: str = "") -> dict:
     """Объявление slots, очищенное от неизвестного и зажатое глобальным потолком.
 
@@ -102,7 +123,7 @@ def clamp(raw: object, where: str = "") -> dict:
             continue
         props = DEFS[stype].get("properties", {})
         for field, limits in fields.items():
-            prop = props.get(field)
+            prop = _resolve(props, SCHEMA["$defs"], field)
             if prop is None:
                 log.warning("шаблон %s: у слайда «%s» нет поля «%s» — пропущено", where, stype, field)
                 continue
@@ -143,7 +164,7 @@ def apply_to_schema(declared: dict) -> dict:
     for stype, fields in declared.items():
         props = defs.get(stype, {}).get("properties", {})
         for field, limits in fields.items():
-            prop = props.get(field)
+            prop = _resolve(props, schema["$defs"], field)
             if prop is None:
                 continue
             if "max" in limits:
@@ -214,6 +235,18 @@ def _excess(key: str, limit: int, now: object, was: object) -> int | None:
     return actual
 
 
+def _value(slide, path: str):
+    """Значение поля по пути: у массива объектов — список значений подполя,
+    у вложенного объекта (left.bullets) — само его подполе."""
+    head, _, tail = path.partition(".")
+    value = getattr(slide, head, None)
+    if not tail or value is None:
+        return value
+    if isinstance(value, list):
+        return [getattr(x, tail, None) for x in value]
+    return getattr(value, tail, None)
+
+
 def check_slide(slide, declared: dict, *, n: int, template_name: str, before=None) -> list[str]:
     """Нарушения объявленных пределов на одном слайде; пусто — всё в порядке.
 
@@ -227,13 +260,14 @@ def check_slide(slide, declared: dict, *, n: int, template_name: str, before=Non
     same_type = before is not None and before.type == slide.type
     out: list[str] = []
     for field, limits in fields.items():
-        now = getattr(slide, field, None)
-        was = getattr(before, field, None) if same_type else None
+        now = _value(slide, field)
+        was = _value(before, field) if same_type else None
         for key, limit in limits.items():
             actual = _excess(key, limit, now, was)
             if actual is None:
                 continue
-            out.append(f"слайд {n}, поле «{FIELD_RU.get(field, field)}»: "
+            label = FIELD_RU.get(field.partition(".")[0], field)
+            out.append(f"слайд {n}, поле «{label}»: "
                        f"{_phrase(key, actual)} при пределе {limit} в шаблоне «{template_name}»")
     return out
 

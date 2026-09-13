@@ -81,6 +81,9 @@ export const FIELD_RU = {
   author: "Автор", department: "Подразделение",
   unit: "Единица измерения", notes: "Заметки докладчика", data: "Данные диаграммы", labels: "Подписи по оси",
   series: "Ряды данных", image: "Картинка", image_size: "Размер картинки",
+  items: "Пункты", blocks: "Блоки текста", left: "Левая колонка", right: "Правая колонка",
+  text: "Текст", header: "Шапка таблицы", rows: "Строки таблицы", images: "Картинки",
+  video: "Видео", url: "Ссылка", poster: "Обложка", kind: "Вид графика",
 };
 export const SIZE_RU = { small: "маленькая", medium: "средняя", large: "крупная" };
 export const fileKind = (name) => /\.(png|jpe?g|svg)$/i.test(name) ? "image" : /\.(xlsx|csv)$/i.test(name) ? "table" : /\.(txt|md|docx)$/i.test(name) ? "text" : "bad";
