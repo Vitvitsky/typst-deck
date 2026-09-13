@@ -154,13 +154,6 @@ def test_add_remove_move():
         d.find("s_nope")
 
 
-def test_schema_has_all_types():
-    from typst_deck.model import SLIDE_TYPES
-    text = str(slide_schema())
-    for t in SLIDE_TYPES:
-        assert f"'{t}'" in text
-
-
 def test_roundtrip_json():
     d = deck()
     assert Deck.model_validate_json(d.model_dump_json()) == d

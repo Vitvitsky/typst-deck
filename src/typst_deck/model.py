@@ -23,7 +23,7 @@ def utcnow() -> datetime:
 
 Title = Annotated[str, Field(max_length=TITLE_MAX)]
 Bullet = Annotated[str, Field(min_length=1, max_length=BULLET_MAX)]
-Short = Annotated[str, Field(max_length=80)]        # пункт повестки, подпись картинки, подпись графика
+Short = Annotated[str, Field(max_length=80)]        # пункт повестки, подпись галереи, подпись графика
 Heading = Annotated[str, Field(max_length=60)]      # заголовок блока, колонки, метрики
 Cell = Annotated[str, Field(max_length=60)]         # ячейка таблицы
 ImageSize = Literal["small", "medium", "large"]
