@@ -105,17 +105,20 @@ def _text(slide_id: str, name: str, value: str) -> str:
     return f"field({typ_str(slide_id)}, {typ_str(name)}, {typ_str(value)})"
 
 
-def _bullets(slide_id: str, items: list[str], name: str = "bullets") -> str:
+def _bullets(slide_id: str, items: list[str]) -> str:
     if not items:
         return "none"
-    return f'field({typ_str(slide_id)}, {typ_str(name)}, list({", ".join(typ_str(i) for i in items)}))'
+    return f'field({typ_str(slide_id)}, "bullets", list({", ".join(typ_str(i) for i in items)}))'
 
 
 def _opt(value: str) -> str:
     return typ_str(value) if value else "none"
 
 
-NUMBER = re.compile(r"^[-+−]?[\d\s ]+([.,]\d+)?\s*[%‰]?\s*\S{0,12}$")
+# Числовая ячейка: число с разделителями и необязательной единицей из букв
+# («17,5 %», «1 200», «42 млн»). Дата «2026-09-13» числом не считается:
+# единицу от числа отделяет пробел, и цифр с дефисами в ней не бывает.
+NUMBER = re.compile(r"^[-+−]?\d[\d\s ]*([.,]\d+)?\s*[%‰]?(\s+[^\W\d_]{1,12})?$")
 
 
 def _dict(pairs: dict[str, str]) -> str:
@@ -145,6 +148,12 @@ def _trend(delta: str) -> str:
     if d.startswith(("-", "−")):
         return typ_str("down")
     return "none"
+
+
+def _image_field(slide_id: str, name: str, asset: str) -> str:
+    """Картинка в маркере поля: контейнер задаёт шаблон, отсюда width/height 100%."""
+    return (f'field({typ_str(slide_id)}, {typ_str(name)}, '
+            f'image({typ_str("/assets/" + asset)}, width: 100%, height: 100%, fit: "contain"))')
 
 
 def render_typ(deck: Deck, assets: set[str], base_url: str = "") -> tuple[str, list[str]]:
@@ -178,7 +187,7 @@ def render_typ(deck: Deck, assets: set[str], base_url: str = "") -> tuple[str, l
             img = "none"
             if s.image:
                 if s.image in assets:
-                    img = f'field({typ_str(sid)}, "image", image({typ_str("/assets/" + s.image)}, width: 100%, height: 100%, fit: "contain"))'
+                    img = _image_field(sid, "image", s.image)
                 else:
                     warnings.append(f"слайд {n}: картинка {s.image} не найдена")
             out.append(
@@ -233,24 +242,22 @@ def render_typ(deck: Deck, assets: set[str], base_url: str = "") -> tuple[str, l
                     warnings.append(f"слайд {n}: картинка {pic.image} не найдена")
                     continue
                 pics.append(_dict({
-                    "image": f'field({typ_str(sid)}, "images", image({typ_str("/assets/" + pic.image)}, '
-                             'width: 100%, height: 100%, fit: "contain"))',
+                    "image": _image_field(sid, "images", pic.image),
                     "caption": _mark(sid, "images", pic.caption)}))
             out.append(f"#slide-gallery(title: {_text(sid, 'title', s.title)}, images: {_seq(pics)})\n")
         elif isinstance(s, VideoSlide):
             url = s.url
             if s.video:
-                # без base_url ссылку собрать не из чего (например, проверка контракта):
-                # слайд рисуется обложкой без ссылки, и это не повод предупреждать
                 if s.video not in assets:
                     warnings.append(f"слайд {n}: видео {s.video} не найдено")
+                # без base_url ссылку собрать не из чего (например, проверка контракта):
+                # слайд рисуется обложкой без ссылки, и это не повод предупреждать
                 url = (f"{base_url.rstrip('/')}/api/decks/{deck.id}/assets/{s.video}"
                        if s.video in assets and base_url else "")
             poster = "none"
             if s.poster:
                 if s.poster in assets:
-                    poster = (f'field({typ_str(sid)}, "poster", image({typ_str("/assets/" + s.poster)}, '
-                              'width: 100%, height: 100%, fit: "contain"))')
+                    poster = _image_field(sid, "poster", s.poster)
                 else:
                     warnings.append(f"слайд {n}: обложка {s.poster} не найдена")
             out.append(f"#slide-video(title: {_text(sid, 'title', s.title)}, poster: {poster}, "

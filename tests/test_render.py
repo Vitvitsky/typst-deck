@@ -30,14 +30,17 @@ def rich_deck():
          "images": [{"image": "a1.png", "caption": "раз"}, {"image": "a2.png"}]},
         {"id": "s8", "type": "video", "title": "Ролик", "video": "a3.mp4", "poster": "a1.png"},
         {"id": "s9", "type": "video", "title": "Ссылка", "url": "https://v/1"},
+        {"id": "s10", "type": "dual-chart", "title": "Два графика",
+         "left": {"caption": "Прибыль", "kind": "line", "labels": ["Q1", "Q2"], "series": [{"name": "Выручка", "values": [10, 20]}]},
+         "right": {"caption": "Затраты", "kind": "bar", "labels": ["Q1", "Q2"], "series": [{"name": "Расходы", "values": [5, 8]}]}},
     ])
 
 
 def test_new_types_are_rendered_once_each():
     typ, _ = render_typ(rich_deck(), assets={"a1.png", "a2.png", "a3.mp4"})
-    for name in ("agenda", "columns", "comparison", "quote", "metrics", "table", "gallery", "video"):
+    for name in ("agenda", "columns", "comparison", "quote", "metrics", "table", "gallery", "video", "dual-chart"):
         assert f"\n#slide-{name}(" in typ
-    assert typ.count("\n#slide-") == 9
+    assert typ.count("\n#slide-") == 10
 
 
 def test_composite_fields_are_marked_by_top_level_name():
@@ -47,12 +50,37 @@ def test_composite_fields_are_marked_by_top_level_name():
     assert 'field("s5", "items", "12,5 млн")' in typ
     assert 'field("s6", "header", "Регион")' in typ and 'field("s6", "rows", "42")' in typ
     assert 'field("s4", "text", "Мысль")' in typ and 'field("s4", "author", "Автор")' in typ
+    assert 'field("s10", "left", "Прибыль")' in typ and 'field("s10", "right", "Затраты")' in typ
+
+
+def test_dual_chart_has_both_sides_with_kinds():
+    """Двойной график содержит обе стороны с их видами и маркированными подписями."""
+    typ, _ = render_typ(rich_deck(), assets={"a1.png", "a2.png", "a3.mp4"})
+    assert "\n#slide-dual-chart(" in typ
+    assert 'kind: "line"' in typ and 'kind: "bar"' in typ
+    assert 'field("s10", "left", "Прибыль")' in typ and 'field("s10", "right", "Затраты")' in typ
 
 
 def test_product_computes_trend_and_numeric():
     typ, _ = render_typ(rich_deck(), assets={"a1.png", "a2.png", "a3.mp4"})
     assert 'trend: "up"' in typ and 'trend: "down"' in typ and "trend: none" in typ
     assert "numeric: (false, true,)" in typ, "числовая колонка выравнивается вправо"
+
+
+def test_numeric_detects_only_true_numbers_not_dates():
+    """Числовая колонка не путается с датой: «2026-09-13» числом не считается."""
+    from typst_deck.render import _numeric
+
+    # Столбцы (текст, число): текстовой не должно быть числовыми, числовой - должно
+    header = ["Регион", "Выручка"]
+
+    # Текстовые значения: некоторые выглядят как цифры, но не числа
+    text_rows = [["Центр", "Q1"], ["Север", "н/д"], ["Восток", "2026-09-13"]]
+    assert _numeric(header, text_rows) == [False, False]
+
+    # Числовые значения
+    numeric_rows = [["Центр", "17,5 %"], ["Север", "-2"], ["Восток", "1 200"], ["Запад", "42 млн"]]
+    assert _numeric(header, numeric_rows) == [False, True]
 
 
 def test_video_link_and_poster():
