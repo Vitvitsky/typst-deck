@@ -2,12 +2,45 @@ import json
 
 import pytest
 
-from tests.conftest import TEMPLATE_DIR, requires_typst
+from tests.conftest import ROOT, TEMPLATE_DIR, requires_typst
 from tests.test_render import full_deck
 from typst_deck.model import Deck
 from typst_deck.render import CompileError, compile_deck
 
 pytestmark = requires_typst
+
+
+@requires_typst
+@pytest.mark.parametrize("tid", ["default", "dark"])
+def test_every_template_draws_all_types(deck_dir, png_bytes, tid):
+    """Каждый тип — ровно одна страница, и у каждого текстового поля есть маркер."""
+    from tests.test_render import rich_deck
+    from typst_deck.model import Deck
+
+    for name in ("a1.png", "a2.png"):
+        (deck_dir / "assets" / name).write_bytes(png_bytes)
+    (deck_dir / "assets" / "a3.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    deck = rich_deck()
+    deck.slides += Deck(slides=[
+        {"type": "text", "title": "Тезисы", "bullets": ["раз", "два"]},
+        {"type": "image", "title": "Картинка", "bullets": ["раз"], "image": "a1.png", "caption": "подпись"},
+        {"type": "chart", "title": "Столбцы", "kind": "bar", "labels": ["A", "B"],
+         "series": [{"name": "млн", "values": [4, -2]}], "unit": "млн", "bullets": ["в"]},
+        {"type": "dual-chart", "title": "Два графика",
+         "left": {"caption": "Слева", "labels": ["Q1", "Q2"], "series": [{"name": "с", "values": [1, 2]}]},
+         "right": {"caption": "Справа", "kind": "bar", "labels": ["A"], "series": [{"name": "с", "values": [3]}]}},
+        {"type": "title", "title": "Титул", "subtitle": "Под", "author": "А", "department": "Д"},
+        {"type": "section", "title": "Раздел", "subtitle": "Про"},
+        {"type": "final", "contact": "team@corp"},
+    ]).slides
+    r = compile_deck(deck, deck_dir, TEMPLATE_DIR if tid == "default" else ROOT / "templates" / tid,
+                     base_url="http://t")
+    assert len(r.svgs) == len(deck.slides), "одна функция — одна страница"
+    fields = {(p["slide"], p["field"]) for p in r.positions}
+    for slide_id, field in [("s1", "items"), ("s2", "blocks"), ("s3", "left"), ("s3", "right"),
+                            ("s4", "text"), ("s5", "items"), ("s6", "header"), ("s6", "rows"),
+                            ("s7", "images"), ("s8", "poster")]:
+        assert (slide_id, field) in fields, f"{slide_id}.{field} без маркера"
 
 
 def test_compile_full_deck(deck_dir, png_bytes):

@@ -1,6 +1,6 @@
 // Тёмный вариант заглушки: тот же контракт, другая палитра. Служит для проверки выбора шаблона.
 // Заглушка корпоративного шаблона. Реализует контракт из спеки (§4):
-// семь функций, каждая функция слайда — ровно одна страница, текстовые
+// шестнадцать функций, каждая функция слайда — ровно одна страница, текстовые
 // параметры приходят как content (обёрнуты сервисом в маркер поля),
 // data/labels/series — сырые массивы. Пакеты @preview не используются.
 
@@ -47,6 +47,10 @@
   v(0.3cm)
 }
 
+// Общая зона тела: страницу целиком уже обрезает slide(), здесь — только ширина
+// и клип по ширине. Высоту не задаём: box(height: 1fr) в Typst недопустим.
+#let body-area(content) = block(width: 100%, clip: true, content)
+
 #let slide-title(title: none, subtitle: none, author: none, department: none) = slide(
   background: place(top, rect(width: 100%, height: 1.1cm, fill: accent)),
 )[
@@ -69,73 +73,107 @@
   #v(1fr)
 ]
 
+#let slide-agenda(title: none, items: ()) = slide[
+  #heading-block(title)
+  #body-area(enum(spacing: 0.45em, ..items))
+]
+
+#let slide-text(title: none, bullets: none) = slide[
+  #heading-block(title)
+  #body-area[#if bullets != none { bullets }]
+]
+
 #let slide-image(title: none, bullets: none, image: none, image-size: "medium", caption: none) = slide[
   #heading-block(title)
   #let img-w = (small: 30%, medium: 42%, large: 55%).at(image-size)
-  #if image == none {
-    if bullets != none { bullets }
-  } else {
-    grid(
-      columns: (1fr, img-w), column-gutter: 0.6cm,
-      [#if bullets != none { bullets }],
-      [
-        // картинка приходит с width/height 100% и fit: contain — контейнер задаём здесь
-        #box(width: 100%, height: 4.4cm, image)
-        #if caption != none { v(2pt); text(size: 8pt, fill: muted, caption) }
-      ],
-    )
-  }
+  #grid(
+    columns: (1fr, img-w), column-gutter: 0.6cm,
+    [#if bullets != none { bullets }],
+    [
+      // картинка приходит с width/height 100% и fit: contain — контейнер задаём здесь
+      #box(width: 100%, height: 4.4cm, image)
+      #if caption != none { v(2pt); text(size: 8pt, fill: muted, caption) }
+    ],
+  )
+]
+
+#let slide-columns(title: none, blocks: ()) = slide[
+  #heading-block(title)
+  #body-area(grid(
+    columns: blocks.map(_ => 1fr), column-gutter: 0.6cm,
+    ..blocks.map(b => [
+      #if b.heading != none { text(weight: "bold", b.heading); v(0.2cm) }
+      #text(size: 9.5pt, b.text)
+    ]),
+  ))
+]
+
+#let slide-comparison(title: none, left: (:), right: (:)) = slide[
+  #heading-block(title)
+  #body-area(grid(
+    columns: (1fr, 1fr), column-gutter: 0.7cm,
+    ..(left, right).map(side => [
+      #if side.heading != none { text(weight: "bold", fill: accent, side.heading); v(0.2cm) }
+      // bullets приходит массивом маркеров (не готовым list()) — оборачиваем сами
+      #if side.bullets != none { text(size: 9.5pt, list(..side.bullets)) }
+    ]),
+  ))
+]
+
+#let slide-quote(text: none, author: none) = slide[
+  #v(1fr)
+  #if text != none { fit-text(3.2cm, (20pt, 17pt, 14pt), text, weight: "bold") }
+  #if author != none { v(0.4cm); std.text(size: 10pt, fill: muted, author) }
+  #v(1fr)
 ]
 
 // Столбчатая диаграмма со знаком: общая нулевая линия, рост вверх цветом
 // accent, падение вниз цветом negative. Подписи значений — с внешней стороны
 // столбца, подписи категорий — единой строкой под всей зоной графика.
-#let slide-bar-chart(title: none, data: (), unit: none, bullets: none) = slide[
-  #heading-block(title)
-  #let vals = data.map(d => d.value)
-  #let hi = calc.max(0, ..vals)
-  #let lo = calc.min(0, ..vals)
-  #let span = calc.max(hi - lo, 0.000001) // все значения нулевые — делить не на что
-  #let full = 3.4cm                       // высота зоны столбцов на оба знака
-  #let lab = 0.42cm                       // полоса под подпись значения над/под столбцом
-  #let up = full * hi / span
-  #let down = full * (-lo) / span
-  #let cols = data.map(_ => 1fr)
-  #let value-label(d) = text(size: 8pt, str(d.value) + if unit != none { " " + unit } else { "" })
-  #let bar(d) = {
-    let h = calc.max(full * calc.abs(d.value) / span, 1pt)
+// Серия всегда первая (series.at(0)): дополнительные ряды графику chart
+// со столбцами пока не нужны, легенда в slide-chart относится к линиям.
+#let bars(labels, series, unit) = {
+  let vals = series.at(0).values
+  let hi = calc.max(0, ..vals)
+  let lo = calc.min(0, ..vals)
+  let span = calc.max(hi - lo, 0.000001) // все значения нулевые — делить не на что
+  let full = 3.4cm                       // высота зоны столбцов на оба знака
+  let lab = 0.42cm                       // полоса под подпись значения над/под столбцом
+  let up = full * hi / span
+  let down = full * (-lo) / span
+  let cols = labels.map(_ => 1fr)
+  let value-label(v) = text(size: 8pt, str(v) + if unit != none { " " + unit } else { "" })
+  let bar(i) = {
+    let v = vals.at(i)
+    let h = calc.max(full * calc.abs(v) / span, 1pt)
     box(width: 100%, height: lab + up + down + lab)[
-      #if d.value >= 0 {
+      #if v >= 0 {
         place(bottom + center, dy: -lab - down,
           rect(width: 100%, height: h, fill: accent, radius: (top: 2pt)))
-        place(bottom + center, dy: -lab - down - h - 3pt, value-label(d))
+        place(bottom + center, dy: -lab - down - h - 3pt, value-label(v))
       } else {
         place(top + center, dy: lab + up,
           rect(width: 100%, height: h, fill: negative, radius: (bottom: 2pt)))
-        place(top + center, dy: lab + up + h + 3pt, value-label(d))
+        place(top + center, dy: lab + up + h + 3pt, value-label(v))
       }
     ]
   }
-  #let chart = [
-    #box(width: 100%)[
-      #grid(columns: cols, column-gutter: 0.35cm, ..data.map(bar))
-      #place(top + left, dy: lab + up,
-        line(start: (0pt, 0pt), end: (100%, 0pt), stroke: 0.5pt + muted))
-    ]
-    #grid(columns: cols, column-gutter: 0.35cm, align: center,
-      ..data.map(d => text(size: 8pt, fill: muted, d.label)))
+  box(width: 100%)[
+    #grid(columns: cols, column-gutter: 0.35cm, ..labels.enumerate().map(((i, _)) => bar(i)))
+    #place(top + left, dy: lab + up,
+      line(start: (0pt, 0pt), end: (100%, 0pt), stroke: 0.5pt + muted))
   ]
-  #if bullets == none { chart } else {
-    grid(columns: (2fr, 1fr), column-gutter: 0.6cm, chart, text(size: 9.5pt, bullets))
-  }
-]
+  grid(columns: cols, column-gutter: 0.35cm, align: center,
+    ..labels.map(l => text(size: 8pt, fill: muted, l)))
+}
 
-#let slide-chart(title: none, labels: (), series: (), unit: none, bullets: none) = slide[
-  #heading-block(title)
-  #let all = series.map(s => s.values).flatten()
-  #let hi = calc.max(1, ..all)
-  #let lo = calc.min(0, ..all)
-  #let chart = layout(sz => {
+// Линейный график: одна или несколько серий, точки соединены кривой,
+// цвет ряда — из общей палитры.
+#let lines(labels, series) = {
+  let all = series.map(s => s.values).flatten()
+  let hi = calc.max(1, ..all)
+  let lo = calc.min(0, ..all)
+  layout(sz => {
     let w = sz.width
     let h = 3.4cm
     let pad = 1cm // чтобы крайние точки и подписи не обрезались
@@ -162,16 +200,90 @@
       }
     ]
   })
-  #let legend = series.enumerate().map(((i, s)) => box(inset: (right: 10pt))[
-    #box(width: 8pt, height: 8pt, fill: palette.at(calc.rem(i, palette.len())))
-    #h(3pt) #text(size: 8pt, s.name)
-    #if unit != none { text(size: 8pt, fill: muted, ", " + unit) }
-  ]).join()
-  #legend
-  #v(0.15cm)
+}
+
+#let slide-chart(title: none, kind: "line", labels: (), series: (), unit: none, bullets: none) = slide[
+  #heading-block(title)
+  // столбцы: знак у одной серии красится, у нескольких — палитра по рядам;
+  // линии: как раньше, легенда сверху
+  #let chart = if kind == "bar" { bars(labels, series, unit) } else { lines(labels, series) }
+  #let legend = if kind == "line" or series.len() > 1 {
+    series.enumerate().map(((i, s)) => box(inset: (right: 10pt))[
+      #box(width: 8pt, height: 8pt, fill: palette.at(calc.rem(i, palette.len())))
+      #h(3pt) #text(size: 8pt, s.name)
+      #if unit != none { text(size: 8pt, fill: muted, ", " + unit) }
+    ]).join()
+  }
+  #if legend != none { legend; v(0.15cm) }
   #if bullets == none { chart } else {
     grid(columns: (2fr, 1fr), column-gutter: 0.6cm, chart, text(size: 9.5pt, bullets))
   }
+]
+
+// Два графика рядом: та же пара bars/lines, что и в slide-chart, но без
+// общих bullets — у каждой стороны только подпись под графиком.
+#let slide-dual-chart(title: none, left: (:), right: (:)) = slide[
+  #heading-block(title)
+  #body-area(grid(
+    columns: (1fr, 1fr), column-gutter: 0.7cm,
+    ..(left, right).map(side => [
+      #if side.kind == "bar" { bars(side.labels, side.series, side.unit) } else { lines(side.labels, side.series) }
+      #if side.caption != none { v(2pt); align(center, text(size: 8pt, fill: muted, side.caption)) }
+    ]),
+  ))
+]
+
+#let slide-metrics(title: none, items: ()) = slide[
+  #heading-block(title)
+  #body-area(grid(
+    columns: items.map(_ => 1fr), column-gutter: 0.5cm, align: center + horizon,
+    ..items.map(m => [
+      #text(size: 28pt, weight: "bold", m.value)
+      #if m.label != none { linebreak(); text(size: 9pt, fill: muted, m.label) }
+      #if m.delta != none {
+        linebreak()
+        text(size: 9pt, fill: if m.trend == "down" { negative } else if m.trend == "up" { accent } else { muted }, m.delta)
+      }
+    ]),
+  ))
+]
+
+#let slide-table(title: none, header: (), rows: (), numeric: ()) = slide[
+  #heading-block(title)
+  #body-area(table(
+    columns: header.map(_ => 1fr),
+    align: numeric.map(n => if n { right } else { left }),
+    stroke: 0.5pt + rgb("#dddddd"),
+    fill: (_, y) => if y == 0 { rgb("#eeeeee") } else if calc.even(y) { rgb("#f8f8f8") },
+    table.header(..header.map(h => text(size: 9pt, weight: "bold", h))),
+    ..rows.flatten().map(c => text(size: 9pt, c)),
+  ))
+]
+
+#let slide-gallery(title: none, images: ()) = slide[
+  #heading-block(title)
+  #body-area(grid(
+    columns: if images.len() == 4 { (1fr, 1fr) } else { images.map(_ => 1fr) },
+    column-gutter: 0.4cm, row-gutter: 0.3cm,
+    ..images.map(p => [
+      #box(width: 100%, height: if images.len() == 4 { 1.7cm } else { 3.6cm }, p.image)
+      #if p.caption != none { v(2pt); text(size: 8pt, fill: muted, p.caption) }
+    ]),
+  ))
+]
+
+#let slide-video(title: none, poster: none, url: none, caption: none) = slide[
+  #heading-block(title)
+  #body-area[
+    #let frame = box(width: 100%, height: 3.6cm, fill: if poster == none { muted.lighten(70%) } else { none })[
+      #if poster != none { poster }
+      #place(center + horizon, circle(radius: 0.6cm, fill: accent.transparentize(20%))[
+        #align(center + horizon, text(fill: white, size: 14pt, "▶"))
+      ])
+    ]
+    #if url == none { frame } else { link(url, frame) }
+    #if caption != none { v(2pt); text(size: 8pt, fill: muted, caption) }
+  ]
 ]
 
 #let slide-final(title: none, contact: none) = slide(fill: accent)[
