@@ -20,6 +20,35 @@ def test_reference_templates_pass_the_full_contract(tdir, tmp_path):
 
 
 @requires_typst
+@pytest.mark.parametrize("tdir", [TEMPLATE_DIR, ROOT / "templates" / "dark"], ids=["default", "dark"])
+def test_sample_covers_every_type(tdir, tmp_path):
+    from typst_deck.contract import SAMPLE_DECK
+    from typst_deck.model import SLIDE_TYPES
+
+    assert [s.type for s in SAMPLE_DECK.slides] == list(SLIDE_TYPES)
+    assert check_template(tdir, "typst", tmp_path / tdir.name).errors == []
+
+
+def test_sample_assets_are_written_next_to_the_deck(tmp_path):
+    from typst_deck.contract import SAMPLE_ASSETS, write_sample_assets
+
+    write_sample_assets(tmp_path / "deck")
+    for name in SAMPLE_ASSETS:
+        assert (tmp_path / "deck" / "assets" / name).is_file()
+
+
+@requires_typst
+def test_oversized_rule_covers_new_fields(tmp_path):
+    """Правило 3 перебирает цитату, блоки, метрики и ячейки таблицы."""
+    d = make_template(tmp_path, "quote-overflow", deck_edit=(
+        "#let slide-quote(text: none, author: none) = slide[",
+        "#let slide-quote(text: none, author: none) = page[",
+    ))
+    errors = check_template(d, "typst", tmp_path / "w").errors
+    assert any("переросший текст" in e for e in errors)
+
+
+@requires_typst
 def test_missing_template_json_is_an_error(tmp_path):
     d = make_template(tmp_path, "nojson")
     (d / "template.json").unlink()
@@ -129,7 +158,9 @@ def test_filled_slide_respects_limits():
     c = filled_slide("chart", {"bullets": {"count": 4, "max": 120}, "labels": {"count": 5}})
     assert len(c["bullets"]) == 4 and all(len(b) == 120 for b in c["bullets"])
     assert all(len(sr["values"]) == len(c["labels"]) == 5 for sr in c["series"])
-    Deck(slides=[s, c, filled_slide("bar-chart", {"data": {"count": 6}}), filled_slide("final", {})])
+    t = filled_slide("table", {"header": {"count": 4}, "rows": {"count": 3}})
+    assert len(t["header"]) == 4 and len(t["rows"]) == 3 and all(len(row) == 4 for row in t["rows"])
+    Deck(slides=[s, c, t, filled_slide("final", {})])
 
 
 @requires_typst

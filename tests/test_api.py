@@ -202,7 +202,7 @@ async def test_templates_history_and_template_choice(client, fake_llm):
     assert ids[0] == "default" and "dark" in ids and ts[ids.index("dark")]["name"] == "Тёмный"
     svg = await client.get("/api/templates/dark/preview/1.svg")
     assert svg.status_code == 200 and svg.headers["content-type"].startswith("image/svg+xml")
-    assert (await client.get("/api/templates/dark/preview/9.svg")).status_code == 404
+    assert (await client.get("/api/templates/dark/preview/16.svg")).status_code == 404
     assert (await client.get("/api/templates/nope/preview/1.svg")).status_code == 422
 
     fake_llm._queue += [
