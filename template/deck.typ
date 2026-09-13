@@ -126,27 +126,32 @@
   #v(1fr)
 ]
 
-// Столбчатая диаграмма со знаком: общая нулевая линия, рост вверх цветом
-// accent, падение вниз цветом negative. Подписи значений — с внешней стороны
-// столбца, подписи категорий — единой строкой под всей зоной графика.
-// Серия всегда первая (series.at(0)): дополнительные ряды графику chart
-// со столбцами пока не нужны, легенда в slide-chart относится к линиям.
+// Столбчатая диаграмма со знаком: общая нулевая линия, подписи категорий —
+// единой строкой под всей зоной графика. Одна серия — столбец красится по
+// знаку (рост accent, падение negative), подпись значения с внешней стороны
+// столбца. Несколько серий — в каждой категории ряды встают группой друг
+// рядом с другом с небольшим зазором, цвет ряда — из общей палитры; подписи
+// значений на столбцах убраны (их называет легенда в slide-chart), иначе
+// подписи соседних столбцов налезали бы друг на друга.
 #let bars(labels, series, unit) = {
-  let vals = series.at(0).values
-  let hi = calc.max(0, ..vals)
-  let lo = calc.min(0, ..vals)
+  let all = series.map(s => s.values).flatten()
+  let hi = calc.max(0, ..all)
+  let lo = calc.min(0, ..all)
   let span = calc.max(hi - lo, 0.000001) // все значения нулевые — делить не на что
   let full = 3.4cm                       // высота зоны столбцов на оба знака
   let lab = 0.42cm                       // полоса под подпись значения над/под столбцом
   let up = full * hi / span
   let down = full * (-lo) / span
   let cols = labels.map(_ => 1fr)
+  let n = series.len()
+  let gutter = 1.5pt                     // зазор между столбцами одной группы
+  let w = (100% - gutter * (n - 1)) / n
   let value-label(v) = text(size: 8pt, str(v) + if unit != none { " " + unit } else { "" })
-  let bar(i) = {
-    let v = vals.at(i)
-    let h = calc.max(full * calc.abs(v) / span, 1pt)
-    box(width: 100%, height: lab + up + down + lab)[
-      #if v >= 0 {
+  let slot(i) = box(width: 100%, height: lab + up + down + lab)[
+    #if n == 1 {
+      let v = series.at(0).values.at(i)
+      let h = calc.max(full * calc.abs(v) / span, 1pt)
+      if v >= 0 {
         place(bottom + center, dy: -lab - down,
           rect(width: 100%, height: h, fill: accent, radius: (top: 2pt)))
         place(bottom + center, dy: -lab - down - h - 3pt, value-label(v))
@@ -155,10 +160,24 @@
           rect(width: 100%, height: h, fill: negative, radius: (bottom: 2pt)))
         place(top + center, dy: lab + up + h + 3pt, value-label(v))
       }
-    ]
-  }
+    } else {
+      for (k, s) in series.enumerate() {
+        let v = s.values.at(i)
+        let h = calc.max(full * calc.abs(v) / span, 1pt)
+        let color = palette.at(calc.rem(k, palette.len()))
+        let dx = k * (w + gutter)
+        if v >= 0 {
+          place(bottom + left, dx: dx, dy: -lab - down,
+            rect(width: w, height: h, fill: color, radius: (top: 2pt)))
+        } else {
+          place(top + left, dx: dx, dy: lab + up,
+            rect(width: w, height: h, fill: color, radius: (bottom: 2pt)))
+        }
+      }
+    }
+  ]
   box(width: 100%)[
-    #grid(columns: cols, column-gutter: 0.35cm, ..labels.enumerate().map(((i, _)) => bar(i)))
+    #grid(columns: cols, column-gutter: 0.35cm, ..labels.enumerate().map(((i, _)) => slot(i)))
     #place(top + left, dy: lab + up,
       line(start: (0pt, 0pt), end: (100%, 0pt), stroke: 0.5pt + muted))
   ]

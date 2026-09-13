@@ -43,6 +43,23 @@ def test_every_template_draws_all_types(deck_dir, png_bytes, tid):
         assert (slide_id, field) in fields, f"{slide_id}.{field} без маркера"
 
 
+@requires_typst
+@pytest.mark.parametrize("tid", ["default", "dark"])
+def test_grouped_bars_keep_every_series(deck_dir, tid):
+    """Столбчатый график с несколькими сериями не должен терять ни одной из них."""
+    from typst_deck.model import Deck
+
+    deck = Deck(slides=[
+        {"type": "chart", "title": "Сравнение", "kind": "bar", "labels": ["A", "B", "C"],
+         "series": [{"name": "план", "values": [4, -2, 3]}, {"name": "факт", "values": [-1, 5, 2]}]},
+    ])
+    r = compile_deck(deck, deck_dir, TEMPLATE_DIR if tid == "default" else ROOT / "templates" / tid,
+                     base_url="http://t")
+    assert len(r.svgs) == 1
+    fields = {(p["slide"], p["field"]) for p in r.positions}
+    assert (deck.slides[0].id, "title") in fields
+
+
 def test_compile_full_deck(deck_dir, png_bytes):
     (deck_dir / "assets" / "a000001.png").write_bytes(png_bytes)
     r = compile_deck(full_deck(), deck_dir, TEMPLATE_DIR)
