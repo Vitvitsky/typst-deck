@@ -133,12 +133,15 @@
 // рядом с другом с небольшим зазором, цвет ряда — из общей палитры; подписи
 // значений на столбцах убраны (их называет легенда в slide-chart), иначе
 // подписи соседних столбцов налезали бы друг на друга.
-#let bars(labels, series, unit) = {
+// height — зона столбцов на оба знака; параметр, а не константа, потому что
+// slide-chart уменьшает её, когда сверху уже стоит легенда (иначе подписи
+// категорий под графиком обрезаются клипом body-area).
+#let bars(labels, series, unit, height: 3.4cm) = {
   let all = series.map(s => s.values).flatten()
   let hi = calc.max(0, ..all)
   let lo = calc.min(0, ..all)
   let span = calc.max(hi - lo, 0.000001) // все значения нулевые — делить не на что
-  let full = 3.4cm                       // высота зоны столбцов на оба знака
+  let full = height                      // высота зоны столбцов на оба знака
   let lab = 0.42cm                       // полоса под подпись значения над/под столбцом
   let up = full * hi / span
   let down = full * (-lo) / span
@@ -186,14 +189,15 @@
 }
 
 // Линейный график: одна или несколько серий, точки соединены кривой,
-// цвет ряда — из общей палитры.
-#let lines(labels, series) = {
+// цвет ряда — из общей палитры. height — как в bars(): убавляется слайдом,
+// когда сверху рисуется легенда.
+#let lines(labels, series, height: 3.4cm) = {
   let all = series.map(s => s.values).flatten()
   let hi = calc.max(1, ..all)
   let lo = calc.min(0, ..all)
   layout(sz => {
     let w = sz.width
-    let h = 3.4cm
+    let h = height
     let pad = 1cm // чтобы крайние точки и подписи не обрезались
     let n = labels.len()
     let xstep = (w - 2 * pad) / calc.max(n - 1, 1)
@@ -223,9 +227,13 @@
 #let slide-chart(title: none, kind: "line", labels: (), series: (), unit: none, bullets: none) = slide[
   #heading-block(title)
   // столбцы: знак у одной серии красится, у нескольких — палитра по рядам;
-  // линии: как раньше, легенда сверху
-  #let chart = if kind == "bar" { bars(labels, series, unit) } else { lines(labels, series) }
-  #let legend = if kind == "line" or series.len() > 1 {
+  // линии: как раньше, легенда сверху. Легенда занимает часть высоты над
+  // графиком — зону графика убавляем ровно настолько, чтобы подписи
+  // категорий под ним не съехали под клип body-area (замерено рендером).
+  #let show-legend = kind == "line" or series.len() > 1
+  #let chart-h = if show-legend { 2.9cm } else { 3.4cm }
+  #let chart = if kind == "bar" { bars(labels, series, unit, height: chart-h) } else { lines(labels, series, height: chart-h) }
+  #let legend = if show-legend {
     series.enumerate().map(((i, s)) => box(inset: (right: 10pt))[
       #box(width: 8pt, height: 8pt, fill: palette.at(calc.rem(i, palette.len())))
       #h(3pt) #text(size: 8pt, s.name)
@@ -239,15 +247,29 @@
 ]
 
 // Два графика рядом: та же пара bars/lines, что и в slide-chart, но без
-// общих bullets — у каждой стороны только подпись под графиком.
+// общих bullets — у каждой стороны только подпись под графиком. Легенда — по
+// тому же правилу, что и в slide-chart (линии — всегда, столбцы — от двух
+// серий), в уменьшенном виде: колонка вдвое уже, места на полноразмерную
+// легенду нет.
 #let slide-dual-chart(title: none, left: (:), right: (:)) = slide[
   #heading-block(title)
   #body-area(grid(
     columns: (1fr, 1fr), column-gutter: 0.7cm,
-    ..(left, right).map(side => [
-      #if side.kind == "bar" { bars(side.labels, side.series, side.unit) } else { lines(side.labels, side.series) }
-      #if side.caption != none { v(2pt); align(center, text(size: 8pt, fill: muted, side.caption)) }
-    ]),
+    ..(left, right).map(side => {
+      let show-legend = side.kind == "line" or side.series.len() > 1
+      let chart-h = if show-legend { 2.6cm } else { 3cm }
+      let legend = if show-legend {
+        side.series.enumerate().map(((i, s)) => box(inset: (right: 6pt))[
+          #box(width: 6pt, height: 6pt, fill: palette.at(calc.rem(i, palette.len())))
+          #h(2pt) #text(size: 6.5pt, s.name)
+        ]).join()
+      }
+      [
+        #if legend != none { legend; v(0.1cm) }
+        #if side.kind == "bar" { bars(side.labels, side.series, side.unit, height: chart-h) } else { lines(side.labels, side.series, height: chart-h) }
+        #if side.caption != none { v(2pt); align(center, text(size: 8pt, fill: muted, side.caption)) }
+      ]
+    }),
   ))
 ]
 
