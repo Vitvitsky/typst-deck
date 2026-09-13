@@ -1,0 +1,95 @@
+"""Перенос сохранённых колод на новые типы слайдов."""
+import json
+from pathlib import Path
+
+from typst_deck.migrate_slides import migrate, upgrade_slide
+from typst_deck.model import Deck
+
+LEGACY = {
+    "id": "d1", "title": "Итоги", "template": "default", "version": 3,
+    "created_at": "2026-09-01T00:00:00Z", "updated_at": "2026-09-01T00:00:00Z",
+    "slides": [
+        {"id": "s000001", "type": "title", "title": "Итоги", "subtitle": "Q3", "notes": "з"},
+        {"id": "s000002", "type": "image", "title": "Рост", "bullets": ["раз", "два"],
+         "image": None, "image_size": "medium", "caption": "подпись"},
+        {"id": "s000003", "type": "image", "title": "Схема", "bullets": [], "image": "a1.png",
+         "image_size": "large", "caption": "подпись"},
+        {"id": "s000004", "type": "bar-chart", "title": "Диаграмма", "unit": "млн",
+         "data": [{"label": "Центр", "value": 42}, {"label": "Север", "value": -17}], "bullets": ["в"]},
+        {"id": "s000005", "type": "chart", "title": "График", "labels": ["Q1", "Q2"],
+         "series": [{"name": "Выручка", "values": [1, 2]}], "unit": "", "bullets": []},
+        {"id": "s000006", "type": "final", "title": "Спасибо", "contact": "team@corp"},
+    ],
+}
+
+
+def write_deck(root: Path, deck_id: str, versions: int = 2) -> Path:
+    d = root / "decks" / deck_id
+    (d / "versions").mkdir(parents=True)
+    raw = json.dumps(LEGACY | {"id": deck_id}, ensure_ascii=False)
+    (d / "deck.json").write_text(raw)
+    for v in range(1, versions + 1):
+        (d / "versions" / f"{v:06d}.json").write_text(raw)
+    return d
+
+
+def test_upgrade_slide_rules():
+    old = {}
+    for s in LEGACY["slides"]:
+        if s["type"] not in old:
+            old[s["type"]] = s
+    text = upgrade_slide(old["image"] | {"image": None})
+    assert text["type"] == "text" and text["bullets"] == ["раз", "два"] and text["id"] == "s000002"
+    assert "caption" not in text and "image" not in text and text["notes"] == ""
+    picture = upgrade_slide(old["image"] | {"image": "a1.png"})
+    assert picture["type"] == "image" and picture["image"] == "a1.png"
+    bar = upgrade_slide(old["bar-chart"])
+    assert bar["type"] == "chart" and bar["kind"] == "bar" and bar["labels"] == ["Центр", "Север"]
+    assert bar["series"] == [{"name": "млн", "values": [42, -17]}] and bar["bullets"] == ["в"]
+    line = upgrade_slide(old["chart"])
+    assert line["type"] == "chart" and line["kind"] == "line" and line["labels"] == ["Q1", "Q2"]
+    assert upgrade_slide(old["title"]) == old["title"], "старые типы не трогаются"
+
+
+def test_bar_chart_without_unit_names_the_series():
+    bar = upgrade_slide({"id": "s1", "type": "bar-chart", "title": "x", "unit": "",
+                         "data": [{"label": "A", "value": 1}], "bullets": []})
+    assert bar["series"][0]["name"] == "Значение"
+
+
+def test_migrate_rewrites_decks_versions_and_trash(tmp_path):
+    write_deck(tmp_path, "d0000000001")
+    trash = tmp_path / "trash" / "d0000000002-20260910T110407"
+    (trash / "versions").mkdir(parents=True)
+    (trash / "deck.json").write_text(json.dumps(LEGACY | {"id": "d0000000002"}, ensure_ascii=False))
+
+    done = migrate(tmp_path)
+    assert dict(done) == {"d0000000001": 3, "d0000000002": 1}
+    deck = Deck.model_validate_json((tmp_path / "decks" / "d0000000001" / "deck.json").read_text())
+    assert [s.type for s in deck.slides] == ["title", "text", "image", "chart", "chart", "final"]
+    assert deck.version == 3, "перенос — не правка, версия не поднимается"
+    assert [s.id for s in deck.slides] == [s["id"] for s in LEGACY["slides"]]
+    snapshot = Deck.model_validate_json(
+        (tmp_path / "decks" / "d0000000001" / "versions" / "000001.json").read_text())
+    assert [s.type for s in snapshot.slides] == [s.type for s in deck.slides]
+    assert Deck.model_validate_json((trash / "deck.json").read_text()).slides[1].type == "text"
+
+
+def test_migrate_is_idempotent_and_check_writes_nothing(tmp_path):
+    d = write_deck(tmp_path, "d0000000001")
+    migrate(tmp_path)
+    stamp = (d / "deck.json").stat().st_mtime_ns
+    assert migrate(tmp_path) == [], "второй проход менять нечего"
+    assert (d / "deck.json").stat().st_mtime_ns == stamp
+
+    write_deck(tmp_path, "d0000000003")
+    before = (tmp_path / "decks" / "d0000000003" / "deck.json").read_text()
+    assert dict(migrate(tmp_path, check=True)) == {"d0000000003": 3}
+    assert (tmp_path / "decks" / "d0000000003" / "deck.json").read_text() == before
+
+
+def test_broken_deck_is_left_alone(tmp_path):
+    d = write_deck(tmp_path, "d0000000001")
+    (d / "versions" / "000002.json").write_text("{не json")
+    assert migrate(tmp_path) == []
+    assert json.loads((d / "deck.json").read_text())["slides"][1]["type"] == "image", "колода целиком не тронута"
