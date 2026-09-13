@@ -251,31 +251,71 @@
   }
 ]
 
+// Высота тела страницы — как в deck(): страница минус поля. Нужна
+// slide-dual-chart, чтобы посчитать высоту графика от места, которое
+// реально остаётся под шапкой, а не подбирать число на глаз для каждой ветки.
+#let body-h = 9cm - 1cm - 0.8cm
+
 // Два графика рядом: та же пара bars/lines, что и в slide-chart, но без
-// общих bullets — у каждой стороны только подпись под графиком. Легенда — по
-// тому же правилу, что и в slide-chart (линии — всегда, столбцы — от двух
-// серий), в уменьшенном виде: колонка вдвое уже, места на полноразмерную
-// легенду нет.
+// общих bullets — у каждой стороны легенда (по тому же правилу, что в
+// slide-chart: линии — всегда, столбцы — от двух серий, только компактнее —
+// колонка вдвое уже) и подпись под графиком.
+//
+// Высоту графика каждая сторона считает сама, а не берёт готовое число:
+// у столбцов после самого графика есть ещё строка подписей категорий,
+// у линий — нет, а между соседними блоками (легенда/график/подпись) Typst
+// сам добавляет отступы, которые на глаз не предсказать. Поэтому вместо
+// констант — измерение: собираем ту же стопку (легенда, если есть, график
+// пробной высоты, подпись, если есть) целиком и меряем её реальную высоту;
+// разница между этим измерением и пробной высотой графика — это «всё
+// остальное» (легенда, отступы, строка категорий), и высота графика — это
+// оставшееся место минус «всё остальное». Раньше числа 2.6cm/3cm были
+// подобраны на глаз и либо обрезали подпись (столбцы с легендой — обе серии
+// на «Центр/Север/Юг»), либо занижали график там, где место было (одна серия
+// без легенды) — правило §7 требует высоту от содержимого, а не с потолка.
 #let slide-dual-chart(title: none, left: (:), right: (:)) = slide[
   #heading-block(title)
-  #body-area(grid(
-    columns: (1fr, 1fr), column-gutter: 0.7cm,
-    ..(left, right).map(side => {
-      let show-legend = side.kind == "line" or side.series.len() > 1
-      let chart-h = if show-legend { 2.6cm } else { 3cm }
-      let legend = if show-legend {
-        side.series.enumerate().map(((i, s)) => box(inset: (right: 6pt))[
-          #box(width: 6pt, height: 6pt, fill: palette.at(calc.rem(i, palette.len())))
-          #h(2pt) #text(size: 6.5pt, s.name)
-        ]).join()
-      }
-      [
-        #if legend != none { legend; v(0.1cm) }
-        #if side.kind == "bar" { bars(side.labels, side.series, side.unit, height: chart-h) } else { lines(side.labels, side.series, height: chart-h) }
-        #if side.caption != none { v(2pt); align(center, text(size: 8pt, fill: muted, side.caption)) }
-      ]
-    }),
-  ))
+  #layout(full-sz => context {
+    // высоту шапки меряем, а не берём с потолка: заголовок — от одной до
+    // двух строк (fit-text), и от этого зависит, сколько места остаётся ниже
+    let budget = body-h - measure(width: full-sz.width, heading-block(title)).height
+    body-area(grid(
+      columns: (1fr, 1fr), column-gutter: 0.7cm,
+      ..(left, right).map(side => layout(sz => context {
+        let show-legend = side.kind == "line" or side.series.len() > 1
+        let legend = if show-legend {
+          side.series.enumerate().map(((i, s)) => box(inset: (right: 6pt))[
+            #box(width: 6pt, height: 6pt, fill: palette.at(calc.rem(i, palette.len())))
+            #h(2pt) #text(size: 6.5pt, s.name)
+          ]).join()
+        }
+        let caption = if side.caption != none { align(center, text(size: 8pt, fill: muted, side.caption)) }
+        let probe-h = 2cm // с любой пробной высотой — линейно, разница даёт «остальное»
+        let probe-chart = if side.kind == "bar" {
+          bars(side.labels, side.series, side.unit, height: probe-h)
+        } else {
+          lines(side.labels, side.series, height: probe-h)
+        }
+        let stack = [
+          #if legend != none { legend; v(0.1cm) }
+          #probe-chart
+          #if caption != none { v(2pt); caption }
+        ]
+        let rest = measure(width: sz.width, stack).height - probe-h
+        // измеренная «стопка» вне страницы выходит короче той же стопки внутри
+        // настоящей колонки грида — на реальном рендере разница стабильно
+        // около 13.2pt (замерено на обеих сторонах отдельно); запас берёт это
+        // с небольшим избытком, а не тютелька в тютельку, как было в round 2
+        let safety = 24pt
+        let chart-h = budget - rest - safety
+        [
+          #if legend != none { legend; v(0.1cm) }
+          #if side.kind == "bar" { bars(side.labels, side.series, side.unit, height: chart-h) } else { lines(side.labels, side.series, height: chart-h) }
+          #if caption != none { v(2pt); caption }
+        ]
+      })),
+    ))
+  })
 ]
 
 #let slide-metrics(title: none, items: ()) = slide[
