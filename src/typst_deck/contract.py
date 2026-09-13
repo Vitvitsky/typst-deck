@@ -30,7 +30,12 @@ from .slots import clamp
 # шаблонов в интерфейсе, поэтому картинки и ролик кладутся рядом (write_sample_assets).
 PNG_1PX = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
-SAMPLE_ASSETS = {"sample-1.png": PNG_1PX, "sample-2.png": PNG_1PX, "sample.mp4": b"\x00\x00\x00\x18ftypmp42"}
+SAMPLE_ASSETS = {"sample-1.png": PNG_1PX, "sample-2.png": PNG_1PX, "sample-3.png": PNG_1PX,
+                 "sample.mp4": b"\x00\x00\x00\x18ftypmp42"}
+# только картинки образца, без ролика: gallery.images подставляет их по кругу,
+# а взять sample.mp4 в качестве картинки нельзя (инцидент — при count 3 и выше
+# list(SAMPLE_ASSETS) утыкался в ролик, идущий в словаре последним)
+SAMPLE_IMAGES = tuple(name for name in SAMPLE_ASSETS if name != "sample.mp4")
 
 SAMPLE_DECK = Deck(id="templatepreview", title="Образец шаблона", slides=[
     {"id": "s000001", "type": "title", "title": "Название презентации", "subtitle": "Подзаголовок и дата",
@@ -79,7 +84,7 @@ def write_sample_assets(deck_dir: Path) -> None:
         (assets / name).write_bytes(data)
 
 
-STRING_LISTS = ("bullets", "labels")
+STRING_LISTS = ("bullets", "labels", "items")
 FONT_WARNING = re.compile(r"unknown font family: ([^\n]+)")
 OVERSIZED = "Очень длинный текст, который заведомо не помещается в отведённое место " * 6
 FILL = "Итоги квартала по направлению данных и аналитики "
@@ -167,9 +172,11 @@ def filled_slide(stype: str, limits: dict[str, dict[str, int]], sample: str = FI
     if stype == "gallery":
         n = limits.get("images", {}).get("count", 2)
         slide["images"] = [{"image": name, "caption": _text(sample, 80)}
-                           for name in list(SAMPLE_ASSETS)[:n]]
+                           for name in list(SAMPLE_IMAGES)[:n]]
     if stype == "image":
         slide.setdefault("image", "sample-1.png")
+    if stype == "text":
+        slide.setdefault("bullets", [_text(sample, 80)] * limits.get("bullets", {}).get("count", 3))
     if stype == "video":
         slide.setdefault("video", "sample.mp4")
         slide.setdefault("poster", "sample-1.png")

@@ -163,6 +163,19 @@ def test_filled_slide_respects_limits():
     Deck(slides=[s, c, t, filled_slide("final", {})])
 
 
+def test_filled_slide_is_valid_for_every_type_at_its_declared_limits():
+    """Правило 5 собирает Deck() из filled_slide на каждом объявленном типе — она обязана
+    быть валидной колодой и без объявления (короткие значения по умолчанию), и с ним.
+
+    Ловит два бага: agenda.items без выделенной ветки превращался в строку (STRING_LISTS
+    не знал про items), а gallery.images.count >= 3 выбирал sample.mp4 картинкой (список
+    ассетов образца шёл по порядку вставки, ролик — последним)."""
+    from typst_deck.model import SLIDE_TYPES
+
+    declared = {"agenda": {"items": {"count": 7, "max": 60}}, "gallery": {"images": {"count": 3}}}
+    Deck(slides=[filled_slide(t, declared.get(t, {})) for t in SLIDE_TYPES])
+
+
 @requires_typst
 def test_good_pptx_mapping_passes_the_full_contract(tmp_path):
     rep = check_template(make_pptx_template(tmp_path), "typst", tmp_path / "w")

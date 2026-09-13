@@ -55,6 +55,21 @@
 // и клип по ширине. Высоту не задаём: box(height: 1fr) в Typst недопустим.
 #let body-area(content) = block(width: 100%, clip: true, content)
 
+// Высота тела страницы — как в deck(): страница минус поля. Слайдам, чьё
+// содержимое может не поместиться при пределах модели (agenda — до 7 пунктов,
+// comparison — до 5 тезисов в колонке, metrics — до 4 колонок, dual-chart —
+// оба графика), эта константа даёт бюджет высоты для measure(), а не число
+// на глаз: без него body-area молча обрезает всё, что не влезло (см. clip:
+// true выше) — так однажды уже пропадала третья строка повестки.
+#let body-h = 9cm - 1cm - 0.8cm
+
+// Запас между бюджетом и measure(): content, измеренный сам по себе, внутри
+// настоящей колонки/грида выходит на несколько пунктов выше, чем показал
+// measure() — тот же зазор, что slide-dual-chart уже приходилось учитывать
+// отдельно (см. его safety ниже, тоже 24pt, замерено там независимо). Без
+// запаса «влезает по measure()» иногда на деле обрезало последнюю строку.
+#let fit-safety = 24pt
+
 #let slide-title(title: none, subtitle: none, author: none, department: none) = slide(
   background: place(top, rect(width: 100%, height: 1.1cm, fill: accent)),
 )[
@@ -77,9 +92,28 @@
   #v(1fr)
 ]
 
+// Кегль и интерлиньяж списка, при которых до семи пунктов (предел модели)
+// укладываются в реально оставшуюся высоту тела — тем же приёмом, что и у
+// slide-dual-chart: измеряем кандидатов от крупного к мелкому и берём первый,
+// который не превышает бюджет; последний (самый убористый) — если не влез и он.
 #let slide-agenda(title: none, items: ()) = slide[
   #heading-block(title)
-  #body-area(enum(spacing: 0.45em, ..items))
+  #layout(full-sz => context {
+    let budget = body-h - measure(width: full-sz.width, heading-block(title)).height
+    let steps = ((11pt, 0.45em), (10pt, 0.38em), (9pt, 0.3em), (8pt, 0.22em))
+    let render(step) = {
+      let (size, spacing) = step
+      text(size: size, enum(spacing: spacing, ..items))
+    }
+    let pick = steps.last()
+    for step in steps {
+      if measure(width: full-sz.width, render(step)).height + fit-safety <= budget {
+        pick = step
+        break
+      }
+    }
+    body-area(render(pick))
+  })
 ]
 
 #let slide-text(title: none, bullets: none) = slide[
@@ -112,16 +146,38 @@
   ))
 ]
 
+// Обе колонки на одном кегле, иначе разные объёмы тезисов дали бы разные
+// размеры шрифта слева и справа — измеряем по более длинной стороне.
 #let slide-comparison(title: none, left: (:), right: (:)) = slide[
   #heading-block(title)
-  #body-area(grid(
-    columns: (1fr, 1fr), column-gutter: 0.7cm,
-    ..(left, right).map(side => [
-      #if side.heading != none { text(weight: "bold", fill: accent, side.heading); v(0.2cm) }
-      // bullets приходит массивом маркеров (не готовым list()) — оборачиваем сами
-      #if side.bullets != none { text(size: 9.5pt, list(..side.bullets)) }
-    ]),
-  ))
+  #layout(full-sz => context {
+    let budget = body-h - measure(width: full-sz.width, heading-block(title)).height
+    let gap = 0.7cm
+    let w = (full-sz.width - gap) / 2
+    let side-block(side, step) = {
+      let (size, spacing) = step
+      [
+        #if side.heading != none { text(weight: "bold", fill: accent, side.heading); v(0.2cm) }
+        // bullets приходит массивом маркеров (не готовым list()) — оборачиваем сами
+        #if side.bullets != none { text(size: size, list(spacing: spacing, ..side.bullets)) }
+      ]
+    }
+    let steps = ((9.5pt, 0.35em), (8.5pt, 0.28em), (7.5pt, 0.22em), (6.5pt, 0.16em))
+    let pick = steps.last()
+    for step in steps {
+      if calc.max(
+        measure(width: w, side-block(left, step)).height,
+        measure(width: w, side-block(right, step)).height,
+      ) + fit-safety <= budget {
+        pick = step
+        break
+      }
+    }
+    body-area(grid(
+      columns: (1fr, 1fr), column-gutter: gap,
+      side-block(left, pick), side-block(right, pick),
+    ))
+  })
 ]
 
 #let slide-quote(text: none, author: none) = slide[
@@ -251,11 +307,6 @@
   }
 ]
 
-// Высота тела страницы — как в deck(): страница минус поля. Нужна
-// slide-dual-chart, чтобы посчитать высоту графика от места, которое
-// реально остаётся под шапкой, а не подбирать число на глаз для каждой ветки.
-#let body-h = 9cm - 1cm - 0.8cm
-
 // Два графика рядом: та же пара bars/lines, что и в slide-chart, но без
 // общих bullets — у каждой стороны легенда (по тому же правилу, что в
 // slide-chart: линии — всегда, столбцы — от двух серий, только компактнее —
@@ -318,19 +369,45 @@
   })
 ]
 
+// Колонки прижаты к верху (не к середине — «horizon» давал лесенку сам по
+// себе), а значение, подпись и дельта — три строки грида, а не переводы
+// строки внутри одной ячейки: перевод строки делает высоту ячейки зависимой
+// от того, перенеслись ли именно её значение или подпись на вторую строку,
+// и колонки с разным числом строк съезжают друг относительно друга. Строкой
+// грид выравнивает все ячейки одной строки по высоте самой высокой — подписи
+// и дельты остаются на одной высоте, сколько бы строк ни занял самый длинный
+// value по соседству. Кегль — тем же измерением, что у agenda/comparison: до
+// четырёх колонок (предел модели) должны уложиться в бюджет тела, не срезая
+// нижнюю дельту.
 #let slide-metrics(title: none, items: ()) = slide[
   #heading-block(title)
-  #body-area(grid(
-    columns: items.map(_ => 1fr), column-gutter: 0.5cm, align: center + horizon,
-    ..items.map(m => [
-      #text(size: 28pt, weight: "bold", m.value)
-      #if m.label != none { linebreak(); text(size: 9pt, fill: muted, m.label) }
-      #if m.delta != none {
-        linebreak()
-        text(size: 9pt, fill: if m.trend == "down" { negative } else if m.trend == "up" { accent } else { muted }, m.delta)
+  #layout(full-sz => context {
+    let budget = body-h - measure(width: full-sz.width, heading-block(title)).height
+    let gap = 0.5cm
+    let cols = items.map(_ => 1fr)
+    let value-cell(m, vs) = text(size: vs, weight: "bold", m.value)
+    let label-cell(m, ls) = if m.label != none { text(size: ls, fill: muted, m.label) } else { [] }
+    let delta-cell(m, ds) = if m.delta != none {
+      text(size: ds, fill: if m.trend == "down" { negative } else if m.trend == "up" { accent } else { muted }, m.delta)
+    } else { [] }
+    let rows(step) = {
+      let (vs, ls, ds) = step
+      items.map(m => value-cell(m, vs)) + items.map(m => label-cell(m, ls)) + items.map(m => delta-cell(m, ds))
+    }
+    let build(step) = grid(
+      columns: cols, column-gutter: gap, row-gutter: 4pt, align: center + top,
+      ..rows(step),
+    )
+    let steps = ((28pt, 9pt, 9pt), (22pt, 8pt, 8pt), (18pt, 7pt, 7pt), (14pt, 6.5pt, 6.5pt))
+    let pick = steps.last()
+    for step in steps {
+      if measure(width: full-sz.width, build(step)).height + fit-safety <= budget {
+        pick = step
+        break
       }
-    ]),
-  ))
+    }
+    body-area(build(pick))
+  })
 ]
 
 #let slide-table(title: none, header: (), rows: (), numeric: ()) = slide[
