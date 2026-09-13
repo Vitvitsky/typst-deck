@@ -14,13 +14,9 @@ from pathlib import Path
 
 from .logs import log_event
 from .model import (
-    BarChartSlide,
-    ChartSlide,
-    Deck,
-    FinalSlide,
-    ImageSlide,
-    SectionSlide,
-    TitleSlide,
+    AgendaSlide, ChartSlide, ColumnsSlide, ComparisonSlide, Deck, DualChartSlide, FinalSlide,
+    GallerySlide, ImageSlide, MetricsSlide, QuoteSlide, SectionSlide, TableSlide, TextSlide,
+    TitleSlide, VideoSlide,
 )
 
 HEADER = '#import "/template/deck.typ": *\n#import "/fields.typ": field\n'
@@ -109,18 +105,53 @@ def _text(slide_id: str, name: str, value: str) -> str:
     return f"field({typ_str(slide_id)}, {typ_str(name)}, {typ_str(value)})"
 
 
-def _bullets(slide_id: str, items: list[str]) -> str:
+def _bullets(slide_id: str, items: list[str], name: str = "bullets") -> str:
     if not items:
         return "none"
-    return f'field({typ_str(slide_id)}, "bullets", list({", ".join(typ_str(i) for i in items)}))'
+    return f'field({typ_str(slide_id)}, {typ_str(name)}, list({", ".join(typ_str(i) for i in items)}))'
 
 
 def _opt(value: str) -> str:
     return typ_str(value) if value else "none"
 
 
-def render_typ(deck: Deck, assets: set[str]) -> tuple[str, list[str]]:
-    """Возвращает текст deck.typ и предупреждения (например, о пропавших картинках)."""
+NUMBER = re.compile(r"^[-+−]?[\d\s ]+([.,]\d+)?\s*[%‰]?\s*\S{0,12}$")
+
+
+def _dict(pairs: dict[str, str]) -> str:
+    """Словарь Typst из готовых выражений: (k: expr, …)."""
+    return "(" + ", ".join(f"{k}: {v}" for k, v in pairs.items()) + ")"
+
+
+def _seq(items: list[str]) -> str:
+    return "(" + ", ".join(items) + ",)" if items else "()"
+
+
+def _mark(slide_id: str, name: str, value: str) -> str:
+    """Текст составного поля: маркер с именем поля верхнего уровня (спека §6)."""
+    return _text(slide_id, name, value)
+
+
+def _numeric(header: list[str], rows: list[list[str]]) -> list[bool]:
+    """Колонки, где каждая ячейка читается как число: шаблон выравнивает их вправо."""
+    return [all(NUMBER.match(row[i] or "") for row in rows) if rows else False
+            for i in range(len(header))]
+
+
+def _trend(delta: str) -> str:
+    d = delta.strip()
+    if d.startswith("+"):
+        return typ_str("up")
+    if d.startswith(("-", "−")):
+        return typ_str("down")
+    return "none"
+
+
+def render_typ(deck: Deck, assets: set[str], base_url: str = "") -> tuple[str, list[str]]:
+    """Возвращает текст deck.typ и предупреждения (например, о пропавших картинках).
+
+    base_url нужен слайду video: загруженный файл превращается в ссылку на него.
+    """
     out = [HEADER, f"#show: deck.with(title: {typ_str(deck.title)})\n"]
     warnings: list[str] = []
     for n, s in enumerate(deck.slides, 1):
@@ -132,11 +163,17 @@ def render_typ(deck: Deck, assets: set[str]) -> tuple[str, list[str]]:
                 f"author: {_text(sid, 'author', s.author)}, "
                 f"department: {_text(sid, 'department', s.department)})\n"
             )
+        elif isinstance(s, AgendaSlide):
+            items = _seq([_mark(sid, "items", i) for i in s.items])
+            out.append(f"#slide-agenda(title: {_text(sid, 'title', s.title)}, items: {items})\n")
         elif isinstance(s, SectionSlide):
             out.append(
                 f"#slide-section(title: {_text(sid, 'title', s.title)}, "
                 f"subtitle: {_text(sid, 'subtitle', s.subtitle)})\n"
             )
+        elif isinstance(s, TextSlide):
+            out.append(f"#slide-text(title: {_text(sid, 'title', s.title)}, "
+                       f"bullets: {_bullets(sid, s.bullets)})\n")
         elif isinstance(s, ImageSlide):
             img = "none"
             if s.image:
@@ -149,19 +186,75 @@ def render_typ(deck: Deck, assets: set[str]) -> tuple[str, list[str]]:
                 f"bullets: {_bullets(sid, s.bullets)}, image: {img}, "
                 f"image-size: {typ_str(s.image_size)}, caption: {_text(sid, 'caption', s.caption)})\n"
             )
-        elif isinstance(s, BarChartSlide):
-            data = typ_value([i.model_dump() for i in s.data])
-            out.append(
-                f"#slide-bar-chart(title: {_text(sid, 'title', s.title)}, data: {data}, "
-                f"unit: {_opt(s.unit)}, bullets: {_bullets(sid, s.bullets)})\n"
-            )
+        elif isinstance(s, ColumnsSlide):
+            blocks = _seq([_dict({"heading": _mark(sid, "blocks", b.heading),
+                                  "text": _mark(sid, "blocks", b.text)}) for b in s.blocks])
+            out.append(f"#slide-columns(title: {_text(sid, 'title', s.title)}, blocks: {blocks})\n")
+        elif isinstance(s, ComparisonSlide):
+            def side(name: str, v):
+                bullets_items = _seq([_mark(sid, name, b) for b in v.bullets]) if v.bullets else "none"
+                return _dict({"heading": _mark(sid, name, v.heading),
+                              "bullets": bullets_items})
+            out.append(f"#slide-comparison(title: {_text(sid, 'title', s.title)}, "
+                       f"left: {side('left', s.left)}, right: {side('right', s.right)})\n")
+        elif isinstance(s, QuoteSlide):
+            out.append(f"#slide-quote(text: {_text(sid, 'text', s.text)}, "
+                       f"author: {_text(sid, 'author', s.author)})\n")
         elif isinstance(s, ChartSlide):
             out.append(
-                f"#slide-chart(title: {_text(sid, 'title', s.title)}, "
+                f"#slide-chart(title: {_text(sid, 'title', s.title)}, kind: {typ_str(s.kind)}, "
                 f"labels: {typ_value(s.labels)}, "
                 f"series: {typ_value([x.model_dump() for x in s.series])}, "
                 f"unit: {_opt(s.unit)}, bullets: {_bullets(sid, s.bullets)})\n"
             )
+        elif isinstance(s, DualChartSlide):
+            def chart(name: str, v):
+                return _dict({"caption": _mark(sid, name, v.caption), "kind": typ_str(v.kind),
+                              "labels": typ_value(v.labels),
+                              "series": typ_value([x.model_dump() for x in v.series]),
+                              "unit": _opt(v.unit)})
+            out.append(f"#slide-dual-chart(title: {_text(sid, 'title', s.title)}, "
+                       f"left: {chart('left', s.left)}, right: {chart('right', s.right)})\n")
+        elif isinstance(s, MetricsSlide):
+            items = _seq([_dict({"value": _mark(sid, "items", m.value),
+                                 "label": _mark(sid, "items", m.label),
+                                 "delta": _mark(sid, "items", m.delta),
+                                 "trend": _trend(m.delta)}) for m in s.items])
+            out.append(f"#slide-metrics(title: {_text(sid, 'title', s.title)}, items: {items})\n")
+        elif isinstance(s, TableSlide):
+            header = _seq([_mark(sid, "header", h) for h in s.header])
+            rows = _seq([_seq([_mark(sid, "rows", c) for c in row]) for row in s.rows])
+            out.append(f"#slide-table(title: {_text(sid, 'title', s.title)}, header: {header}, "
+                       f"rows: {rows}, numeric: {typ_value(_numeric(s.header, s.rows))})\n")
+        elif isinstance(s, GallerySlide):
+            pics = []
+            for pic in s.images:
+                if pic.image not in assets:
+                    warnings.append(f"слайд {n}: картинка {pic.image} не найдена")
+                    continue
+                pics.append(_dict({
+                    "image": f'field({typ_str(sid)}, "images", image({typ_str("/assets/" + pic.image)}, '
+                             'width: 100%, height: 100%, fit: "contain"))',
+                    "caption": _mark(sid, "images", pic.caption)}))
+            out.append(f"#slide-gallery(title: {_text(sid, 'title', s.title)}, images: {_seq(pics)})\n")
+        elif isinstance(s, VideoSlide):
+            url = s.url
+            if s.video:
+                # без base_url ссылку собрать не из чего (например, проверка контракта):
+                # слайд рисуется обложкой без ссылки, и это не повод предупреждать
+                if s.video not in assets:
+                    warnings.append(f"слайд {n}: видео {s.video} не найдено")
+                url = (f"{base_url.rstrip('/')}/api/decks/{deck.id}/assets/{s.video}"
+                       if s.video in assets and base_url else "")
+            poster = "none"
+            if s.poster:
+                if s.poster in assets:
+                    poster = (f'field({typ_str(sid)}, "poster", image({typ_str("/assets/" + s.poster)}, '
+                              'width: 100%, height: 100%, fit: "contain"))')
+                else:
+                    warnings.append(f"слайд {n}: обложка {s.poster} не найдена")
+            out.append(f"#slide-video(title: {_text(sid, 'title', s.title)}, poster: {poster}, "
+                       f"url: {_opt(url)}, caption: {_text(sid, 'caption', s.caption)})\n")
         elif isinstance(s, FinalSlide):
             out.append(
                 f"#slide-final(title: {_text(sid, 'title', s.title)}, "
@@ -208,7 +301,7 @@ def _run(cmd: list[str], timeout: int) -> tuple[subprocess.CompletedProcess, int
 
 def compile_deck(
     deck: Deck, deck_dir: Path, template_dir: Path, typst_bin: str = "typst", timeout: int = 60,
-    fonts_dir: Path | None = None, system_fonts: bool = True,
+    fonts_dir: Path | None = None, system_fonts: bool = True, base_url: str = "",
 ) -> CompileResult:
     """Собирает build/: deck.typ, slide-N.svg, positions.json, warnings.json, pages.json.
 
@@ -220,7 +313,7 @@ def compile_deck(
     assets_dir = deck_dir / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
     assets = {p.name for p in assets_dir.iterdir() if p.is_file()}
-    typ, warnings = render_typ(deck, assets)
+    typ, warnings = render_typ(deck, assets, base_url)
 
     tmp = deck_dir / "build.tmp"
     shutil.rmtree(tmp, ignore_errors=True)

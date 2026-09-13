@@ -10,17 +10,79 @@ from typst_deck.render import CompileError, inside_template, render_typ, rasteri
 GOLDEN = Path(__file__).parent / "golden" / "full.typ"
 
 
+def rich_deck():
+    from typst_deck.model import Deck
+
+    return Deck(id="d1", title="Т", slides=[
+        {"id": "s1", "type": "agenda", "items": ["Раз", "Два", "Три"]},
+        {"id": "s2", "type": "columns", "title": "Блоки",
+         "blocks": [{"heading": "Первый", "text": "текст"}, {"text": "второй"}]},
+        {"id": "s3", "type": "comparison", "title": "Было и стало",
+         "left": {"heading": "Было", "bullets": ["раз"]}, "right": {"heading": "Стало", "bullets": ["два"]}},
+        {"id": "s4", "type": "quote", "text": "Мысль", "author": "Автор"},
+        {"id": "s5", "type": "metrics", "title": "Числа",
+         "items": [{"value": "12,5 млн", "label": "выручка", "delta": "+12 %"},
+                   {"value": "3", "label": "провалы", "delta": "-2 п. п."},
+                   {"value": "7", "label": "ровно"}]},
+        {"id": "s6", "type": "table", "title": "Таблица",
+         "header": ["Регион", "Выручка"], "rows": [["Центр", "42"], ["Север", "17,5 %"]]},
+        {"id": "s7", "type": "gallery", "title": "Галерея",
+         "images": [{"image": "a1.png", "caption": "раз"}, {"image": "a2.png"}]},
+        {"id": "s8", "type": "video", "title": "Ролик", "video": "a3.mp4", "poster": "a1.png"},
+        {"id": "s9", "type": "video", "title": "Ссылка", "url": "https://v/1"},
+    ])
+
+
+def test_new_types_are_rendered_once_each():
+    typ, _ = render_typ(rich_deck(), assets={"a1.png", "a2.png", "a3.mp4"})
+    for name in ("agenda", "columns", "comparison", "quote", "metrics", "table", "gallery", "video"):
+        assert f"\n#slide-{name}(" in typ
+    assert typ.count("\n#slide-") == 9
+
+
+def test_composite_fields_are_marked_by_top_level_name():
+    typ, _ = render_typ(rich_deck(), assets={"a1.png", "a2.png", "a3.mp4"})
+    assert 'field("s2", "blocks", "Первый")' in typ and 'field("s2", "blocks", "текст")' in typ
+    assert 'field("s3", "left", "Было")' in typ and 'field("s3", "right", "два")' in typ
+    assert 'field("s5", "items", "12,5 млн")' in typ
+    assert 'field("s6", "header", "Регион")' in typ and 'field("s6", "rows", "42")' in typ
+    assert 'field("s4", "text", "Мысль")' in typ and 'field("s4", "author", "Автор")' in typ
+
+
+def test_product_computes_trend_and_numeric():
+    typ, _ = render_typ(rich_deck(), assets={"a1.png", "a2.png", "a3.mp4"})
+    assert 'trend: "up"' in typ and 'trend: "down"' in typ and "trend: none" in typ
+    assert "numeric: (false, true,)" in typ, "числовая колонка выравнивается вправо"
+
+
+def test_video_link_and_poster():
+    typ, warnings = render_typ(rich_deck(), assets={"a1.png", "a2.png", "a3.mp4"}, base_url="http://t")
+    assert 'url: "http://t/api/decks/d1/assets/a3.mp4"' in typ  # файл превращается в ссылку
+    assert 'url: "https://v/1"' in typ
+    assert 'field("s8", "poster", image("/assets/a1.png"' in typ
+    assert warnings == []
+    typ, warnings = render_typ(rich_deck(), assets={"a1.png", "a2.png", "a3.mp4"})
+    assert "url: none" in typ, "без base_url ссылку собрать не из чего"
+    assert warnings == [], "файл на месте — предупреждать не о чем"
+    typ, warnings = render_typ(rich_deck(), assets={"a1.png", "a2.png"}, base_url="http://t")
+    assert "url: none" in typ and any("a3.mp4" in w for w in warnings)
+
+
+def test_gallery_skips_missing_pictures_with_a_warning():
+    typ, warnings = render_typ(rich_deck(), assets={"a1.png", "a3.mp4"})
+    assert typ.count('field("s7", "images"') >= 1
+    assert any("a2.png" in w for w in warnings)
+
+
 def full_deck():
     return Deck(id="deck00000001", title="Полная", slides=[
         {"id": "s000001", "type": "title", "title": "Итоги", "subtitle": "Q3 2026"},
         {"id": "s000002", "type": "section", "title": "Финансы"},
         {"id": "s000003", "type": "image", "title": "Рост", "bullets": ["Первый", "Второй"],
          "image": "a000001.png", "image_size": "large", "caption": "Рис. 1"},
-        {"id": "s000004", "type": "bar-chart", "title": "Регионы", "unit": "млн",
-         "data": [{"label": "Центр", "value": 42}, {"label": "Север", "value": 17.5}]},
-        {"id": "s000005", "type": "chart", "title": "Динамика", "labels": ["Q1", "Q2"],
+        {"id": "s000004", "type": "chart", "title": "Динамика", "kind": "line", "labels": ["Q1", "Q2"],
          "series": [{"name": "Выручка", "values": [1, 2]}], "bullets": ["Рост"]},
-        {"id": "s000006", "type": "final", "contact": "team@corp"},
+        {"id": "s000005", "type": "final", "contact": "team@corp"},
     ])
 
 
@@ -59,7 +121,7 @@ def test_empty_fields_are_none():
 
 def test_one_call_per_slide():
     typ, _ = render_typ(full_deck(), assets={"a000001.png"})
-    assert typ.count("\n#slide-") == 6
+    assert typ.count("\n#slide-") == 5
 
 
 def test_page_size_reads_viewbox(tmp_path):
