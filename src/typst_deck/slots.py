@@ -101,6 +101,30 @@ def _resolve(props: dict, defs: dict, path: str) -> dict | None:
     return target.get("properties", {}).get(tail)
 
 
+def _resolve_mut(props: dict, defs: dict, path: str) -> dict | None:
+    """Как _resolve, но при спуске в $ref разворачивает его на месте собственной
+    копией определения, а не общим объектом из defs.
+
+    apply_to_schema мутирует ровно то, что возвращает эта функция. Без копии
+    сужение одной стороны, которая делит $ref с другой (comparison.left/right —
+    оба «#/$defs/Side», dual-chart.left/right — оба «#/$defs/ChartSide»),
+    просачивалось бы через общий $defs и в схему соседа, которого шаблон не
+    сужал: модель увидела бы в промпте предел, которого check_slide не проверяет
+    (нарушение инварианта из докстринга apply_to_schema).
+    """
+    head, _, tail = path.partition(".")
+    prop = props.get(head)
+    if prop is None or not tail:
+        return prop
+    container = prop["items"] if prop.get("type") == "array" else prop
+    ref = container.get("$ref")
+    if ref:
+        target = copy.deepcopy(defs.get(ref.rsplit("/", 1)[1], {}))
+        container.pop("$ref", None)
+        container.update(target)
+    return container.get("properties", {}).get(tail)
+
+
 def clamp(raw: object, where: str = "") -> dict:
     """Объявление slots, очищенное от неизвестного и зажатое глобальным потолком.
 
@@ -164,7 +188,7 @@ def apply_to_schema(declared: dict) -> dict:
     for stype, fields in declared.items():
         props = defs.get(stype, {}).get("properties", {})
         for field, limits in fields.items():
-            prop = _resolve(props, schema["$defs"], field)
+            prop = _resolve_mut(props, schema["$defs"], field)
             if prop is None:
                 continue
             if "max" in limits:

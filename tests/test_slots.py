@@ -341,6 +341,66 @@ def test_check_slide_sees_nested_fields():
     assert bad and "Блоки текста" in bad[0]
 
 
+def test_narrowing_one_side_does_not_leak_into_the_shared_ref_sibling():
+    """comparison.left и .right делят один и тот же $ref («#/$defs/Side»): узкий
+    предел слева не должен просочиться ни в схему справа, ни в общий $defs, ни
+    в проверку (check_slide не объявлял предел для right — и не должен его там
+    находить)."""
+    from typst_deck.model import SlideAdapter
+
+    declared = clamp({"comparison": {"left.bullets": {"max": 30, "count": 2}}}, "t")
+    schema = apply_to_schema(declared)
+    left = _props(schema, "comparison")["left"]
+    right = _props(schema, "comparison")["right"]
+    assert left["properties"]["bullets"]["items"]["maxLength"] == 30
+    assert left["properties"]["bullets"]["maxItems"] == 2
+    # right не сужался — его $ref остаётся нетронутым, а общий $defs.Side держит предел модели
+    assert right == {"$ref": "#/$defs/Side"}
+    assert schema["$defs"]["Side"]["properties"]["bullets"]["items"]["maxLength"] == 120
+    assert schema["$defs"]["Side"]["properties"]["bullets"]["maxItems"] == 5
+
+    slide = SlideAdapter.validate_python({"type": "comparison", "title": "x",
+        "left": {"bullets": ["а" * 40]}, "right": {"bullets": ["б" * 40]}})
+    msgs = check_slide(slide, declared, n=1, template_name="Т")
+    assert any("Левая колонка" in m for m in msgs)
+    assert not any("Правая колонка" in m for m in msgs)
+
+
+def test_narrowing_dual_chart_side_does_not_leak_into_the_other_side():
+    """dual-chart.left и .right делят один и тот же $ref («#/$defs/ChartSide»),
+    тот же риск, что и у comparison."""
+    from typst_deck.model import SlideAdapter
+
+    declared = clamp({"dual-chart": {"left.series": {"count": 1}}}, "t")
+    schema = apply_to_schema(declared)
+    left = _props(schema, "dual-chart")["left"]
+    right = _props(schema, "dual-chart")["right"]
+    assert left["properties"]["series"]["maxItems"] == 1
+    assert right == {"$ref": "#/$defs/ChartSide"}
+    assert schema["$defs"]["ChartSide"]["properties"]["series"]["maxItems"] == 3
+
+    slide = SlideAdapter.validate_python({"type": "dual-chart", "title": "x",
+        "left": {"labels": ["а", "б"],
+                 "series": [{"name": "р", "values": [1, 2]}, {"name": "с", "values": [3, 4]}]},
+        "right": {"labels": ["а", "б"],
+                  "series": [{"name": "т", "values": [5, 6]}, {"name": "у", "values": [7, 8]}]}})
+    msgs = check_slide(slide, declared, n=1, template_name="Т")
+    assert any("Левая колонка" in m for m in msgs)
+    assert not any("Правая колонка" in m for m in msgs)
+
+
+def test_table_rows_cell_path_is_rejected():
+    """table.rows — список списков строк без $ref: у ячейки нет подполя «cell»."""
+    assert clamp({"table": {"rows.cell": {"max": 10}}}, "t") == {}
+
+
+def test_double_dotted_path_is_rejected():
+    """Путь режется только на первой точке: «поле.подполе.ещё» ищет свойство
+    с буквальным именем «подполе.ещё», которого не бывает, — не выдумывает
+    рекурсивный спуск на второй уровень."""
+    assert clamp({"columns": {"blocks.text.extra": {"max": 10}}}, "t") == {}
+
+
 def test_field_names_match_the_interface():
     """Имена полей в сообщениях — те же, что в интерфейсе (static/api.js): иначе
     человек видит в плашке «image», а в панели свойств — «Картинка»."""
