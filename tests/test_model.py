@@ -112,8 +112,9 @@ def test_chart_bullets_are_capped_at_the_measured_length():
 
 
 def test_table_cell_is_capped_at_the_measured_length():
-    """Восемь строк по шесть ячеек: обрыв на 43 знаках, предел стоит на ~12 %
-    ниже него. Запас меряется во входных данных, а не в ступенях кегля."""
+    """Восемь строк по шесть ячеек: 43 знака ещё влезают (−4.05 пт), обрыв на 44
+    (+15.52), предел стоит на ~14 % ниже обрыва. Запас меряется во входных
+    данных, а не в ступенях кегля."""
     base = {"type": "table", "title": "Т", "header": ["а", "б"]}
     SlideAdapter.validate_python(base | {"rows": [["Э" * 38, "б"]]})
     with pytest.raises(ValidationError):

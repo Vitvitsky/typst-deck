@@ -588,6 +588,117 @@ OUT_OF_SCOPE_OVERFLOW: set[str] = set()
 BOTTOM_TOL = 0.5
 
 
+def _min_n(stype: str, *path: str) -> int:
+    """Сколько элементов список требует как минимум (minItems, иначе 1)."""
+    return _prop(stype, *path).get("minItems") or 1
+
+
+def _dual_side(nlab: int, nser: int, kind: str) -> dict:
+    return {"caption": _chars(_len("dual-chart", "left", "caption")), "kind": kind,
+            "labels": [_chars(_len("dual-chart", "left", "labels"))] * nlab,
+            "unit": _chars(_len("dual-chart", "left", "unit")),
+            "series": [{"name": _chars(16), "values": list(range(nlab))} for _ in range(nser)]}
+
+
+def cornered_slides() -> list[dict]:
+    """Другой конец каждого диапазона количеств — и сетка там, где она дешёвая.
+
+    `maxed_slides()` строит только потолки, и поэтому целый угол был невидим:
+    `dual-chart` с РОВНО ОДНОЙ подписью при двух рядах и длинном заголовке уходил
+    под обрез на +3.30, тогда как при двух подписях запас был −20.51. Ёмкость
+    немонотонна по количествам так же, как волна 3 нашла её немонотонной по
+    длинам, — значит, проверять надо оба конца, а не один.
+
+    Заголовок берётся по потолку: он входит в спусковой крючок (при 60 знаках
+    угол не воспроизводится). Линейному графику модель требует две точки,
+    поэтому при одной подписи обе стороны столбчатые.
+    """
+    out: list[dict] = []
+    t = _chars(_len("dual-chart", "title"))
+
+    # полная сетка стороны dual-chart: подписи × ряды
+    for nlab in range(1, _n("dual-chart", "left", "labels") + 1):
+        for nser in range(1, _n("dual-chart", "left", "series") + 1):
+            kind = "bar" if nlab < 2 else "line"
+            out.append({"id": f"dual-{nlab}x{nser}", "type": "dual-chart", "title": t,
+                        "left": _dual_side(nlab, nser, kind),
+                        "right": _dual_side(nlab, nser, "bar")})
+
+    # chart: оба конца по подписям и рядам
+    for nlab in (1, 2, _n("chart", "labels")):
+        for nser in (1, _n("chart", "series")):
+            out.append({"id": f"chart-{nlab}x{nser}", "type": "chart",
+                        "title": _chars(_len("chart", "title")), "kind": "bar",
+                        "labels": [_chars(_len("chart", "labels"))] * nlab,
+                        "unit": _chars(_len("chart", "unit")),
+                        "series": [{"name": _chars(16), "values": list(range(nlab))}
+                                   for _ in range(nser)],
+                        "bullets": [_chars(_len("chart", "bullets"))] * _n("chart", "bullets")})
+
+    # минимум количеств у остальных типов со списками (длины — по потолку)
+    out += [
+        {"id": "min-agenda", "type": "agenda", "title": t,
+         "items": [_chars(_len("agenda", "items"))] * _min_n("agenda", "items")},
+        {"id": "min-text", "type": "text", "title": t,
+         "bullets": [_chars(_len("text", "bullets"))] * _min_n("text", "bullets")},
+        {"id": "min-image", "type": "image", "title": t, "image": "p1.png",
+         "image_size": "large", "caption": _chars(_len("image", "caption")),
+         "bullets": [_chars(_len("image", "bullets"))] * _min_n("image", "bullets")},
+        {"id": "min-columns", "type": "columns", "title": t,
+         "blocks": [{"heading": _chars(_len("columns", "blocks", "heading")),
+                     "text": _chars(_len("columns", "blocks", "text"))}]
+                   * _min_n("columns", "blocks")},
+        {"id": "min-comparison", "type": "comparison", "title": t,
+         "left": {"heading": _chars(_len("comparison", "left", "heading")),
+                  "bullets": [_chars(_len("comparison", "left", "bullets"))]
+                             * _min_n("comparison", "left", "bullets")},
+         "right": {"heading": _chars(_len("comparison", "right", "heading")),
+                   "bullets": [_chars(_len("comparison", "right", "bullets"))]
+                              * _min_n("comparison", "right", "bullets")}},
+        {"id": "min-metrics", "type": "metrics", "title": t,
+         "items": [{"value": _chars(_len("metrics", "items", "value")),
+                    "label": _chars(_len("metrics", "items", "label")),
+                    "delta": _chars(_len("metrics", "items", "delta"))}]
+                  * _min_n("metrics", "items")},
+        {"id": "min-table", "type": "table", "title": t,
+         "header": [_chars(_len("table", "header"))] * _min_n("table", "header"),
+         "rows": [[_chars(_len("table", "rows"))] * _min_n("table", "header")]
+                 * _min_n("table", "rows")},
+        {"id": "min-gallery", "type": "gallery", "title": t,
+         "images": [{"image": f"p{i + 1}.png",
+                     "caption": _chars(_len("gallery", "images", "caption"))}
+                    for i in range(_min_n("gallery", "images"))]},
+    ]
+    return out
+
+
+def _overflowing(r, bound: float) -> dict[str, tuple[float, str]]:
+    worst: dict[str, tuple[float, str]] = {}
+    for p in r.positions:
+        bottom = p["y"] + p["h"]
+        if bottom > bound + BOTTOM_TOL and bottom > worst.get(p["slide"], (0.0, ""))[0]:
+            worst[p["slide"]] = (bottom, p["field"])
+    return worst
+
+
+@requires_typst
+@pytest.mark.parametrize("tid", ["default", "dark"])
+def test_minimum_counts_do_not_overflow_the_page(deck_dir, png_bytes, tid):
+    """Другой конец диапазона количеств — там же, где нашёлся угол на одной подписи."""
+    for n in range(1, 5):
+        (deck_dir / "assets" / f"p{n}.png").write_bytes(png_bytes)
+    tdir = TEMPLATE_DIR if tid == "default" else ROOT / "templates" / tid
+    deck = Deck(id="cornerdeck", slides=cornered_slides())
+    r = compile_deck(deck, deck_dir, tdir, base_url="http://t")
+    assert len(r.svgs) == len(deck.slides), "одна функция — одна страница"
+    bound = content_bottom(tdir)
+    extra = _overflowing(r, bound)
+    assert not extra, (
+        f"содержимое уходит под обрез страницы (граница {bound:.2f} пт): "
+        + ", ".join(f"{t}.{f} низ {b:.2f} (+{b - bound:.2f})"
+                    for t, (b, f) in sorted(extra.items())))
+
+
 @requires_typst
 @pytest.mark.parametrize("tid", ["default", "dark"])
 def test_model_maximum_does_not_overflow_the_page(deck_dir, png_bytes, tid):
