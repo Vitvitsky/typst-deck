@@ -462,7 +462,7 @@ def test_slot_ceiling_follows_the_measured_model_limits():
     from typst_deck.slots import DEFS
 
     assert DEFS["chart"]["properties"]["bullets"]["items"]["maxLength"] == 120
-    assert DEFS["table"]["properties"]["rows"]["items"]["items"]["maxLength"] == 23
+    assert DEFS["table"]["properties"]["rows"]["items"]["items"]["maxLength"] == 38
     assert clamp({"chart": {"bullets": {"max": 200}}}, "т") == {"chart": {"bullets": {"max": 120}}}
 
 

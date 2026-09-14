@@ -22,7 +22,7 @@ from pathlib import Path
 
 from pptx import Presentation
 
-from .model import CELL_MAX, Deck
+from .model import CELL_MAX, SIDE_CAPTION_MAX, Deck
 from .pptx import MappingError, export_pptx, load_mapping
 from .render import CompileError, CompileResult, compile_deck, resolve_fonts
 from .slots import clamp, field_kind
@@ -165,7 +165,9 @@ def _skeleton(stype: str, sample: str) -> dict:
         slide["labels"] = ["Q1", "Q2"]
         slide["series"] = [{"name": "Ряд 1", "values": [0, 1]}]
     elif stype == "dual-chart":
-        side = {"caption": _text(sample, 80), "labels": ["Q1", "Q2"],
+        # длина — из константы модели, а не литералом: подпись стороны уже́ общего
+        # Short (80), и зашитое число разъезжается с пределом при первой же правке
+        side = {"caption": _text(sample, SIDE_CAPTION_MAX), "labels": ["Q1", "Q2"],
                 "series": [{"name": "Ряд 1", "values": [0, 1]}]}
         slide["left"], slide["right"] = dict(side), dict(side)
     elif stype == "metrics":

@@ -8,7 +8,7 @@ from tests.conftest import ROOT, TEMPLATE_DIR, requires_typst
 from tests.test_render import full_deck
 from typst_deck.model import (
     BULLET_MAX, CELL_MAX, CHART_BULLET_MAX, CHART_LABEL_MAX, Deck, LARGE_IMAGE_BULLETS,
-    TITLE_MAX, UNIT_MAX,
+    SIDE_CAPTION_MAX, TITLE_MAX, UNIT_MAX,
 )
 from typst_deck.render import CompileError, compile_deck
 
@@ -432,10 +432,10 @@ def maxed_slides() -> list[dict]:
         # вдвое уже, чем у одиночного графика. Здесь по потолку и подписи (12 штук),
         # и имена рядов, и единица.
         {"id": "dual-chart", "type": "dual-chart", "title": _chars(TITLE_MAX),
-         "left": {"caption": _chars(80), "kind": "line",
+         "left": {"caption": _chars(SIDE_CAPTION_MAX), "kind": "line",
                   "labels": [_chars(CHART_LABEL_MAX)] * 12, "unit": _chars(UNIT_MAX),
                   "series": [{"name": _chars(TITLE_MAX), "values": list(range(12))} for _ in range(3)]},
-         "right": {"caption": _chars(80), "kind": "bar",
+         "right": {"caption": _chars(SIDE_CAPTION_MAX), "kind": "bar",
                    "labels": [_chars(CHART_LABEL_MAX)] * 12, "unit": _chars(UNIT_MAX),
                    "series": [{"name": _chars(TITLE_MAX), "values": list(range(12))} for _ in range(3)]}},
         {"id": "metrics", "type": "metrics", "title": _chars(TITLE_MAX),
@@ -503,10 +503,24 @@ def maxed_slides() -> list[dict]:
 #                      остаётся отрицательная высота (chart-h ≈ −110), он
 #                      схлопывается, и высота перестаёт зависеть от входа.
 #
-# Чинить их — решение не вёрстки, а пределов: у стороны dual-chart надо резать
-# число подписей, длину подписи стороны или число рядов, либо переделывать расчёт
-# высоты стороны. И то и другое крупнее этой правки, и выбирать за автора я не стал.
-OUT_OF_SCOPE_OVERFLOW: set[str] = {"chart", "dual-chart"}
+# Волна 4 закрыла оба — каждый своим способом, и способы эти разные по смыслу:
+#
+#   chart      +9.38 → −5.85  Устройством, а не пределом. Легенде отведена
+#                             ПОСТОЯННАЯ высота (0.75 см): пока она зависела от
+#                             длины имён, от них же зависел бюджет колонки
+#                             выводов, и кривая ёмкости шла зубцами (80 знаков
+#                             влезали, 60 — нет). Теперь вся кривая от 16 до 120
+#                             знаков ровная: −5.85 на каждой длине.
+#   dual-chart +9.63 → −1.65  Пределом, а не устройством: сторона обещала больше,
+#                             чем помещается на половине слайда. Связывает только
+#                             подпись стороны (обрыв 78; 75 влезает), число
+#                             подписей и рядов — нет: при подписи в 80 знаков не
+#                             спасают и 2 подписи. SIDE_CAPTION_MAX = 68.
+#
+# Множество пусто — значит, у всех пятнадцати типов содержимое по верхнему пределу
+# модели укладывается в страницу. Тип, который переполнится, не будучи здесь
+# названным, валит тест.
+OUT_OF_SCOPE_OVERFLOW: set[str] = set()
 
 # department титульного слайда прижат к низу ровно на границе (низ 232.44 при
 # границе 232.44) — на точном равенстве тест не должен разваливаться

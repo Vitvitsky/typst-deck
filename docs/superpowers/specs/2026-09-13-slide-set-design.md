@@ -119,9 +119,9 @@
 | `comparison` | heading до 60; bullets 1–5 по 120 с каждой стороны |
 | `quote` | text до 300, author до 120 |
 | `chart` | kind `bar` или `line`; labels: bar от 1, line от 2, до 24; series 1–4; bullets 0–4 по 120 |
-| `dual-chart` | на график: caption до 80, labels до 12, series 1–3 |
+| `dual-chart` | на график: caption до 68, labels до 12 по 30 знаков, series 1–3 |
 | `metrics` | items 2–4; value до 16, label до 60, delta до 12 |
-| `table` | header 2–6 по 40; rows 1–8; в строке столько же ячеек, сколько в шапке; ячейка до 40 |
+| `table` | header 2–6 по 40; rows 1–8; в строке столько же ячеек, сколько в шапке; ячейка до 38 |
 | `gallery` | images 2–4; caption до 80 |
 | `video` | ровно одно из `video` (ассет `.mp4`) и `url`; poster необязателен; caption до 120 |
 

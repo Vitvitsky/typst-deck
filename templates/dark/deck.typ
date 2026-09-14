@@ -453,19 +453,27 @@
   // трети оставшейся полосы, иначе она съедает то, что подписывает. Имена рядов
   // и единица приходят сырыми строками, без маркеров поля, поэтому measure()
   // здесь можно верить (см. оговорку у fit-bullets).
+  // Легенде отведена ПОСТОЯННАЯ высота, а не «сколько получится». Пока высота
+  // зависела от длины имён, от них же зависел и бюджет колонки выводов, и кривая
+  // ёмкости выходила рваной: имя в 80 знаков влезало (−1.77), а в 60, 40, 30, 24
+  // и 20 — нет (+0.98…+2.30), потому что на коротком имени лестница брала ступень
+  // крупнее и съедала выигрыш. Предел на имя такую дыру не закрывает — для этого
+  // понадобился бы минимум, а не максимум. Кегль подбирается под эту высоту,
+  // а что не уместилось и на нижней ступени, обрезается: легенда из четырёх имён
+  // по 120 знаков нечитаема при любом кегле, но место у выводов забирать не должна.
+  #let legend-h = 0.75cm
   #if show-legend {
-    layout(sz => context {
-      let cap = calc.min(1.2cm, (body-bottom - here().position().y) * 0.3)
+    block(height: legend-h, clip: true, layout(sz => context {
       let sizes = (8pt, 7pt, 6pt, 5pt, 4.5pt, 4pt)
       let pick = sizes.last()
       for cand in sizes {
-        if measure(block(width: sz.width, legend-at(cand))).height <= cap {
+        if measure(block(width: sz.width, legend-at(cand))).height <= legend-h {
           pick = cand
           break
         }
       }
       legend-at(pick)
-    })
+    }))
     v(0.15cm)
   }
   // Колонка выводов — та же подгонка, что у slide-text, но в узкой колонке и от
@@ -542,17 +550,21 @@
         // в минус, график схлопывался, а высота переставала зависеть от входа
         // вовсе: +43.83 держались хоть при именах в 120 знаков, хоть в 16.
         // Потолок — треть бюджета, как у slide-chart.
+        // и здесь высота легенды постоянная — по той же причине, что в slide-chart:
+        // иначе «остальное» зависит от длины имён, а с ним и высота графика
+        let legend-h = 0.5cm
         let legend = if show-legend {
-          let cap = budget * 0.3
-          let sizes = (6.5pt, 6pt, 5.5pt, 5pt, 4.5pt, 4pt)
-          let pick = sizes.last()
-          for cand in sizes {
-            if measure(block(width: sz.width, legend-at(cand))).height <= cap {
-              pick = cand
-              break
+          block(height: legend-h, clip: true, {
+            let sizes = (6.5pt, 6pt, 5.5pt, 5pt, 4.5pt, 4pt)
+            let pick = sizes.last()
+            for cand in sizes {
+              if measure(block(width: sz.width, legend-at(cand))).height <= legend-h {
+                pick = cand
+                break
+              }
             }
-          }
-          legend-at(pick)
+            legend-at(pick)
+          })
         }
         let caption = if side.caption != none { align(center, text(size: 8pt, fill: muted, side.caption)) }
         let probe-h = 2cm // с любой пробной высотой — линейно, разница даёт «остальное»
