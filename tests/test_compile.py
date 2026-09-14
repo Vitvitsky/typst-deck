@@ -6,10 +6,8 @@ import pytest
 
 from tests.conftest import ROOT, TEMPLATE_DIR, requires_typst
 from tests.test_render import full_deck
-from typst_deck.model import (
-    BULLET_MAX, CELL_MAX, CHART_BULLET_MAX, CHART_LABEL_MAX, Deck, LARGE_IMAGE_BULLETS,
-    SIDE_CAPTION_MAX, TITLE_MAX, UNIT_MAX,
-)
+from typst_deck.model import Deck, LARGE_IMAGE_BULLETS
+from typst_deck.slots import DEFS, SCHEMA
 from typst_deck.render import CompileError, compile_deck
 
 pytestmark = requires_typst
@@ -382,71 +380,134 @@ def _chars(n: int) -> str:
     return (FILL * (n // len(FILL) + 2))[:n]
 
 
-def maxed_slides() -> list[dict]:
-    """По слайду каждого из пятнадцати типов, набитому ровно по пределам model.py.
+def _deref(prop: dict) -> dict:
+    """Определение поля без обёрток: $ref разыменован, Optional развёрнут."""
+    ref = prop.get("$ref")
+    if ref:
+        return _deref(SCHEMA["$defs"][ref.rsplit("/", 1)[1]])
+    for alt in prop.get("anyOf", []):  # str | None приходит как anyOf
+        if alt.get("type") != "null":
+            return _deref(alt)
+    return prop
 
-    Длины берутся из констант модели, а не литералами: расширят предел — покраснеет
-    тест, который про пределы и написан. (Проверено: с литералами патч
-    CHART_BULLET_MAX=200, CELL_MAX=60, LARGE_IMAGE_BULLETS=1200 тест не красил.)
+
+def _prop(stype: str, *path: str) -> dict:
+    """Поле по пути внутри типа: _prop("columns", "blocks", "text")."""
+    node = _deref(DEFS[stype])
+    for name in path:
+        if "properties" not in node and node.get("type") == "array":
+            node = _deref(node["items"])  # путь сквозь список объектов
+        node = _deref(node["properties"][name])
+    return node
+
+
+def _n(stype: str, *path: str) -> int:
+    """Сколько элементов допускает список."""
+    return _prop(stype, *path)["maxItems"]
+
+
+def _len(stype: str, *path: str) -> int:
+    """Сколько знаков допускает строка; у списка строк — знаков в элементе."""
+    node = _prop(stype, *path)
+    while node.get("type") == "array":
+        node = _deref(node["items"])
+    return node["maxLength"]
+
+
+def maxed_slides() -> list[dict]:
+    """По слайду каждого из пятнадцати типов, набитому ровно по пределам модели.
+
+    И длины, и КОЛИЧЕСТВА читаются из порождённой JSON Schema (`maxLength`,
+    `maxItems`), а не зашиты числами. Пока количества были литералами, расширение
+    любого списка оставляло тест зелёным, а вёрстку ломало — та же тихая поломка,
+    что волна 3 нашла в длинах, а волна 4 — в `filled_slide`. Теперь синхронизировать
+    руками нечего: предел раздвинули — тест покраснел.
+
+    Из схемы берётся не всё, и это не недосмотр. Четыре вещи она не описывает:
+    ширина строки таблицы (её задаёт валидатор модели по длине шапки), длина
+    `values` у ряда (столько же, сколько подписей), имена ассетов и выбор
+    оформления (`image_size`, `kind`) — у них нет ёмкости, есть смысл, — и
+    перекрёстный предел LARGE_IMAGE_BULLETS, который живёт в валидаторе, а не
+    в поле. Эти четыре названы здесь явно.
 
     По максимуму берётся и легенда, а не только содержимое: имена рядов, единица
-    и подписи категорий. Прежняя оговорка «подписи и ряды растягивают график
-    вширь» верна для подписей и неверна для имён рядов — легенда переносится
-    и сдвигает вниз колонку выводов, а единица печаталась у каждого ряда.
-    Id слайда — имя типа: тогда сообщение об ошибке сразу называет виноватый тип.
+    и подписи категорий. Id слайда — имя типа: тогда сообщение об ошибке сразу
+    называет виноватый тип.
     """
+    nlab, nser = _n("chart", "labels"), _n("chart", "series")
+    dlab, dser = _n("dual-chart", "left", "labels"), _n("dual-chart", "left", "series")
+    cols = _n("table", "header")  # ширина строки = ширине шапки (валидатор модели)
+
+    def side(kind: str) -> dict:
+        return {"caption": _chars(_len("dual-chart", "left", "caption")), "kind": kind,
+                "labels": [_chars(_len("dual-chart", "left", "labels"))] * dlab,
+                "unit": _chars(_len("dual-chart", "left", "unit")),
+                "series": [{"name": _chars(_len("dual-chart", "left", "series", "name")),
+                            "values": list(range(dlab))} for _ in range(dser)]}
+
     return [
-        {"id": "title", "type": "title", "title": _chars(TITLE_MAX), "subtitle": _chars(TITLE_MAX),
-         "author": _chars(TITLE_MAX), "department": _chars(TITLE_MAX)},
-        {"id": "agenda", "type": "agenda", "title": _chars(TITLE_MAX), "items": [_chars(80)] * 7},
-        {"id": "section", "type": "section", "title": _chars(TITLE_MAX), "subtitle": _chars(TITLE_MAX)},
-        {"id": "text", "type": "text", "title": _chars(TITLE_MAX), "bullets": [_chars(BULLET_MAX)] * 6},
+        {"id": "title", "type": "title", "title": _chars(_len("title", "title")),
+         "subtitle": _chars(_len("title", "subtitle")),
+         "author": _chars(_len("title", "author")),
+         "department": _chars(_len("title", "department"))},
+        {"id": "agenda", "type": "agenda", "title": _chars(_len("agenda", "title")),
+         "items": [_chars(_len("agenda", "items"))] * _n("agenda", "items")},
+        {"id": "section", "type": "section", "title": _chars(_len("section", "title")),
+         "subtitle": _chars(_len("section", "subtitle"))},
+        {"id": "text", "type": "text", "title": _chars(_len("text", "title")),
+         "bullets": [_chars(_len("text", "bullets"))] * _n("text", "bullets")},
         # image_size — выбор оформления, а не предел ёмкости: "large" отдаёт
         # картинке 55 % ширины и нарочно морит колонку тезисов (ей остаётся
         # 159 пт против 209 при "medium"). Берём значение по умолчанию, как и
         # у прочих необязательных полей оформления.
-        {"id": "image", "type": "image", "title": _chars(TITLE_MAX), "bullets": [_chars(BULLET_MAX)] * 6,
-         "image": "p1.png", "image_size": "medium", "caption": _chars(TITLE_MAX)},
-        # То же поле в худшем оформлении: "large" отдаёт картинке 55 % ширины, и
-        # колонке тезисов остаётся 159 пт вместо 209. Выбрать такое сочетание
-        # пользователю никто не мешает, значит, оно должно влезать — поэтому
-        # модель и держит для него отдельный перекрёстный предел
-        # (LARGE_IMAGE_BULLETS: суммарно 900 знаков, здесь это 6×150).
-        {"id": "image-large", "type": "image", "title": _chars(TITLE_MAX),
-         "bullets": [_chars(LARGE_IMAGE_BULLETS // 6)] * 6,
-         "image": "p1.png", "image_size": "large", "caption": _chars(TITLE_MAX)},
-        {"id": "columns", "type": "columns", "title": _chars(TITLE_MAX),
-         "blocks": [{"heading": _chars(60), "text": _chars(300)}] * 3},
-        {"id": "comparison", "type": "comparison", "title": _chars(TITLE_MAX),
-         "left": {"heading": _chars(60), "bullets": [_chars(120)] * 5},
-         "right": {"heading": _chars(60), "bullets": [_chars(120)] * 5}},
-        {"id": "quote", "type": "quote", "text": _chars(300), "author": _chars(TITLE_MAX)},
+        {"id": "image", "type": "image", "title": _chars(_len("image", "title")),
+         "bullets": [_chars(_len("image", "bullets"))] * _n("image", "bullets"),
+         "image": "p1.png", "image_size": "medium", "caption": _chars(_len("image", "caption"))},
+        # То же поле в худшем оформлении. Сумма тезисов здесь ограничена
+        # перекрёстным пределом LARGE_IMAGE_BULLETS — он в валидаторе модели,
+        # а не в поле, поэтому из схемы его не вычитать.
+        {"id": "image-large", "type": "image", "title": _chars(_len("image", "title")),
+         "bullets": [_chars(LARGE_IMAGE_BULLETS // _n("image", "bullets"))] * _n("image", "bullets"),
+         "image": "p1.png", "image_size": "large", "caption": _chars(_len("image", "caption"))},
+        {"id": "columns", "type": "columns", "title": _chars(_len("columns", "title")),
+         "blocks": [{"heading": _chars(_len("columns", "blocks", "heading")),
+                     "text": _chars(_len("columns", "blocks", "text"))}] * _n("columns", "blocks")},
+        {"id": "comparison", "type": "comparison", "title": _chars(_len("comparison", "title")),
+         "left": {"heading": _chars(_len("comparison", "left", "heading")),
+                  "bullets": [_chars(_len("comparison", "left", "bullets"))]
+                             * _n("comparison", "left", "bullets")},
+         "right": {"heading": _chars(_len("comparison", "right", "heading")),
+                   "bullets": [_chars(_len("comparison", "right", "bullets"))]
+                              * _n("comparison", "right", "bullets")}},
+        {"id": "quote", "type": "quote", "text": _chars(_len("quote", "text")),
+         "author": _chars(_len("quote", "author"))},
         # Худшая легенда, а не только худшее содержимое: имена рядов, единица и
-        # подписи категорий — все по потолку модели. Единица печаталась у каждого
-        # ряда, и четыре ряда по 60 знаков давали +27.77 пт под обрез.
-        {"id": "chart", "type": "chart", "title": _chars(TITLE_MAX), "kind": "bar",
-         "labels": [_chars(CHART_LABEL_MAX)] * 24, "unit": _chars(UNIT_MAX),
-         "series": [{"name": _chars(TITLE_MAX), "values": list(range(24))} for _ in range(4)],
-         "bullets": [_chars(CHART_BULLET_MAX)] * 4},
+        # подписи категорий — все по потолку. values у ряда — столько же, сколько
+        # подписей: это валидатор модели, в схеме длины у них нет.
+        {"id": "chart", "type": "chart", "title": _chars(_len("chart", "title")), "kind": "bar",
+         "labels": [_chars(_len("chart", "labels"))] * nlab,
+         "unit": _chars(_len("chart", "unit")),
+         "series": [{"name": _chars(_len("chart", "series", "name")),
+                     "values": list(range(nlab))} for _ in range(nser)],
+         "bullets": [_chars(_len("chart", "bullets"))] * _n("chart", "bullets")},
         # Сторона dual-chart — самый тесный носитель легенды и подписей: колонка
-        # вдвое уже, чем у одиночного графика. Здесь по потолку и подписи (12 штук),
-        # и имена рядов, и единица.
-        {"id": "dual-chart", "type": "dual-chart", "title": _chars(TITLE_MAX),
-         "left": {"caption": _chars(SIDE_CAPTION_MAX), "kind": "line",
-                  "labels": [_chars(CHART_LABEL_MAX)] * 12, "unit": _chars(UNIT_MAX),
-                  "series": [{"name": _chars(TITLE_MAX), "values": list(range(12))} for _ in range(3)]},
-         "right": {"caption": _chars(SIDE_CAPTION_MAX), "kind": "bar",
-                   "labels": [_chars(CHART_LABEL_MAX)] * 12, "unit": _chars(UNIT_MAX),
-                   "series": [{"name": _chars(TITLE_MAX), "values": list(range(12))} for _ in range(3)]}},
-        {"id": "metrics", "type": "metrics", "title": _chars(TITLE_MAX),
-         "items": [{"value": _chars(16), "label": _chars(60), "delta": _chars(12)}] * 4},
-        {"id": "table", "type": "table", "title": _chars(TITLE_MAX), "header": [_chars(40)] * 6,
-         "rows": [[_chars(CELL_MAX)] * 6] * 8},
-        {"id": "gallery", "type": "gallery", "title": _chars(TITLE_MAX),
-         "images": [{"image": f"p{i + 1}.png", "caption": _chars(80)} for i in range(4)]},
-        {"id": "video", "type": "video", "title": _chars(TITLE_MAX), "video": "v.mp4",
-         "poster": "p1.png", "caption": _chars(TITLE_MAX)},
-        {"id": "final", "type": "final", "title": _chars(TITLE_MAX), "contact": _chars(TITLE_MAX)},
+        # вдвое уже, чем у одиночного графика.
+        {"id": "dual-chart", "type": "dual-chart", "title": _chars(_len("dual-chart", "title")),
+         "left": side("line"), "right": side("bar")},
+        {"id": "metrics", "type": "metrics", "title": _chars(_len("metrics", "title")),
+         "items": [{"value": _chars(_len("metrics", "items", "value")),
+                    "label": _chars(_len("metrics", "items", "label")),
+                    "delta": _chars(_len("metrics", "items", "delta"))}] * _n("metrics", "items")},
+        {"id": "table", "type": "table", "title": _chars(_len("table", "title")),
+         "header": [_chars(_len("table", "header"))] * cols,
+         "rows": [[_chars(_len("table", "rows"))] * cols] * _n("table", "rows")},
+        {"id": "gallery", "type": "gallery", "title": _chars(_len("gallery", "title")),
+         "images": [{"image": f"p{i + 1}.png", "caption": _chars(_len("gallery", "images", "caption"))}
+                    for i in range(_n("gallery", "images"))]},
+        {"id": "video", "type": "video", "title": _chars(_len("video", "title")), "video": "v.mp4",
+         "poster": "p1.png", "caption": _chars(_len("video", "caption"))},
+        {"id": "final", "type": "final", "title": _chars(_len("final", "title")),
+         "contact": _chars(_len("final", "contact"))},
     ]
 
 
