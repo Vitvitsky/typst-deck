@@ -300,16 +300,35 @@ $("add").addEventListener("click", async () => {
   } catch (e) { toast(e.message, { error: true }); }
 });
 
+// GallerySlide.images ограничен 2–4 картинками (model.py) — проверяем ДО
+// загрузки: иначе пять файлов уйдут на сервер через /assets, а слайд всё равно
+// отклонится, оставив пять осиротевших ассетов без слайда
+function pickError(files, type) {
+  if (type !== "gallery") return null;
+  if (files.length < 2) return "Для галереи нужно минимум две картинки";
+  if (files.length > 4) return "Для галереи можно выбрать не больше четырёх картинок";
+  return null;
+}
+
 // картинка(и) для image/gallery: файловый диалог → загрузка в assets → заготовка
-// слайда с уже полученными asset_id; null — пользователь ничего не выбрал
+// слайда с уже полученными asset_id; null — пользователь ничего не выбрал (отмена
+// диалога или неподходящее число файлов). Input временно вставляется в DOM
+// скрытым — детач в некоторых браузерах ненадёжно доставляет события input;
+// убирается в cleanup независимо от исхода.
 function pickPictureSlide(type) {
-  const { multiple } = NEEDS_PICTURE[type];
   return new Promise((resolve, reject) => {
-    const input = el("input", { type: "file", accept: ".png,.jpg,.jpeg,.svg", multiple });
-    input.addEventListener("change", async () => {
+    const input = el("input", { type: "file", accept: ".png,.jpg,.jpeg,.svg", multiple: NEEDS_PICTURE[type].multiple, hidden: true });
+    document.body.append(input);
+    const cleanup = () => { input.removeEventListener("change", onChange); input.removeEventListener("cancel", onCancel); input.remove(); };
+    // «Отмена» в диалоге выбора файла НЕ порождает change (это отдельное
+    // событие cancel) — без этого обработчика промис никогда бы не разрешился
+    const onCancel = () => { cleanup(); resolve(null); };
+    const onChange = async () => {
+      cleanup();
       const files = [...input.files];
       if (!files.length) { resolve(null); return; }
-      if (type === "gallery" && files.length < 2) { toast("Для галереи нужно минимум две картинки", { error: true }); resolve(null); return; }
+      const err = pickError(files, type);
+      if (err) { toast(err, { error: true }); resolve(null); return; }
       try {
         const ids = [];
         for (const f of files) ids.push((await upload(`api/decks/${deckId}/assets`, f)).asset_id);
@@ -318,7 +337,9 @@ function pickPictureSlide(type) {
         else slide.images = ids.map((id) => ({ image: id, caption: "" }));
         resolve(slide);
       } catch (e) { reject(e); }
-    });
+    };
+    input.addEventListener("change", onChange);
+    input.addEventListener("cancel", onCancel);
     input.click();
   });
 }
