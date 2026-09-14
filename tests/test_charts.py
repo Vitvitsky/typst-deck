@@ -20,8 +20,9 @@ TEMPLATES = {
 
 def signed_deck() -> Deck:
     return Deck(id="signed000001", slides=[
-        {"id": "s000001", "type": "bar-chart", "title": "Прирост", "unit": "%",
-         "data": [{"label": "Отделка", "value": 12}, {"label": "Стройматериалы", "value": -7}]},
+        {"id": "s000001", "type": "chart", "kind": "bar", "title": "Прирост", "unit": "%",
+         "labels": ["Отделка", "Стройматериалы"],
+         "series": [{"name": "Прирост", "values": [12, -7]}]},
         {"id": "s000002", "type": "chart", "title": "Динамика", "labels": ["Q1", "Q2", "Q3"],
          "series": [{"name": "Прирост", "values": [12, 5, -7]}]},
     ])
