@@ -38,12 +38,21 @@ def _template_list(templates: list[dict] | None) -> str:
     return "\n".join(f"- {t['id']} — {t['name']}" for t in templates)
 
 
+def _asset_list(assets: list[str]) -> str:
+    """Ассеты делятся на картинки и видео по расширению — модели проще выбрать
+    id для image/gallery отдельно от id для video, не перебирая общий список."""
+    images = [a for a in assets if not a.lower().endswith(".mp4")]
+    videos = [a for a in assets if a.lower().endswith(".mp4")]
+    return (f"Картинки: {', '.join(images) if images else '(нет)'}\n"
+            f"Видео: {', '.join(videos) if videos else '(нет)'}")
+
+
 def build_system_prompt(deck: Deck, assets: list[str], templates: list[dict] | None = None,
                         slots: dict | None = None) -> str:
     return (
         PROMPT
         .replace("{{SCHEMA}}", json.dumps(apply_to_schema(slots or {}), ensure_ascii=False))
-        .replace("{{ASSETS}}", ", ".join(assets) if assets else "(нет)")
+        .replace("{{ASSETS}}", _asset_list(assets))
         .replace("{{TEMPLATES}}", _template_list(templates))
         .replace("{{DECK_JSON}}", deck.model_dump_json(include={"title", "template", "slides"}))
     )

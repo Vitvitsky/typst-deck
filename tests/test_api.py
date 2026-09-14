@@ -47,7 +47,7 @@ async def test_full_flow(client, fake_llm, png_bytes):
     fake_llm._queue += [
         Completion("", [ToolCall("c1", "set_deck", {"title": "Итоги", "slides": [
             {"type": "title", "title": "Итоги", "subtitle": "Q3"},
-            {"type": "image", "title": "Рост", "bullets": ["a", "b"]},
+            {"type": "image", "title": "Рост", "bullets": ["a", "b"], "image": "missing.png"},
             {"type": "final"}]})]),
         Completion("", [ToolCall("c2", "finish", {"summary": "Готово: 3 слайда"})]),
     ]

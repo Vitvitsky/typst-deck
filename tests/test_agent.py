@@ -12,7 +12,7 @@ def test_tool_specs_shape():
     names = [s["function"]["name"] for s in specs]
     assert names == ["set_deck", "update_slide", "add_slide", "remove_slide", "move_slide", "set_template", "finish"]
     assert all(s["type"] == "function" and "parameters" in s["function"] for s in specs)
-    assert "bar-chart" in json.dumps(specs)
+    assert "dual-chart" in json.dumps(specs)
 
 
 def test_tool_specs_set_template_enum():
@@ -109,7 +109,7 @@ def test_executor_rejects_four_line_breaks_in_subtitle():
 
 def test_executor_rejects_extra_bullets_and_rolls_back_added_slide():
     ex = _tight_executor(Deck(slides=[{"type": "final"}]))
-    r = ex.call("add_slide", {"slide": {"type": "image", "title": "A",
+    r = ex.call("add_slide", {"slide": {"type": "image", "title": "A", "image": "a1.png",
                                         "bullets": ["раз", "два", "три", "четыре"]}, "after": None})
     assert r.startswith("ERROR") and "«Тезисы»" in r
     assert len(ex.deck.slides) == 1 and ex.changes == []
@@ -174,7 +174,17 @@ def test_executor_without_slots_keeps_global_limits():
 def test_system_prompt_mentions_schema_deck_assets():
     d = Deck(title="T", slides=[{"type": "final"}])
     p = build_system_prompt(d, ["a1.png"])
-    assert "bar-chart" in p and '"T"' in p and "a1.png" in p and d.slides[0].id in p
+    assert "dual-chart" in p and '"T"' in p and "a1.png" in p and d.slides[0].id in p
+
+
+def test_prompt_names_every_type_and_splits_assets():
+    from typst_deck.model import SLIDE_TYPES
+
+    p = build_system_prompt(Deck(title="T", slides=[{"type": "final"}]), ["a1.png", "a2.mp4"])
+    for t in SLIDE_TYPES:
+        assert t in p
+    assert "Картинки: a1.png" in p and "Видео: a2.mp4" in p
+    assert "не чаще раза на 5–7 слайдов" in p, "памятка про цитату"
 
 
 def test_system_prompt_lists_templates():
@@ -340,9 +350,13 @@ def test_system_prompt_uses_template_limits():
 
 
 def test_system_prompt_without_slots_shows_global_limits():
+    """Без объявления шаблона title.title остаётся глобальным пределом (120), а не
+    сужен, как в test_system_prompt_uses_template_limits; maxLength:60 у чужих полей
+    (Heading и т.п.) — это их собственный предел из model.py, не сужение слотами."""
     d = Deck(title="T", slides=[{"type": "title", "title": "A"}])
-    p = build_system_prompt(d, [])
-    assert '"maxLength":120' in p.replace(" ", "") and '"maxLength":60' not in p.replace(" ", "")
+    p = build_system_prompt(d, []).replace(" ", "")
+    assert '"title":{"maxLength":120,"title":"Title"' in p
+    assert '"title":{"maxLength":60' not in p
 
 
 async def test_run_agent_passes_limits_to_prompt_and_executor():

@@ -75,7 +75,13 @@ export function armConfirm(btn, label, onConfirm) {
   btn.addEventListener("click", () => { clearTimeout(timer); reset(); onConfirm(); }, { once: true });
 }
 
-export const TYPE_RU = { title: "Заглавный", section: "Раздел", image: "Текст и картинка", "bar-chart": "Диаграмма", chart: "График", final: "Финальный" };
+export const TYPE_RU = {
+  title: "Заглавный", agenda: "Повестка", section: "Раздел", text: "Тезисы", image: "Текст и картинка",
+  columns: "Блоки текста", comparison: "Сравнение", quote: "Цитата", chart: "График", "dual-chart": "Два графика",
+  metrics: "Метрики", table: "Таблица", gallery: "Галерея", video: "Видео", final: "Финальный",
+};
+// Те же слова, что в slots.FIELD_RU (src/typst_deck/slots.py) — человек видит одно
+// и то же название везде: на кнопке зоны, в подписи поля, в тексте правки.
 export const FIELD_RU = {
   title: "Заголовок", subtitle: "Подзаголовок", bullets: "Тезисы", caption: "Подпись к картинке", contact: "Контакты",
   author: "Автор", department: "Подразделение",
@@ -86,8 +92,8 @@ export const FIELD_RU = {
   video: "Видео", url: "Ссылка", poster: "Обложка", kind: "Вид графика",
 };
 export const SIZE_RU = { small: "маленькая", medium: "средняя", large: "крупная" };
-export const fileKind = (name) => /\.(png|jpe?g|svg)$/i.test(name) ? "image" : /\.(xlsx|csv)$/i.test(name) ? "table" : /\.(txt|md|docx)$/i.test(name) ? "text" : "bad";
-export const KIND_ICON = { image: "▨", table: "▦", text: "Т", bad: "?" };
+export const fileKind = (name) => /\.(png|jpe?g|svg)$/i.test(name) ? "image" : /\.mp4$/i.test(name) ? "video" : /\.(xlsx|csv)$/i.test(name) ? "table" : /\.(txt|md|docx)$/i.test(name) ? "text" : "bad";
+export const KIND_ICON = { image: "▨", video: "▶", table: "▦", text: "Т", bad: "?" };
 export const fmtSize = (b) => b < 1024 * 1024 ? `${Math.max(1, Math.round(b / 1024))} КБ` : `${(b / 1024 / 1024).toFixed(1)} МБ`;
 export const fmtTokens = (n) => Number(n || 0).toLocaleString("ru-RU");
 export const fmtDate = (iso) => new Date(iso).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });

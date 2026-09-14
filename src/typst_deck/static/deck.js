@@ -6,12 +6,25 @@ mountShell({ active: "decks", deckId, defaultCollapsed: true });
 const $ = (id) => document.getElementById(id);
 const NEW_SLIDE = {
   title: { type: "title", title: "Заголовок", subtitle: "" },
+  agenda: { type: "agenda", title: "Повестка", items: ["Первый раздел", "Второй раздел", "Третий раздел"] },
   section: { type: "section", title: "Раздел" },
-  image: { type: "image", title: "Заголовок", bullets: ["Первый тезис"] },
-  "bar-chart": { type: "bar-chart", title: "Диаграмма", data: [{ label: "A", value: 1 }, { label: "B", value: 2 }] },
-  chart: { type: "chart", title: "График", labels: ["Q1", "Q2", "Q3"], series: [{ name: "Ряд", values: [1, 2, 3] }] },
+  text: { type: "text", title: "Заголовок", bullets: ["Первый тезис"] },
+  image: { type: "image", title: "Заголовок", bullets: ["Первый тезис"], image: null },
+  columns: { type: "columns", title: "Блоки", blocks: [{ heading: "Первый", text: "Текст" }, { heading: "Второй", text: "Текст" }] },
+  comparison: { type: "comparison", title: "Было и стало", left: { heading: "Было", bullets: ["Пункт"] }, right: { heading: "Стало", bullets: ["Пункт"] } },
+  quote: { type: "quote", text: "Одна мысль", author: "" },
+  chart: { type: "chart", title: "График", kind: "line", labels: ["Q1", "Q2", "Q3"], series: [{ name: "Ряд", values: [1, 2, 3] }] },
+  "dual-chart": { type: "dual-chart", title: "Два графика", left: { caption: "Слева", kind: "line", labels: ["Q1", "Q2"], series: [{ name: "Ряд", values: [1, 2] }] }, right: { caption: "Справа", kind: "bar", labels: ["A", "B"], series: [{ name: "Ряд", values: [2, 1] }] } },
+  metrics: { type: "metrics", title: "Числа", items: [{ value: "12,5 млн", label: "выручка", delta: "+12 %" }, { value: "17", label: "проектов", delta: "" }] },
+  table: { type: "table", title: "Таблица", header: ["Регион", "Выручка"], rows: [["Центр", "42"], ["Север", "17"]] },
+  gallery: { type: "gallery", title: "Галерея", images: [{ image: null, caption: "" }, { image: null, caption: "" }] },
+  video: { type: "video", title: "Видео", url: "https://", caption: "" },
   final: { type: "final" },
 };
+// image и gallery не проходят валидацию без картинки (модель требует её), поэтому
+// «Добавить слайд» для них сперва открывает выбор файла и грузит его в assets —
+// иначе POST .../slides ответил бы 422; для остальных типов заготовка идёт как есть
+const NEEDS_PICTURE = { image: { multiple: false }, gallery: { multiple: true } };
 const CHIPS = ["Сократи текст на всех слайдах", "Добавь слайд с выводами в конце", "Разбей на разделы", "Сделай заголовки короче"];
 const PHASES = [["reading", "Читаю материалы"], ["model", "Собираю структуру"], ["render", "Верстаю слайды"]];
 
@@ -276,14 +289,39 @@ async function removeSlide(slide) {
   } catch (e) { toast(e.message, { error: true }); }
 }
 $("add").addEventListener("click", async () => {
-  const slide = JSON.parse(JSON.stringify(NEW_SLIDE[$("addtype").value]));
+  const type = $("addtype").value;
   try {
+    const slide = type in NEEDS_PICTURE ? await pickPictureSlide(type) : JSON.parse(JSON.stringify(NEW_SLIDE[type]));
+    if (!slide) return;  // выбор файла отменили
     const info = await applyResult(api(`api/decks/${deckId}/slides`, { json: { slide, after: state.selected } }));
     const idx = state.selected ? info.deck.slides.findIndex((s) => s.id === state.selected) + 1 : info.deck.slides.length - 1;
     const added = info.deck.slides[idx];
     if (added) { select(added.id); const t = $(`slide-${added.id}`); if (t) t.scrollIntoView({ behavior: "smooth", block: "start" }); switchTab("slide"); }
   } catch (e) { toast(e.message, { error: true }); }
 });
+
+// картинка(и) для image/gallery: файловый диалог → загрузка в assets → заготовка
+// слайда с уже полученными asset_id; null — пользователь ничего не выбрал
+function pickPictureSlide(type) {
+  const { multiple } = NEEDS_PICTURE[type];
+  return new Promise((resolve, reject) => {
+    const input = el("input", { type: "file", accept: ".png,.jpg,.jpeg,.svg", multiple });
+    input.addEventListener("change", async () => {
+      const files = [...input.files];
+      if (!files.length) { resolve(null); return; }
+      if (type === "gallery" && files.length < 2) { toast("Для галереи нужно минимум две картинки", { error: true }); resolve(null); return; }
+      try {
+        const ids = [];
+        for (const f of files) ids.push((await upload(`api/decks/${deckId}/assets`, f)).asset_id);
+        const slide = JSON.parse(JSON.stringify(NEW_SLIDE[type]));
+        if (type === "image") slide.image = ids[0];
+        else slide.images = ids.map((id) => ({ image: id, caption: "" }));
+        resolve(slide);
+      } catch (e) { reject(e); }
+    });
+    input.click();
+  });
+}
 
 // --- редактор поля на слайде
 function closeEditors() {
@@ -292,7 +330,12 @@ function closeEditors() {
 }
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeEditors(); });
 
+// составные поля — пока правятся как JSON во вкладке «Слайд»; полноценные
+// редакторы (блоки, колонки, таблица, галерея…) — план C
+const COMPOSITE = ["items", "blocks", "left", "right", "header", "rows", "images"];
+
 function openFieldEditor(slide, n, field, zone, page) {
+  if (COMPOSITE.includes(field)) { switchTab("slide"); return; }
   closeEditors();
   const patch = {};
   const form = el("form", { class: "editor" }, el("div", { class: "head" }, el("span", {}, `${FIELD_RU[field] || field} · слайд ${n}`), el("span", { class: "tiny" }, "Enter — сохранить, Esc — отмена")));
@@ -327,10 +370,16 @@ function fieldControl(slide, field) {
   if (field === "bullets" || field === "labels") return el("textarea", { name: field, placeholder: "По одному на строку" }, (v || []).join("\n"));
   if (field === "notes") return el("textarea", { name: field }, v || "");
   if (field === "image_size") return el("select", { name: field }, ...Object.entries(SIZE_RU).map(([k, l]) => el("option", { value: k, selected: v === k }, l)));
+  if (COMPOSITE.includes(field)) {
+    const t = el("textarea", { name: field, rows: 6, class: "mono" }, JSON.stringify(v ?? [], null, 1));
+    t.title = "Пока правится как JSON — редактор появится в следующем обновлении";
+    return t;
+  }
   return el("input", { type: "text", name: field, value: v ?? "" });
 }
 function readControl(field, control) {
   if (field === "bullets" || field === "labels") return control.value.split("\n").map((s) => s.trim()).filter(Boolean);
+  if (COMPOSITE.includes(field)) return JSON.parse(control.value);
   return control.value;
 }
 
@@ -368,12 +417,13 @@ function renderProps() {
   const patch = {};
   const form = el("form", {}, el("h3", {}, `Слайд ${n} · ${TYPE_RU[slide.type]}`), el("div", { class: "sub" }, "Меняются только поля — оформление задаёт шаблон колоды (его можно сменить вверху)."));
   const readers = [];
-  const ORDER = ["title", "subtitle", "author", "department", "bullets", "caption", "contact", "unit", "labels", "series", "data", "notes"];
+  const ORDER = ["title", "subtitle", "author", "department", "text", "items", "bullets", "blocks",
+    "left", "right", "header", "rows", "images", "kind", "labels", "series", "unit",
+    "caption", "contact", "url", "poster", "video", "notes"];
   const keys = Object.keys(slide).filter((k) => !["id", "type", "image", "image_size"].includes(k))
     .sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
   for (const k of keys) {
-    if (k === "data") { const t = dataTable(slide.data); form.append(el("label", { class: "f" }, FIELD_RU.data), t); readers.push(() => { const v = t.read(); if (JSON.stringify(v) !== JSON.stringify(slide.data)) patch.data = v; }); continue; }
-    if (k === "series") { const t = seriesTable(slide.series, slide.labels.length); form.append(el("label", { class: "f" }, FIELD_RU.series), t); readers.push(() => { const v = t.read(); if (JSON.stringify(v) !== JSON.stringify(slide.series)) patch.series = v; }); continue; }
+    if (k === "series" && "labels" in slide) { const t = seriesTable(slide.series, slide.labels.length); form.append(el("label", { class: "f" }, FIELD_RU.series), t); readers.push(() => { const v = t.read(); if (JSON.stringify(v) !== JSON.stringify(slide.series)) patch.series = v; }); continue; }
     const c = fieldControl(slide, k);
     form.append(el("label", { class: "f" }, FIELD_RU[k] || k), c);
     readers.push(() => { const v = readControl(k, c); if (JSON.stringify(v) !== JSON.stringify(slide[k])) patch[k] = v; });
@@ -395,20 +445,6 @@ function renderProps() {
     } catch (ex) { err.textContent = ex.message; }
   });
   box.replaceChildren(form);
-}
-
-function dataTable(rows) {
-  const box = el("div", { class: "grid-table" });
-  const render = (items) => {
-    box.replaceChildren(...items.map((r, i) => el("div", { class: "r" },
-      el("input", { type: "text", value: r.label, placeholder: "Подпись", "aria-label": "Подпись" }),
-      el("input", { type: "number", step: "any", value: r.value, "aria-label": "Значение" }),
-      el("button", { type: "button", class: "quiet icon sm", title: "Убрать строку", onclick: () => { const cur = box.read(); cur.splice(i, 1); render(cur); } }, "✕"))),
-      el("button", { type: "button", class: "sm", onclick: () => render([...box.read(), { label: "", value: 0 }]) }, "＋ Строка"));
-  };
-  box.read = () => [...box.querySelectorAll(".r")].map((r) => { const [l, v] = r.querySelectorAll("input"); return { label: l.value, value: Number(v.value) }; });
-  render(rows);
-  return box;
 }
 
 function seriesTable(series, nLabels) {

@@ -33,3 +33,10 @@ async def test_pptx_buttons_are_wired(client):
     assert 'id="pptx"' in (await client.get("/d/x")).text
     for name in ("deck.js", "decks.js"):
         assert "deck.pptx" in (await client.get(f"/static/{name}")).text, name
+
+
+async def test_all_slide_types_are_offered(client):
+    js = (await client.get("/static/deck.js")).text
+    for t in ("agenda", "text", "columns", "comparison", "quote", "dual-chart",
+              "metrics", "table", "gallery", "video"):
+        assert f'"{t}"' in js or f"{t}:" in js, t
