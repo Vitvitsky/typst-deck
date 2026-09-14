@@ -92,6 +92,8 @@ export const FIELD_RU = {
   video: "Видео", url: "Ссылка", poster: "Обложка", kind: "Вид графика",
 };
 export const SIZE_RU = { small: "маленькая", medium: "средняя", large: "крупная" };
+// Вид графика — закрытый список (Literal в модели): всё, кроме bar и line, вернулось бы 422
+export const KIND_RU = { bar: "Столбцы", line: "Линии" };
 export const fileKind = (name) => /\.(png|jpe?g|svg)$/i.test(name) ? "image" : /\.mp4$/i.test(name) ? "video" : /\.(xlsx|csv)$/i.test(name) ? "table" : /\.(txt|md|docx)$/i.test(name) ? "text" : "bad";
 export const KIND_ICON = { image: "▨", video: "▶", table: "▦", text: "Т", bad: "?" };
 export const fmtSize = (b) => b < 1024 * 1024 ? `${Math.max(1, Math.round(b / 1024))} КБ` : `${(b / 1024 / 1024).toFixed(1)} МБ`;

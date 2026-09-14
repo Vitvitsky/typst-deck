@@ -218,7 +218,15 @@ def render_typ(deck: Deck, assets: set[str], base_url: str = "") -> tuple[str, l
             )
         elif isinstance(s, DualChartSlide):
             def chart(name: str, v):
-                return _dict({"caption": _mark(sid, name, v.caption), "kind": typ_str(v.kind),
+                # Маркер стороны обязан существовать и без подписи. Единственный
+                # текст стороны — caption, и при пустой подписи у слайда не было
+                # зоны клика ни для одной стороны: починить его можно было только
+                # через панель свойств, а будущий образец без подписей завалил бы
+                # правило 4, обвинив шаблон. Пустая подпись даёт не пустой маркер,
+                # а полосу во всю ширину стороны — по ней и кликают.
+                caption = _mark(sid, name, v.caption) if v.caption else (
+                    f'field({typ_str(sid)}, {typ_str(name)}, box(width: 100%, height: 8pt))')
+                return _dict({"caption": caption, "kind": typ_str(v.kind),
                               "labels": typ_value(v.labels),
                               "series": typ_value([x.model_dump() for x in v.series]),
                               "unit": _opt(v.unit)})
@@ -244,6 +252,14 @@ def render_typ(deck: Deck, assets: set[str], base_url: str = "") -> tuple[str, l
                 pics.append(_dict({
                     "image": _image_field(sid, "images", pic.image),
                     "caption": _mark(sid, "images", pic.caption)}))
+            if not pics:
+                # Пропали все картинки — поле images осталось бы вовсе без маркера,
+                # и зона неклика­бельна: слайд чинится только через панель свойств.
+                # Высоту кадра задаёт шаблон своим боксом, здесь она нужна лишь
+                # затем, чтобы у зоны был ненулевой размер.
+                pics.append(_dict({
+                    "image": f'field({typ_str(sid)}, "images", box(width: 100%, height: 2cm))',
+                    "caption": "none"}))
             out.append(f"#slide-gallery(title: {_text(sid, 'title', s.title)}, images: {_seq(pics)})\n")
         elif isinstance(s, VideoSlide):
             url = s.url

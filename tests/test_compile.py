@@ -1,4 +1,6 @@
 import json
+import re
+from pathlib import Path
 
 import pytest
 
@@ -335,3 +337,141 @@ def test_long_section_title_shrinks_into_its_zone(deck_dir, tdir):
     assert h <= 24 * MM        # но в зону 2.4cm укладывается
     assert len([p for p in long_.positions if p["field"] == "title"]) == 1  # measure не задвоил маркер
     assert len(long_.svgs) == 1
+
+
+# ============ геометрия по верхнему пределу модели ============
+#
+# Слепая зона набора: правило 3 контракта ловит только разрыв на вторую страницу.
+# Текст, который укладывается в пределы модели, но вылезает за низ страницы,
+# не видит никто — slide() обрезает его молча (box(clip: true)), число страниц
+# сходится, и compile_deck молчит. Этот тест закрывает зону: слайд каждого типа
+# набивается ровно по верхнему пределу model.py, и низ каждого маркера поля
+# (y + h из query(<edit>)) обязан остаться выше границы содержимого страницы.
+#
+# Границу не зашиваем числом: её считает content_bottom() из самого шаблона —
+# высота страницы минус нижнее поле, оба из его же set page().
+
+UNIT_PT = {"pt": 1.0, "mm": 72 / 25.4, "cm": 72 / 2.54, "in": 72.0}
+
+
+def _len_pt(raw: str) -> float:
+    m = re.fullmatch(r"\s*([\d.]+)\s*(pt|mm|cm|in)\s*", raw)
+    return float(m[1]) * UNIT_PT[m[2]]
+
+
+def content_bottom(template_dir) -> float:
+    """Низ зоны содержимого шаблона: высота страницы минус нижнее поле.
+
+    Оба числа — из set page() самого шаблона, поэтому проверка одинаково годится
+    и для эталона 16×9 см, и для корпоративного шаблона другого размера.
+    """
+    line = next(x for x in (Path(template_dir) / "deck.typ").read_text().splitlines()
+                if "set page(" in x)
+    height = _len_pt(re.search(r"height:\s*([\d.]+\s*(?:pt|mm|cm|in))", line)[1])
+    bottom = _len_pt(re.search(r"bottom:\s*([\d.]+\s*(?:pt|mm|cm|in))", line)[1])
+    return height - bottom
+
+
+FILL = "Итоги квартала по направлению данных и аналитики "
+
+
+def _chars(n: int) -> str:
+    return (FILL * (n // len(FILL) + 2))[:n]
+
+
+def maxed_slides() -> list[dict]:
+    """По слайду каждого из пятнадцати типов, набитому ровно по пределам model.py.
+
+    Число подписей и рядов у графиков держим читаемым: они растягивают график
+    вширь, а меряется низ полей. Всё, что влияет на высоту, — по максимуму.
+    Id слайда — имя типа: тогда сообщение об ошибке сразу называет виноватый тип.
+    """
+    return [
+        {"id": "title", "type": "title", "title": _chars(120), "subtitle": _chars(120),
+         "author": _chars(120), "department": _chars(120)},
+        {"id": "agenda", "type": "agenda", "title": _chars(120), "items": [_chars(80)] * 7},
+        {"id": "section", "type": "section", "title": _chars(120), "subtitle": _chars(120)},
+        {"id": "text", "type": "text", "title": _chars(120), "bullets": [_chars(200)] * 6},
+        # image_size — выбор оформления, а не предел ёмкости: "large" отдаёт
+        # картинке 55 % ширины и нарочно морит колонку тезисов (ей остаётся
+        # 159 пт против 209 при "medium"). Берём значение по умолчанию, как и
+        # у прочих необязательных полей оформления.
+        {"id": "image", "type": "image", "title": _chars(120), "bullets": [_chars(200)] * 6,
+         "image": "p1.png", "image_size": "medium", "caption": _chars(120)},
+        {"id": "columns", "type": "columns", "title": _chars(120),
+         "blocks": [{"heading": _chars(60), "text": _chars(300)}] * 3},
+        {"id": "comparison", "type": "comparison", "title": _chars(120),
+         "left": {"heading": _chars(60), "bullets": [_chars(120)] * 5},
+         "right": {"heading": _chars(60), "bullets": [_chars(120)] * 5}},
+        {"id": "quote", "type": "quote", "text": _chars(300), "author": _chars(120)},
+        {"id": "chart", "type": "chart", "title": _chars(120), "kind": "bar",
+         "labels": ["Q1", "Q2", "Q3", "Q4"], "unit": "млн",
+         "series": [{"name": f"Ряд {i + 1}", "values": [4, -2, 3, 1]} for i in range(4)],
+         "bullets": [_chars(200)] * 4},
+        {"id": "dual-chart", "type": "dual-chart", "title": _chars(120),
+         "left": {"caption": _chars(80), "kind": "line", "labels": ["Q1", "Q2", "Q3"], "unit": "млн",
+                  "series": [{"name": f"Р{i + 1}", "values": [1, 2, 3]} for i in range(3)]},
+         "right": {"caption": _chars(80), "kind": "bar", "labels": ["A", "B", "C"], "unit": "млн",
+                   "series": [{"name": f"Р{i + 1}", "values": [3, 1, 2]} for i in range(3)]}},
+        {"id": "metrics", "type": "metrics", "title": _chars(120),
+         "items": [{"value": _chars(16), "label": _chars(60), "delta": _chars(12)}] * 4},
+        {"id": "table", "type": "table", "title": _chars(120), "header": [_chars(40)] * 6,
+         "rows": [[_chars(60)] * 6] * 8},
+        {"id": "gallery", "type": "gallery", "title": _chars(120),
+         "images": [{"image": f"p{i + 1}.png", "caption": _chars(80)} for i in range(4)]},
+        {"id": "video", "type": "video", "title": _chars(120), "video": "v.mp4",
+         "poster": "p1.png", "caption": _chars(120)},
+        {"id": "final", "type": "final", "title": _chars(120), "contact": _chars(120)},
+    ]
+
+
+# Замер 2026-09-14, оба шаблона сошлись до сотой доли пункта. Превышение границы
+# 232.44 пт до правки: text +245.97, image +990.33, columns +221.60, chart +551.38.
+# Правка убрала три из четырёх: text −20.85, columns −2.71, image −5.36.
+#
+# Остальные переполняются по своей причине и в эту правку не входят: у table
+# (+100.65), gallery (+90.00), video (+32.05) и final (+87.89) подгонки нет
+# вовсе, а у comparison (+36.26) она есть, но не хватает на пяти тезисах по 120
+# знаков.
+#
+# chart (+26.36 после правки, было +551.38) — отдельный случай, и он тут не
+# потому, что до него не дошли руки. Колонка выводов у графика — треть полосы,
+# 124 пт, и высоты под ней 76.7 пт; четыре вывода по 200 знаков (потолок модели)
+# на последней ступени лесенки, 4pt, занимают 103 пт. Чтобы влезть, нужен кегль
+# около 3.5pt — это уже не текст. Подгонкой кегля тип не чинится: нужен либо
+# предел slots для chart.bullets (200 знаков против примерно 90, которые сюда
+# помещаются), либо другая раскладка колонок. И то и другое — решение автора
+# правки, а не то, что стоит изобретать по ходу.
+#
+# Множество ниже — не индульгенция, а замок: тип, который переполнился, не
+# будучи здесь названным, валит тест. Починить любой из шести можно — тест от
+# этого не покраснеет.
+OUT_OF_SCOPE_OVERFLOW = {"comparison", "table", "gallery", "video", "final", "chart"}
+
+# department титульного слайда прижат к низу ровно на границе (низ 232.44 при
+# границе 232.44) — на точном равенстве тест не должен разваливаться
+BOTTOM_TOL = 0.5
+
+
+@requires_typst
+@pytest.mark.parametrize("tid", ["default", "dark"])
+def test_model_maximum_does_not_overflow_the_page(deck_dir, png_bytes, tid):
+    """Слайд по верхнему пределу модели не уходит содержимым под обрез страницы."""
+    for n in range(1, 5):
+        (deck_dir / "assets" / f"p{n}.png").write_bytes(png_bytes)
+    (deck_dir / "assets" / "v.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    tdir = TEMPLATE_DIR if tid == "default" else ROOT / "templates" / tid
+    deck = Deck(id="maxdeck", slides=maxed_slides())
+    r = compile_deck(deck, deck_dir, tdir, base_url="http://t")
+    assert len(r.svgs) == len(deck.slides), "одна функция — одна страница"
+    bound = content_bottom(tdir)
+    worst: dict[str, tuple[float, str]] = {}
+    for p in r.positions:
+        bottom = p["y"] + p["h"]
+        if bottom > bound + BOTTOM_TOL and bottom > worst.get(p["slide"], (0.0, ""))[0]:
+            worst[p["slide"]] = (bottom, p["field"])
+    extra = {k: v for k, v in worst.items() if k not in OUT_OF_SCOPE_OVERFLOW}
+    assert not extra, (
+        f"содержимое уходит под обрез страницы (граница {bound:.2f} пт): "
+        + ", ".join(f"{t}.{f} низ {b:.2f} (+{b - bound:.2f})"
+                    for t, (b, f) in sorted(extra.items())))

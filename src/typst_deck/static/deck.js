@@ -1,4 +1,4 @@
-import { api, upload, waitJob, sleep, el, toast, armConfirm, TYPE_RU, FIELD_RU, SIZE_RU, fileKind, errorText, fmtDate, fmtElapsed, fmtTokens } from "./api.js";
+import { api, upload, waitJob, sleep, el, toast, armConfirm, TYPE_RU, FIELD_RU, SIZE_RU, KIND_RU, fileKind, errorText, fmtDate, fmtElapsed, fmtTokens } from "./api.js";
 import { mountShell } from "./shell.js";
 
 const deckId = location.pathname.split("/").filter(Boolean).pop();
@@ -391,6 +391,8 @@ function fieldControl(slide, field) {
   if (field === "bullets" || field === "labels") return el("textarea", { name: field, placeholder: "По одному на строку" }, (v || []).join("\n"));
   if (field === "notes") return el("textarea", { name: field }, v || "");
   if (field === "image_size") return el("select", { name: field }, ...Object.entries(SIZE_RU).map(([k, l]) => el("option", { value: k, selected: v === k }, l)));
+  // вид графика — выбор, а не поле ввода: модель принимает только bar и line
+  if (field === "kind") return el("select", { name: field }, ...Object.entries(KIND_RU).map(([k, l]) => el("option", { value: k, selected: v === k }, l)));
   if (COMPOSITE.includes(field)) {
     const t = el("textarea", { name: field, rows: 6, class: "mono" }, JSON.stringify(v ?? [], null, 1));
     t.title = "Пока правится как JSON — редактор появится в следующем обновлении";
@@ -438,7 +440,8 @@ function renderProps() {
   const patch = {};
   const form = el("form", {}, el("h3", {}, `Слайд ${n} · ${TYPE_RU[slide.type]}`), el("div", { class: "sub" }, "Меняются только поля — оформление задаёт шаблон колоды (его можно сменить вверху)."));
   const readers = [];
-  const ORDER = ["title", "subtitle", "author", "department", "text", "items", "bullets", "blocks",
+  // text выше author: у цитаты нет заголовка, и панель читалась «Автор, потом Текст»
+  const ORDER = ["title", "subtitle", "text", "author", "department", "items", "bullets", "blocks",
     "left", "right", "header", "rows", "images", "kind", "labels", "series", "unit",
     "caption", "contact", "url", "poster", "video", "notes"];
   const keys = Object.keys(slide).filter((k) => !["id", "type", "image", "image_size"].includes(k))

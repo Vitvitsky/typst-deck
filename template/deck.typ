@@ -8,6 +8,10 @@
 #let muted = rgb("#6b7280")
 #let negative = rgb("#c0392b") // падение на графиках: читается иначе, чем рост
 #let palette = (accent, rgb("#e07a1f"), rgb("#2f9e6f"), rgb("#8e44ad"))
+// Бумага страницы. Объявлена палитрой, а не подразумевается белой: общая часть
+// шаблонов красит ею заливки таблицы и заглушки видео (tint ниже), и без неё
+// тёмный шаблон снова получил бы светлые серые с потолка.
+#let paper = rgb("#ffffff")
 
 // Страница слайда: тело обрезается по границам, переполнение не создаёт
 // вторую страницу (контракт «одна функция — одна страница»).
@@ -18,7 +22,7 @@
 
 #let deck(title: none, body) = {
   set document(title: if title == none { "Презентация" } else { title })
-  set page(width: 16cm, height: 9cm, margin: (x: 1.1cm, top: 1cm, bottom: 0.8cm))
+  set page(width: 16cm, height: 9cm, margin: (x: 1.1cm, top: 1cm, bottom: 0.8cm), fill: paper)
   set text(font: "DejaVu Sans", size: 11pt, fill: ink, lang: "ru")
   set list(marker: text(fill: accent)[•], spacing: 0.35em)
   body
@@ -58,12 +62,71 @@
 // true выше) — так однажды уже пропадала третья строка повестки.
 #let body-h = 9cm - 1cm - 0.8cm
 
+// Низ зоны содержимого на странице: та же граница, по которой slide() обрезает
+// тело. Нужен затем, что бюджет «body-h минус измеренная шапка» систематически
+// завышен: measure(heading-block(…)) не учитывает ни v(0.3cm) в конце, ни
+// отбивку между блоками — при заголовке в 120 знаков она отдаёт 75.14 пт, тогда
+// как шапка занимает 101.54. Разницу в ~26 пт до сих пор гасил fit-safety, но
+// там, где запаса нет (высота кадра картинки), она уводила содержимое под обрез.
+// here().position().y — то же самое место, по которому считает маркер поля,
+// поэтому «сколько осталось» получается точно, а не с поправкой на глаз.
+#let body-bottom = 9cm - 0.8cm
+
 // Запас между бюджетом и measure(): content, измеренный сам по себе, внутри
 // настоящей колонки/грида выходит на несколько пунктов выше, чем показал
 // measure() — тот же зазор, что slide-dual-chart уже приходилось учитывать
 // отдельно (см. его safety ниже, тоже 24pt, замерено там независимо). Без
 // запаса «влезает по measure()» иногда на деле обрезало последнюю строку.
 #let fit-safety = 24pt
+
+// Заливка — оттенок чернил на бумаге шаблона, а не зашитый серый. Замер:
+// #eeeeee на тёмном шаблоне давал контраст 1.05:1 при минимуме 4.5:1 (заголовок
+// таблицы и чётные строки пропадали), а tint(9%) даёт 12.26:1 на тёмном и
+// 12.29:1 на светлом, повторяя прежний светлый серый почти в точности.
+#let tint(k) = color.mix((ink, k), (paper, 100% - k), space: rgb)
+
+// Готовый список тезисов по месту: тот же приём, что у agenda/comparison —
+// кандидаты от крупного к мелкому, берём первый, что уложился в бюджет, иначе
+// последний. Список приходит от сервиса уже собранным (он обёрнут в маркер
+// поля и правится по клику), поэтому интервал задаётся set-правилом, а не
+// аргументом list().
+//
+// Ширину колонки передаёт вызывающий, и это не мелочь: layout() внутри ячейки
+// грида отдаёт размер объемлющего контейнера, а не ячейки. Список в узкой
+// колонке (slide-image, slide-chart) мерился бы по всей полосе тела, подгонка
+// считала бы, что всё влезает, и текст всё равно уходил под обрез — замерено:
+// image 6×200 давал +182 пт уже после подгонки. Так же, по явно посчитанной
+// ширине, меряют slide-comparison и slide-columns.
+// Нижние ступени лесенки (5pt и мельче) — не размер для чтения, а последний
+// рубеж перед молчаливой обрезкой: на самом потолке модели (шесть тезисов по
+// 200 знаков рядом с картинкой) читаемого кегля, при котором текст влезает,
+// не существует — нужен примерно 4.9pt. Лучше мелко, но целиком, чем крупно и
+// с отрезанной половиной; то, что потолок модели упирается в такие ступени, —
+// повод сузить пределы в slots, а не растить зону.
+#let fit-bullets(
+  w, budget, bullets,
+  steps: ((11pt, 0.35em), (10pt, 0.3em), (9pt, 0.25em), (8pt, 0.2em), (7pt, 0.16em),
+          (6pt, 0.12em), (5.5pt, 0.1em), (5pt, 0.08em), (4.5pt, 0.07em), (4pt, 0.06em)),
+) = context {
+  let render(step) = {
+    let (size, spacing) = step
+    set list(spacing: spacing)
+    text(size: size, bullets)
+  }
+  let pick = steps.last()
+  for step in steps {
+    // Мерить надо block(width: w), а не measure(width: w, …): именованная
+    // ширина не доходит до layout() внутри маркера поля, тот берёт ширину
+    // объемлющего контейнера, и список в узкой колонке мерился по всей полосе —
+    // подгонка считала, что влезает, а текст уходил под обрез. Настоящий блок
+    // заданной ширины такой контейнер и создаёт.
+    if measure(block(width: w, render(step))).height + fit-safety <= budget {
+      pick = step
+      break
+    }
+  }
+  render(pick)
+}
 
 #let slide-title(title: none, subtitle: none, author: none, department: none) = slide(
   background: place(top, rect(width: 100%, height: 1.1cm, fill: accent)),
@@ -111,34 +174,88 @@
   })
 ]
 
+// Единственный тяжёлый по телу тип, у которого подгонки не было вовсе: шесть
+// тезисов по 200 знаков (предел модели) показывали три, остальное съедал
+// clip: true молча. Теперь — тем же fit-bullets, что и у остальных.
 #let slide-text(title: none, bullets: none) = slide[
   #heading-block(title)
-  #body-area[#if bullets != none { bullets }]
+  #layout(full-sz => context {
+    let budget = body-bottom - here().position().y
+    body-area[#if bullets != none { fit-bullets(full-sz.width, budget, bullets) }]
+  })
 ]
 
 #let slide-image(title: none, bullets: none, image: none, image-size: "medium", caption: none) = slide[
   #heading-block(title)
-  #let img-w = (small: 30%, medium: 42%, large: 55%).at(image-size)
-  #grid(
-    columns: (1fr, img-w), column-gutter: 0.6cm,
-    [#if bullets != none { bullets }],
-    [
-      // картинка приходит с width/height 100% и fit: contain — контейнер задаём здесь
-      #box(width: 100%, height: 4.4cm, image)
-      #if caption != none { v(2pt); text(size: 8pt, fill: muted, caption) }
-    ],
-  )
+  #layout(full-sz => context {
+    let budget = body-bottom - here().position().y
+    // Запасной вид без картинки: модель её требует, но render.py всё ещё
+    // печатает image: none, когда файла ассета нет. Сетка резервировала бы
+    // 30–55 % ширины под пустой бокс и ставила подпись рядом с ничем — вместо
+    // этого тезисы растекаются на всю полосу, как было до смены набора типов.
+    if image == none {
+      body-area[
+        #if bullets != none { fit-bullets(full-sz.width, budget, bullets) }
+        #if caption != none { v(2pt); text(size: 8pt, fill: muted, caption) }
+      ]
+    } else {
+      let img-frac = (small: 0.30, medium: 0.42, large: 0.55).at(image-size)
+      let gap = 0.6cm
+      // ширина колонки тезисов: полоса тела минус картинка и зазор
+      let text-w = full-sz.width - img-frac * full-sz.width - gap
+      body-area(grid(
+        columns: (1fr, img-frac * 100%), column-gutter: gap,
+        [#if bullets != none { fit-bullets(text-w, budget, bullets) }],
+        // Высота кадра — не константа и не измерение. Прежние 4.4 см не знали
+        // про высоту шапки: при заголовке в 120 знаков тело начинается только
+        // на y = 129.89, и кадр с подписью кончался на 309.72 при границе
+        // 232.44. Померить подпись заранее тоже нельзя — measure не удерживает
+        // ширину внутри маркера поля (см. оговорку у fit-bullets), и подпись
+        // считалась двумя строками вместо трёх. Поэтому раскладку делает сам
+        // grid: колонка ровно в оставшуюся высоту, подпись занимает своё
+        // (auto), кадр — всё остальное (1fr). Ни одно число не берётся на глаз.
+        block(height: budget, grid(
+          rows: (1fr, auto), row-gutter: 2pt,
+          // картинка приходит с width/height 100% и fit: contain — контейнер задаём здесь
+          box(width: 100%, height: 100%, image),
+          if caption != none { text(size: 8pt, fill: muted, caption) } else { [] },
+        )),
+      ))
+    }
+  })
 ]
 
+// Кегль общий на все колонки и подбирается по самой длинной: разные размеры
+// шрифта в соседних блоках читались бы как ошибка вёрстки. Без подбора слайд
+// на потолке модели (3 блока по 300 знаков) терял последние строки всех трёх.
 #let slide-columns(title: none, blocks: ()) = slide[
   #heading-block(title)
-  #body-area(grid(
-    columns: blocks.map(_ => 1fr), column-gutter: 0.6cm,
-    ..blocks.map(b => [
-      #if b.heading != none { text(weight: "bold", b.heading); v(0.2cm) }
-      #text(size: 9.5pt, b.text)
-    ]),
-  ))
+  #layout(full-sz => context {
+    let budget = body-bottom - here().position().y
+    let gap = 0.6cm
+    let w = (full-sz.width - gap * (blocks.len() - 1)) / calc.max(blocks.len(), 1)
+    let block-body(b, step) = {
+      let (hs, ts) = step
+      [
+        #if b.heading != none { text(size: hs, weight: "bold", b.heading); v(0.2cm) }
+        #text(size: ts, b.text)
+      ]
+    }
+    let steps = ((11pt, 9.5pt), (10pt, 8.5pt), (9pt, 7.5pt), (8pt, 6.5pt), (7pt, 6pt), (6pt, 5.5pt))
+    let pick = steps.last()
+    for step in steps {
+      // block(width: w), а не measure(width: w, …) — см. оговорку у fit-bullets
+      let tallest = calc.max(0pt, ..blocks.map(b => measure(block(width: w, block-body(b, step))).height))
+      if tallest + fit-safety <= budget {
+        pick = step
+        break
+      }
+    }
+    body-area(grid(
+      columns: blocks.map(_ => 1fr), column-gutter: gap,
+      ..blocks.map(b => block-body(b, pick)),
+    ))
+  })
 ]
 
 // Обе колонки на одном кегле, иначе разные объёмы тезисов дали бы разные
@@ -297,8 +414,26 @@
     ]).join()
   }
   #if legend != none { legend; v(0.15cm) }
+  // Колонка выводов — та же подгонка, что у slide-text, но в узкой колонке и от
+  // прежнего кегля 9.5pt вниз: без неё четыре вывода по 200 знаков (предел
+  // модели) показывали примерно один. Бюджет — тело минус шапка и легенда.
   #if bullets == none { chart } else {
-    grid(columns: (2fr, 1fr), column-gutter: 0.6cm, chart, text(size: 9.5pt, bullets))
+    layout(full-sz => context {
+      // здесь мы уже стоим ниже шапки и легенды, поэтому вычитать их отдельно
+      // не нужно: here() и так показывает, сколько осталось до низа полосы
+      let budget = body-bottom - here().position().y
+      let gap = 0.6cm
+      // колонка выводов — треть полосы за вычетом зазора (грид 2fr : 1fr)
+      let text-w = (full-sz.width - gap) / 3
+      grid(
+        columns: (2fr, 1fr), column-gutter: gap, chart,
+        fit-bullets(
+          text-w, budget, bullets,
+          steps: ((9.5pt, 0.3em), (8.5pt, 0.25em), (7.5pt, 0.2em), (6.5pt, 0.16em),
+                  (6pt, 0.12em), (5.5pt, 0.1em), (5pt, 0.08em), (4.5pt, 0.07em), (4pt, 0.06em)),
+        ),
+      )
+    })
   }
 ]
 
@@ -329,10 +464,14 @@
       columns: (1fr, 1fr), column-gutter: 0.7cm,
       ..(left, right).map(side => layout(sz => context {
         let show-legend = side.kind == "line" or side.series.len() > 1
+        // единицу называет легенда — как в slide-chart. Иначе unit, объявленный
+        // спекой полем стороны, не показывался нигде: bars() печатает его только
+        // у единственной серии, а у линий подписей значений нет вовсе.
         let legend = if show-legend {
           side.series.enumerate().map(((i, s)) => box(inset: (right: 6pt))[
             #box(width: 6pt, height: 6pt, fill: palette.at(calc.rem(i, palette.len())))
             #h(2pt) #text(size: 6.5pt, s.name)
+            #if side.unit != none { text(size: 6.5pt, fill: muted, ", " + side.unit) }
           ]).join()
         }
         let caption = if side.caption != none { align(center, text(size: 8pt, fill: muted, side.caption)) }
@@ -410,8 +549,8 @@
   #body-area(table(
     columns: header.map(_ => 1fr),
     align: numeric.map(n => if n { right } else { left }),
-    stroke: 0.5pt + rgb("#dddddd"),
-    fill: (_, y) => if y == 0 { rgb("#eeeeee") } else if calc.even(y) { rgb("#f8f8f8") },
+    stroke: 0.5pt + tint(18%),
+    fill: (_, y) => if y == 0 { tint(9%) } else if calc.even(y) { tint(4%) },
     table.header(..header.map(h => text(size: 9pt, weight: "bold", h))),
     ..rows.flatten().map(c => text(size: 9pt, c)),
   ))
@@ -432,7 +571,7 @@
 #let slide-video(title: none, poster: none, url: none, caption: none) = slide[
   #heading-block(title)
   #body-area[
-    #let frame = box(width: 100%, height: 3.6cm, fill: if poster == none { muted.lighten(70%) } else { none })[
+    #let frame = box(width: 100%, height: 3.6cm, fill: if poster == none { tint(12%) } else { none })[
       #if poster != none { poster }
       #place(center + horizon, circle(radius: 0.6cm, fill: accent.transparentize(20%))[
         #align(center + horizon, text(fill: white, size: 14pt, "▶"))
