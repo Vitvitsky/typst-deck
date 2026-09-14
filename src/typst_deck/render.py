@@ -11,6 +11,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import quote
 
 from .logs import log_event
 from .model import (
@@ -118,7 +119,11 @@ def _opt(value: str) -> str:
 # Числовая ячейка: число с разделителями и необязательной единицей из букв
 # («17,5 %», «1 200», «42 млн»). Дата «2026-09-13» числом не считается:
 # единицу от числа отделяет пробел, и цифр с дефисами в ней не бывает.
-NUMBER = re.compile(r"^[-+−]?\d[\d\s ]*([.,]\d+)?\s*[%‰]?(\s+[^\W\d_]{1,12})?$")
+#
+# Якоря \A…\Z, а пробелы разрешены с обеих сторон: с ^…$ разбор был несимметричен —
+# «42\n» считалось числом, а «  42» нет, и ячейка со случайным пробелом слева тихо
+# отнимала выключку вправо у всей колонки.
+NUMBER = re.compile(r"\A\s*[-+−]?\d[\d\s ]*([.,]\d+)?\s*[%‰]?(\s+[^\W\d_]{1,12})?\s*\Z")
 
 
 def _dict(pairs: dict[str, str]) -> str:
@@ -142,10 +147,13 @@ def _numeric(header: list[str], rows: list[list[str]]) -> list[bool]:
 
 
 def _trend(delta: str) -> str:
+    # Тире пишет модель, по-русски: кроме дефиса (U+002D) и минуса (U+2212) там
+    # бывают короткое (U+2013) и длинное (U+2014) тире — «–12 %» читается падением
+    # и обязано его получить, а не остаться метрикой без цвета.
     d = delta.strip()
     if d.startswith("+"):
         return typ_str("up")
-    if d.startswith(("-", "−")):
+    if d.startswith(("-", "−", "–", "—")):
         return typ_str("down")
     return "none"
 
@@ -267,8 +275,10 @@ def render_typ(deck: Deck, assets: set[str], base_url: str = "") -> tuple[str, l
                 if s.video not in assets:
                     warnings.append(f"слайд {n}: видео {s.video} не найдено")
                 # без base_url ссылку собрать не из чего (например, проверка контракта):
-                # слайд рисуется обложкой без ссылки, и это не повод предупреждать
-                url = (f"{base_url.rstrip('/')}/api/decks/{deck.id}/assets/{s.video}"
+                # слайд рисуется обложкой без ссылки, и это не повод предупреждать.
+                # Имя ассета экранируется: «my file #1.mp4» давало живой пробел и #,
+                # и ссылка в PDF обрывалась на первом же из них.
+                url = (f"{base_url.rstrip('/')}/api/decks/{deck.id}/assets/{quote(s.video, safe='')}"
                        if s.video in assets and base_url else "")
             poster = "none"
             if s.poster:

@@ -88,6 +88,48 @@ def test_migrate_is_idempotent_and_check_writes_nothing(tmp_path):
     assert (tmp_path / "decks" / "d0000000003" / "deck.json").read_text() == before
 
 
+def test_one_broken_deck_does_not_stop_the_run(tmp_path, capsys):
+    """Перенос запускают один раз при остановленном сервисе: оператору нужна сводка,
+    а не трассировка. upgrade_slide умеет бросить KeyError, AttributeError и TypeError."""
+    write_deck(tmp_path, "d0000000001")
+    for name, slides in (("d0000000002", [{"type": "bar-chart", "title": "без id",
+                                           "data": [{"label": "A", "value": 1}]}]),
+                         ("d0000000003", ["строка вместо слайда"])):
+        d = tmp_path / "decks" / name
+        d.mkdir(parents=True)
+        (d / "deck.json").write_text(json.dumps(LEGACY | {"id": name, "slides": slides},
+                                                ensure_ascii=False))
+    broken = tmp_path / "decks" / "d0000000004"
+    broken.mkdir(parents=True)
+    (broken / "deck.json").write_text("[1, 2]")
+    write_deck(tmp_path, "d0000000005")
+
+    done = migrate(tmp_path)
+    assert {deck_id for deck_id, _ in done} == {"d0000000001", "d0000000005"}
+    err = capsys.readouterr().err
+    assert all(f"d000000000{n}: пропущена" in err for n in (2, 3, 4)), err
+
+
+def test_migrate_clears_the_preview_cache(tmp_path):
+    """Спека §5: кэш template-previews/ очищается — иначе примонтированный канон
+    без изменений файлов сохранит превью на шесть страниц вместо пятнадцати."""
+    write_deck(tmp_path, "d0000000001")
+    cached = tmp_path / "template-previews" / "default" / "build"
+    cached.mkdir(parents=True)
+    (cached / "slide-1.svg").write_text("<svg/>")
+    migrate(tmp_path)
+    assert not (tmp_path / "template-previews").exists()
+
+
+def test_check_does_not_clear_the_preview_cache(tmp_path):
+    write_deck(tmp_path, "d0000000001")
+    cached = tmp_path / "template-previews" / "default" / "build"
+    cached.mkdir(parents=True)
+    (cached / "slide-1.svg").write_text("<svg/>")
+    migrate(tmp_path, check=True)
+    assert (cached / "slide-1.svg").exists(), "--check ничего не пишет и ничего не удаляет"
+
+
 def test_broken_deck_is_left_alone(tmp_path):
     d = write_deck(tmp_path, "d0000000001")
     (d / "versions" / "000002.json").write_text("{не json")

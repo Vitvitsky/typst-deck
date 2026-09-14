@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import io
 import json
 import logging
@@ -21,10 +22,10 @@ from pathlib import Path
 
 from pptx import Presentation
 
-from .model import Deck
+from .model import CELL_MAX, Deck
 from .pptx import MappingError, export_pptx, load_mapping
 from .render import CompileError, CompileResult, compile_deck, resolve_fonts
-from .slots import clamp
+from .slots import clamp, field_kind
 
 # Образец: по слайду каждого типа в порядке SLIDE_TYPES. Им же рисуются превью
 # шаблонов в интерфейсе, поэтому картинки и ролик кладутся рядом (write_sample_assets).
@@ -84,7 +85,6 @@ def write_sample_assets(deck_dir: Path) -> None:
         (assets / name).write_bytes(data)
 
 
-STRING_LISTS = ("bullets", "labels", "items")
 FONT_WARNING = re.compile(r"unknown font family: ([^\n]+)")
 OVERSIZED = "Очень длинный текст, который заведомо не помещается в отведённое место " * 6
 FILL = "Итоги квартала по направлению данных и аналитики "
@@ -136,60 +136,115 @@ def _text(sample: str, n: int, lines: int = 1) -> str:
     return "\n".join(parts)
 
 
-def filled_slide(stype: str, limits: dict[str, dict[str, int]], sample: str = FILL) -> dict:
-    """Слайд типа stype, где каждое объявленное поле заполнено ровно по его пределам.
-    Обязательные поля без объявления получают короткие значения."""
+def _skeleton(stype: str, sample: str) -> dict:
+    """Слайд типа stype на коротких значениях по умолчанию — до наложения объявления.
+
+    Обязательные поля получают минимум, при котором слайд собирается; тяжёлые
+    необязательные (текст блока, тезис колонки, ячейка) — глобальный предел
+    model.py: именно он и действует, пока шаблон ничего не сузил.
+    """
     slide: dict = {"type": stype}
-    for fld, lim in limits.items():
-        if fld in STRING_LISTS:
-            slide[fld] = [_text(sample, lim.get("max", 40))] * lim.get("count", 3)
-        elif fld == "data":
-            slide["data"] = [{"label": f"Пункт {i + 1}", "value": i + 1} for i in range(lim.get("count", 3))]
-        elif fld != "series":  # ряды собираются ниже, под число подписей
-            slide[fld] = _text(sample, lim.get("max", 40), lim.get("lines", 1))
-    # agenda и final уже несут собственный короткий title по умолчанию, а у quote поля title вовсе нет
+    # agenda и final несут собственный короткий title по умолчанию, а у quote его вовсе нет
     if stype not in ("agenda", "quote", "final"):
-        slide.setdefault("title", "Итоги")
-    if stype == "chart":
-        slide.setdefault("labels", ["Q1", "Q2"])
-        k = limits.get("series", {}).get("count", 1)
-        slide["series"] = [{"name": f"Ряд {j + 1}", "values": list(range(len(slide["labels"])))}
-                           for j in range(k)]
-    if stype == "columns":
-        n = limits.get("blocks", {}).get("count", 3)
-        slide["blocks"] = [{"heading": _text(sample, 40), "text": _text(sample, 300)}] * n
-    if stype == "comparison":
+        slide["title"] = "Итоги"
+    if stype == "agenda":
+        slide["items"] = [_text(sample, 80)] * 3
+    elif stype == "text":
+        slide["bullets"] = [_text(sample, 80)] * 3
+    elif stype == "image":
+        slide["image"] = "sample-1.png"
+    elif stype == "columns":
+        slide["blocks"] = [{"heading": _text(sample, 40), "text": _text(sample, 300)}] * 3
+    elif stype == "comparison":
         side = {"heading": _text(sample, 60), "bullets": [_text(sample, 120)] * 3}
         slide["left"], slide["right"] = dict(side), dict(side)
-    if stype == "metrics":
-        n = limits.get("items", {}).get("count", 3)
-        slide["items"] = [{"value": "12,5 млн", "label": _text(sample, 60), "delta": "+12 %"}] * n
-    if stype == "table":
-        cols = limits.get("header", {}).get("count", 3)
-        rows = limits.get("rows", {}).get("count", 3)
-        slide["header"] = [_text(sample, 40)] * cols
-        slide["rows"] = [[_text(sample, 60)] * cols] * rows
-    if stype == "gallery":
-        n = limits.get("images", {}).get("count", 2)
-        slide["images"] = [{"image": name, "caption": _text(sample, 80)}
-                           for name in list(SAMPLE_IMAGES)[:n]]
-    if stype == "image":
-        slide.setdefault("image", "sample-1.png")
-    if stype == "text":
-        slide.setdefault("bullets", [_text(sample, 80)] * limits.get("bullets", {}).get("count", 3))
-    if stype == "video":
-        slide.setdefault("video", "sample.mp4")
-        slide.setdefault("poster", "sample-1.png")
-    if stype == "agenda":
-        slide.setdefault("items", [_text(sample, 80)] * limits.get("items", {}).get("count", 3))
-    if stype == "quote":
-        slide.setdefault("text", _text(sample, 300))
-    if stype == "dual-chart":
+    elif stype == "quote":
+        slide["text"] = _text(sample, 300)
+    elif stype == "chart":
+        slide["kind"] = "line"
+        slide["labels"] = ["Q1", "Q2"]
+        slide["series"] = [{"name": "Ряд 1", "values": [0, 1]}]
+    elif stype == "dual-chart":
         side = {"caption": _text(sample, 80), "labels": ["Q1", "Q2"],
-                "series": [{"name": "Ряд", "values": [1, 2]}]}
+                "series": [{"name": "Ряд 1", "values": [0, 1]}]}
         slide["left"], slide["right"] = dict(side), dict(side)
+    elif stype == "metrics":
+        slide["items"] = [{"value": "12,5 млн", "label": _text(sample, 60), "delta": "+12 %"}] * 3
+    elif stype == "table":
+        slide["header"] = [_text(sample, 40)] * 3
+        slide["rows"] = [[_text(sample, CELL_MAX)] * 3] * 3
+    elif stype == "gallery":
+        slide["images"] = [{"image": SAMPLE_IMAGES[0], "caption": _text(sample, 80)}] * 2
+    elif stype == "video":
+        slide["video"], slide["poster"] = "sample.mp4", "sample-1.png"
+    return slide
+
+
+def _fill(kind: str | None, current: object, lim: dict[str, int], sample: str):
+    """Значение поля ровно по его объявленным пределам.
+
+    Форму берём у схемы (field_kind), а не у имени поля: «items» — строки у
+    повестки и объекты у метрик, и угадывание по имени однажды уже превращало
+    пункты повестки в строку.
+    """
+    if kind == "strings":
+        n = lim.get("count", len(current) if isinstance(current, list) and current else 3)
+        item = (_text(sample, lim["max"]) if "max" in lim
+                else current[0] if isinstance(current, list) and current else _text(sample, 40))
+        return [item] * n
+    if kind == "list":  # список объектов или строк-ячеек: длину элементов задаёт не max, а его поля
+        items = current if isinstance(current, list) and current else [{}]
+        return [copy.deepcopy(items[0]) for _ in range(lim.get("count", len(items)))]
+    return _text(sample, lim.get("max", 40), lim.get("lines", 1))
+
+
+def _consistent(slide: dict, stype: str, sample: str) -> None:
+    """Поля, которые обязаны сойтись между собой после наложения пределов."""
     if stype == "chart":
-        slide.setdefault("kind", "line")
+        slide["series"] = [{"name": f"Ряд {j + 1}", "values": list(range(len(slide["labels"])))}
+                           for j in range(len(slide["series"]))]
+    if stype == "dual-chart":
+        for name in ("left", "right"):
+            side = slide[name]
+            side["series"] = [{"name": f"Ряд {j + 1}", "values": list(range(len(side["labels"])))}
+                              for j in range(len(side["series"]))]
+    if stype == "table":
+        width = len(slide["header"])
+        cell = slide["rows"][0][0] if slide["rows"] and slide["rows"][0] else _text(sample, CELL_MAX)
+        slide["rows"] = [[cell] * width for _ in slide["rows"]]
+    if stype == "gallery":
+        # Картинок образца три, а gallery допускает четыре: пускаем по кругу, иначе
+        # при count=4 собиралось три и самый тугой случай шаблона не проверялся.
+        slide["images"] = [dict(p, image=SAMPLE_IMAGES[i % len(SAMPLE_IMAGES)])
+                           for i, p in enumerate(slide["images"])]
+
+
+def filled_slide(stype: str, limits: dict[str, dict[str, int]], sample: str = FILL) -> dict:
+    """Слайд типа stype, где каждое объявленное поле заполнено ровно по его пределам.
+    Обязательные поля без объявления получают короткие значения.
+
+    Ключ с точкой («blocks.text», «left.bullets») — тот же путь во вложенное поле,
+    что понимают clamp и check_slide: он кладётся в подполе, а не в поле с точкой
+    в имени, которое модель с extra="forbid" не приняла бы вовсе. И объём берётся
+    объявленный: шаблон, честно сузивший blocks.text до 180, проверяется на 180,
+    а не на глобальные 300, которых он не обещал.
+    """
+    slide = _skeleton(stype, sample)
+    # Сначала поля верхнего уровня, потом вложенные: число блоков задаёт «blocks»,
+    # а «blocks.text» обязан лечь в каждый из них.
+    for path in sorted(limits, key=lambda p: "." in p):
+        head, _, tail = path.partition(".")
+        lim = limits[path]
+        if not tail:
+            slide[head] = _fill(field_kind(stype, head), slide.get(head), lim, sample)
+            continue
+        kind, target = field_kind(stype, path), slide.get(head)
+        if isinstance(target, list):  # массив объектов: подполе у каждого элемента
+            slide[head] = [dict(x) | {tail: _fill(kind, x.get(tail), lim, sample)}
+                           for x in target if isinstance(x, dict)]
+        elif isinstance(target, dict):
+            slide[head] = dict(target) | {tail: _fill(kind, target.get(tail), lim, sample)}
+    _consistent(slide, stype, sample)
     return slide
 
 
@@ -241,15 +296,17 @@ def _rule_oversized(path: Path, typst_bin: str, work_dir: Path, fonts: Path | No
     """Правило 3: переросший вход не выносит слайд на вторую страницу."""
     big = OVERSIZED[:120]
     breaks = big[:60] + "\n" * 8 + big[:40]  # переводы строки — механизм инцидента 2026-09-09
-    # heading (Block, Metric.label) ограничены моделью 60 знаками — переросший текст
-    # даём им по максимуму допустимого, а не общий big, иначе Deck() не соберётся
+    # heading (Block, Metric.label) ограничены моделью 60 знаками, ячейка таблицы —
+    # CELL_MAX: переросший текст даём им по максимуму допустимого, а не общий big,
+    # иначе Deck() не соберётся
     deck = Deck(slides=[
         {"type": "title", "title": big, "subtitle": breaks, "author": big, "department": big},
         {"type": "section", "title": big, "subtitle": breaks},
         {"type": "quote", "text": big + breaks, "author": big},
         {"type": "columns", "title": big, "blocks": [{"heading": big[:60], "text": big + breaks}] * 2},
         {"type": "metrics", "title": big, "items": [{"value": big[:16], "label": big[:60], "delta": big[:12]}] * 2},
-        {"type": "table", "title": big, "header": [big[:40], big[:40]], "rows": [[big[:60], big[:60]]] * 2},
+        {"type": "table", "title": big, "header": [big[:40], big[:40]],
+         "rows": [[big[:CELL_MAX], big[:CELL_MAX]]] * 2},
         {"type": "final", "title": big, "contact": breaks},
     ])
     try:

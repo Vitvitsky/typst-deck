@@ -83,6 +83,33 @@ def test_numeric_detects_only_true_numbers_not_dates():
     assert _numeric(header, numeric_rows) == [False, True]
 
 
+def test_trend_sees_every_kind_of_dash():
+    """delta пишет модель, по-русски: тире перед числом бывает любым из четырёх."""
+    from typst_deck.render import _trend
+
+    assert _trend("+12 %") == '"up"'
+    for minus in ("-12 %", "−12 %", "–12 %", "—3"):
+        assert _trend(minus) == '"down"', minus
+    assert _trend("0") == "none" and _trend("") == "none"
+
+
+def test_numeric_is_symmetric_about_stray_whitespace():
+    """Случайный пробел слева тихо отнимал выключку вправо у всей колонки."""
+    from typst_deck.render import _numeric
+
+    assert _numeric(["Регион", "Выручка"], [["Центр", "  42"], ["Север", "17,5 %\n"]]) == [False, True]
+    assert _numeric(["Регион", "Дата"], [["Центр", " 2026-09-13 "]]) == [False, False]
+    assert _numeric(["Регион", "Доля"], [["Центр", " -1 п. п. "]]) == [False, False]
+
+
+def test_video_asset_link_is_escaped():
+    """Имя ассета уходит в PDF живой ссылкой: пробел и # ломают её молча."""
+    deck = Deck(id="d1", slides=[{"type": "video", "title": "Ролик", "video": "my file #1.mp4"}])
+    typ, warnings = render_typ(deck, assets={"my file #1.mp4"}, base_url="http://h")
+    assert 'url: "http://h/api/decks/d1/assets/my%20file%20%231.mp4"' in typ
+    assert warnings == []
+
+
 def test_video_link_and_poster():
     typ, warnings = render_typ(rich_deck(), assets={"a1.png", "a2.png", "a3.mp4"}, base_url="http://t")
     assert 'url: "http://t/api/decks/d1/assets/a3.mp4"' in typ  # файл превращается в ссылку

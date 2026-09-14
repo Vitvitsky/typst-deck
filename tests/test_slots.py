@@ -235,6 +235,20 @@ def _violating(prop: dict, key: str, base: object) -> object:
     return "аб"
 
 
+def _shaped(stype: str, field: str, value: object) -> object:
+    """Нарушающее значение, оставшееся тем, чем поле назвалось.
+
+    У video модель требует не только длину: ассет .mp4, картинку в poster и
+    ссылку http(s) в url — значение уходит в PDF живой ссылкой. Предел здесь
+    нарушает содержимое, а форма остаётся правильной, иначе слайд не собрать
+    вовсе и проверять будет нечего.
+    """
+    if stype != "video" or not isinstance(value, str):
+        return value
+    return {"video": value + ".mp4", "poster": value + ".png",
+            "url": "http://" + value}.get(field, value)
+
+
 def test_every_key_clamp_keeps_reaches_the_schema_and_is_enforced():
     """Схема и проверка согласованы не на примерах, а по всем сочетаниям:
     каждый ключ, переживший clamp, модель видит в схеме и check_slide проверяет."""
@@ -260,7 +274,8 @@ def test_every_key_clamp_keeps_reaches_the_schema_and_is_enforced():
         else:
             assert "одна строка" in prop.get("description", ""), (stype, field, key)
 
-        value = _violating(DEFS[stype]["properties"][field], key, BASE[stype].get(field))
+        value = _shaped(stype, field,
+                        _violating(DEFS[stype]["properties"][field], key, BASE[stype].get(field)))
         extra = EXTRA_OVERRIDES.get((stype, field), {})
         slide = Deck(slides=[BASE[stype] | {field: value} | extra]).slides[0]
         msgs = check_slide(slide, {stype: {field: {key: 1}}}, n=1, template_name="Т")
@@ -387,6 +402,68 @@ def test_narrowing_dual_chart_side_does_not_leak_into_the_other_side():
     msgs = check_slide(slide, declared, n=1, template_name="Т")
     assert any("Левая колонка" in m for m in msgs)
     assert not any("Правая колонка" in m for m in msgs)
+
+
+def test_lines_on_a_path_through_an_array_is_checked_for_every_item():
+    """measure_slots.py выдаёт lines для каждой пробы без ключа item, то есть проба
+    по точке порождала предел, который доходил до модели и не проверялся никогда."""
+    from typst_deck.model import SlideAdapter
+
+    declared = clamp({"columns": {"blocks.text": {"lines": 1}}}, "т")
+    assert declared == {"columns": {"blocks.text": {"lines": 1}}}
+    slide = SlideAdapter.validate_python({"type": "columns", "title": "x", "blocks": [
+        {"text": "одна строка"}, {"text": "a\nb\nc\nd"}]})
+    assert check_slide(slide, declared, n=1, template_name="Т") == [
+        "слайд 1, поле «Блоки текста → Текст», элемент 2: 4 строки при пределе 1 в шаблоне «Т»"
+    ]
+
+
+def test_lines_through_an_array_lets_an_unchanged_old_item_through():
+    """Та же скидка «не стало хуже», что и у прочих пределов (спека §8), — поэлементно."""
+    from typst_deck.model import SlideAdapter
+
+    declared = clamp({"columns": {"blocks.text": {"lines": 1}}}, "т")
+
+    def slide(text):
+        return SlideAdapter.validate_python({"type": "columns", "title": "x", "blocks": [
+            {"text": "ок"}, {"text": text}]})
+
+    was = slide("а\nб\nв")
+    assert check_slide(slide("а\nб\nв"), declared, n=1, template_name="Т", before=was) == []
+    assert check_slide(slide("а\nб\nв\nг"), declared, n=1, template_name="Т", before=was) == [
+        "слайд 1, поле «Блоки текста → Текст», элемент 2: 4 строки при пределе 1 в шаблоне «Т»"
+    ]
+
+
+def test_nested_violation_is_named_by_the_whole_path():
+    """«Блоки текста» подписывали и blocks, и blocks.text: пользователь не понимал,
+    какой из двух объявленных пределов он задел."""
+    from typst_deck.model import SlideAdapter
+
+    declared = clamp({"columns": {"blocks": {"count": 3}, "blocks.text": {"max": 180}}}, "т")
+    slide = SlideAdapter.validate_python({"type": "columns", "title": "x", "blocks": [
+        {"text": "коротко"}, {"text": "Э" * 200}]})
+    assert check_slide(slide, declared, n=1, template_name="Т") == [
+        "слайд 1, поле «Блоки текста → Текст»: 200 знаков при пределе 180 в шаблоне «Т»"
+    ]
+
+
+def test_field_names_have_no_dead_entries():
+    """«data» осталась от снятого bar-chart: имя поля, которого нет ни у одного типа."""
+    from typst_deck.slots import DEFS, FIELD_RU
+
+    known = {f for d in DEFS.values() for f in d.get("properties", {})}
+    assert set(FIELD_RU) <= known, sorted(set(FIELD_RU) - known)
+
+
+def test_slot_ceiling_follows_the_measured_model_limits():
+    """Пределы, суженные замером (chart.bullets, ячейка таблицы), обязаны стать
+    потолком и для объявления шаблона, и для схемы, которую читает модель."""
+    from typst_deck.slots import DEFS
+
+    assert DEFS["chart"]["properties"]["bullets"]["items"]["maxLength"] == 120
+    assert DEFS["table"]["properties"]["rows"]["items"]["items"]["maxLength"] == 40
+    assert clamp({"chart": {"bullets": {"max": 200}}}, "т") == {"chart": {"bullets": {"max": 120}}}
 
 
 def test_table_rows_cell_path_is_rejected():

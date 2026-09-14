@@ -85,7 +85,7 @@ export const TYPE_RU = {
 export const FIELD_RU = {
   title: "Заголовок", subtitle: "Подзаголовок", bullets: "Тезисы", caption: "Подпись к картинке", contact: "Контакты",
   author: "Автор", department: "Подразделение",
-  unit: "Единица измерения", notes: "Заметки докладчика", data: "Данные диаграммы", labels: "Подписи по оси",
+  unit: "Единица измерения", notes: "Заметки докладчика", labels: "Подписи по оси",
   series: "Ряды данных", image: "Картинка", image_size: "Размер картинки",
   items: "Пункты", blocks: "Блоки текста", left: "Левая колонка", right: "Правая колонка",
   text: "Текст", header: "Шапка таблицы", rows: "Строки таблицы", images: "Картинки",

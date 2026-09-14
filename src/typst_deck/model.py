@@ -10,7 +10,19 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
 TITLE_MAX = 120
 BULLET_MAX = 200
+# Пределы, снятые замером вёрстки (2026-09-14, оба эталонных шаблона сошлись
+# до сотой доли пункта): до них объявленная ёмкость обещала объём, который не
+# помещается на страницу ни при каком читаемом кегле — правило потолка в
+# tests/test_compile.py ловило переполнение у chart, table и image с крупной
+# картинкой. Числа — не на глаз: рядом указано, где начинается обрез.
+CHART_BULLET_MAX = 120   # колонка выводов 124×76.7 пт: 4×150 знаков вылезают на 3.80 пт
+CELL_MAX = 40            # 8 строк × 6 ячеек: 44 знака вылезают на 15.52 пт
+LARGE_IMAGE_BULLETS = 900  # при image_size large: 6×200 знаков вылезают на 18.38 пт
 TEMPLATE_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,40}$"
+URL_MAX = 500
+ASSET_NAME_MAX = 120
+VIDEO_EXT = (".mp4",)
+POSTER_EXT = (".png", ".jpg", ".jpeg", ".svg")
 
 
 def new_id(prefix: str = "", n: int = 6) -> str:
@@ -23,9 +35,11 @@ def utcnow() -> datetime:
 
 Title = Annotated[str, Field(max_length=TITLE_MAX)]
 Bullet = Annotated[str, Field(min_length=1, max_length=BULLET_MAX)]
+# вывод у графика живёт в колонке шириной в треть полосы, а не во всю ширину тела
+ChartBullet = Annotated[str, Field(min_length=1, max_length=CHART_BULLET_MAX)]
 Short = Annotated[str, Field(max_length=80)]        # пункт повестки, подпись галереи, подпись графика
 Heading = Annotated[str, Field(max_length=60)]      # заголовок блока, колонки, метрики
-Cell = Annotated[str, Field(max_length=60)]         # ячейка таблицы
+Cell = Annotated[str, Field(max_length=CELL_MAX)]   # ячейка таблицы
 ImageSize = Literal["small", "medium", "large"]
 ChartKind = Literal["bar", "line"]
 
@@ -125,6 +139,23 @@ class ImageSlide(SlideBase):
     image_size: ImageSize = "medium"
     caption: Title = ""
 
+    @model_validator(mode="after")
+    def _bullets_fit_beside_the_picture(self):
+        """Крупная картинка забирает 55 % ширины, и колонке тезисов остаётся 159 пт
+        вместо 209: тот же текст, что при medium помещается, при large уходит под
+        обрез (замер: 6×200 знаков — на 18.38 пт ниже границы страницы, 6×150 —
+        влезает). Предел здесь перекрёстный, а не в самом поле: резать bullets у
+        всех размеров значило бы наказать medium и small, где всё помещается.
+        """
+        if self.image_size == "large":
+            total = sum(len(b) for b in self.bullets)
+            if total > LARGE_IMAGE_BULLETS:
+                raise ValueError(
+                    f"при крупной картинке (image_size «large») тезисам остаётся меньше места: "
+                    f"суммарно не больше {LARGE_IMAGE_BULLETS} знаков, а их {total}. "
+                    "Сократите тезисы или возьмите image_size «medium»")
+        return self
+
 
 class ColumnsSlide(SlideBase):
     type: Literal["columns"]
@@ -152,7 +183,7 @@ class ChartSlide(SlideBase):
     labels: list[Title] = Field(min_length=1, max_length=24)
     series: list[Series] = Field(min_length=1, max_length=4)
     unit: str = ""
-    bullets: list[Bullet] = Field(default_factory=list, max_length=4)
+    bullets: list[ChartBullet] = Field(default_factory=list, max_length=4)
 
     @model_validator(mode="after")
     def _lengths(self):
@@ -196,15 +227,27 @@ class GallerySlide(SlideBase):
 class VideoSlide(SlideBase):
     type: Literal["video"]
     title: Title
-    video: str = ""   # ассет .mp4 в колоде
-    url: str = ""     # внешняя ссылка
-    poster: str = ""  # ассет-картинка обложки
+    video: Annotated[str, Field(max_length=ASSET_NAME_MAX)] = ""   # ассет .mp4 в колоде
+    url: Annotated[str, Field(max_length=URL_MAX)] = ""            # внешняя ссылка
+    poster: Annotated[str, Field(max_length=ASSET_NAME_MAX)] = ""  # ассет-картинка обложки
     caption: Annotated[str, Field(max_length=120)] = ""
 
     @model_validator(mode="after")
     def _source(self):
+        """Ровно один источник — и он должен быть тем, чем назвался.
+
+        Значение уходит в PDF живой ссылкой, поэтому схема и длина проверяются
+        здесь, пока это одна строка кода: сегодня поле пишет только агентское API,
+        а план C открывает загрузку ролика и поле ссылки в интерфейсе.
+        """
         if bool(self.video) == bool(self.url):
             raise ValueError("у видео должно быть ровно одно: файл video или ссылка url")
+        if self.video and not self.video.lower().endswith(VIDEO_EXT):
+            raise ValueError(f"video: нужен ассет .mp4, а не «{self.video}»")
+        if self.poster and not self.poster.lower().endswith(POSTER_EXT):
+            raise ValueError(f"poster: нужна картинка ({', '.join(POSTER_EXT)}), а не «{self.poster}»")
+        if self.url and not self.url.lower().startswith(("http://", "https://")):
+            raise ValueError("url: ссылка должна начинаться с http:// или https://")
         return self
 
 

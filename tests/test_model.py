@@ -86,6 +86,51 @@ def test_table_rows_match_the_header():
                                       "header": ["Регион", "Выручка"], "rows": [["Центр"]]})
 
 
+def test_video_refuses_a_wrong_asset_and_a_wrong_link():
+    """План C откроет загрузку видео и поле ссылки в интерфейсе; пределы ставим сейчас."""
+    with pytest.raises(ValidationError):
+        SlideAdapter.validate_python({"type": "video", "title": "Р", "video": "photo.png"})
+    with pytest.raises(ValidationError):
+        SlideAdapter.validate_python({"type": "video", "title": "Р", "video": "a1.mp4",
+                                      "poster": "clip.mp4"})
+    for bad in ("javascript:alert(1)", "ftp://h/1.mp4", "h" * 5000):
+        with pytest.raises(ValidationError):
+            SlideAdapter.validate_python({"type": "video", "title": "Р", "url": bad})
+    ok = SlideAdapter.validate_python({"type": "video", "title": "Р", "url": "http://h/1.mp4",
+                                       "poster": "a1.jpg"})
+    assert ok.poster == "a1.jpg"
+
+
+def test_chart_bullets_are_capped_at_the_measured_length():
+    """Замер 2026-09-14: четыре вывода по 150 знаков уходят под обрез страницы,
+    по 140 — последняя ступень лестницы кеглей; предел — 120 знаков."""
+    base = {"type": "chart", "title": "Г", "labels": ["A", "B"],
+            "series": [{"name": "р", "values": [1, 2]}]}
+    assert len(SlideAdapter.validate_python(base | {"bullets": ["Э" * 120] * 4}).bullets) == 4
+    with pytest.raises(ValidationError):
+        SlideAdapter.validate_python(base | {"bullets": ["Э" * 121]})
+
+
+def test_table_cell_is_capped_at_the_measured_length():
+    """Восемь строк по шесть ячеек: 44 знака уже уходят под обрез, предел — 40."""
+    base = {"type": "table", "title": "Т", "header": ["а", "б"]}
+    SlideAdapter.validate_python(base | {"rows": [["Э" * 40, "б"]]})
+    with pytest.raises(ValidationError):
+        SlideAdapter.validate_python(base | {"rows": [["Э" * 41, "б"]]})
+
+
+def test_large_picture_leaves_less_room_for_bullets():
+    """Ёмкость зависит от оформления, которое выбирает тот же пользователь: при
+    «large» картинка берёт 55 % ширины. Резать тезисы у всех размеров нельзя —
+    при medium и small тот же текст помещается."""
+    base = {"type": "image", "title": "К", "image": "a1.png"}
+    SlideAdapter.validate_python(base | {"bullets": ["Э" * 200] * 6, "image_size": "medium"})
+    SlideAdapter.validate_python(base | {"bullets": ["Э" * 150] * 6, "image_size": "large"})
+    with pytest.raises(ValidationError) as e:
+        SlideAdapter.validate_python(base | {"bullets": ["Э" * 200] * 6, "image_size": "large"})
+    assert "large" in str(e.value)
+
+
 def test_video_takes_exactly_one_source():
     f = SlideAdapter.validate_python({"type": "video", "title": "Ролик", "video": "a1.mp4"})
     assert f.video == "a1.mp4" and f.url == ""

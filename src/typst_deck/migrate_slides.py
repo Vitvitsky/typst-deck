@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -70,8 +71,12 @@ def migrate(data_dir: Path, check: bool = False) -> list[tuple[str, int]]:
                     continue
                 Deck.model_validate(new)  # переносим только то, что модель примет
                 planned.append((p, json.dumps(new, ensure_ascii=False, indent=2)))
-        except (OSError, ValueError) as e:
-            print(f"{d.name}: пропущена, {e}", file=sys.stderr)
+        except (OSError, ValueError, KeyError, AttributeError, TypeError) as e:
+            # upgrade_slide умеет бросить KeyError (raw["id"], d["label"]),
+            # AttributeError (слайд не словарь) и TypeError (колода не объект).
+            # Перенос запускают один раз при остановленном сервисе: оператору нужна
+            # сводка, какие колоды переписаны, а не трассировка на первой битой.
+            print(f"{d.name}: пропущена, {type(e).__name__}: {e}", file=sys.stderr)
             continue
         if not planned:
             continue
@@ -81,6 +86,12 @@ def migrate(data_dir: Path, check: bool = False) -> list[tuple[str, int]]:
         # Extract deck ID (before dash for trash items, full name for decks)
         deck_id = d.name.split('-')[0]
         done.append((deck_id, len(planned)))
+    if not check:
+        # Спека §5: кэш превью шаблонов очищается. Шаблон, чьи файлы при выкатке
+        # меняются, спасала бы отметка по mtime (service.py), но примонтированный
+        # канон остаётся прежним файл в файл — и отдавал бы превью на шесть страниц
+        # там, где интерфейс ждёт пятнадцать.
+        shutil.rmtree(Path(data_dir) / "template-previews", ignore_errors=True)
     return done
 
 

@@ -163,6 +163,49 @@ def test_filled_slide_respects_limits():
     Deck(slides=[s, c, t, filled_slide("final", {})])
 
 
+def test_filled_slide_puts_a_dotted_limit_into_the_nested_field():
+    """Пределы по пути через точку (спека §6) ложатся во вложенное поле, а не в поле
+    с точкой в имени: у модели extra="forbid", и слайд с ключом «blocks.text» не собрать."""
+    s = filled_slide("columns", {"blocks": {"count": 3}, "blocks.text": {"max": 180}})
+    assert "blocks.text" not in s
+    assert len(s["blocks"]) == 3 and all(len(b["text"]) == 180 for b in s["blocks"])
+    c = filled_slide("comparison", {"left.bullets": {"count": 2, "max": 100}})
+    assert len(c["left"]["bullets"]) == 2 and all(len(b) == 100 for b in c["left"]["bullets"])
+    Deck(slides=[s, c])
+
+
+def test_filled_slide_takes_the_declared_volume_not_the_global_one():
+    """Шаблон, честно сузивший blocks.text до 180, проверяется на 180, а не на 300:
+    иначе правило 5 валит его за содержимое, которого он не обещал."""
+    narrow = filled_slide("columns", {"blocks.text": {"max": 180}})
+    assert all(len(b["text"]) == 180 for b in narrow["blocks"])
+    assert all(len(b["text"]) == 300 for b in filled_slide("columns", {})["blocks"])
+    side = filled_slide("comparison", {"right.bullets": {"max": 60}})
+    assert all(len(b) == 60 for b in side["right"]["bullets"])
+    assert all(len(b) == 120 for b in filled_slide("comparison", {})["left"]["bullets"])
+
+
+@requires_typst
+def test_rule_five_understands_nested_slot_limits(tmp_path):
+    """Воспроизведение из ревью: пример slots дословно из спеки §6 не собирался вовсе."""
+    d = make_template(tmp_path, "nested", meta={"name": "В", "slots": {
+        "columns": {"blocks": {"count": 3}, "blocks.text": {"max": 180}},
+        "comparison": {"left.bullets": {"count": 3, "max": 100}}}})
+    rep = check_template(d, "typst", tmp_path / "w")
+    assert rep.errors == [], rep.errors
+
+
+def test_gallery_at_four_pictures_goes_round_the_sample_images():
+    """Галерея допускает четыре картинки, а образец даёт три: самый тугой случай
+    правило 5 обязано проверять, а не срезать до трёх."""
+    from typst_deck.contract import SAMPLE_IMAGES
+
+    s = filled_slide("gallery", {"images": {"count": 4}})
+    assert len(s["images"]) == 4
+    assert all(p["image"] in SAMPLE_IMAGES for p in s["images"])
+    Deck(slides=[s])
+
+
 def test_filled_slide_is_valid_for_every_type_at_its_declared_limits():
     """Правило 5 собирает Deck() из filled_slide на каждом объявленном типе — она обязана
     быть валидной колодой и без объявления (короткие значения по умолчанию), и с ним.

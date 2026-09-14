@@ -27,7 +27,7 @@ FIELD_RU = {
     "title": "Заголовок", "subtitle": "Подзаголовок", "bullets": "Тезисы",
     "caption": "Подпись к картинке", "contact": "Контакты", "author": "Автор",
     "department": "Подразделение", "unit": "Единица измерения",
-    "labels": "Подписи по оси", "data": "Данные диаграммы", "series": "Ряды данных",
+    "labels": "Подписи по оси", "series": "Ряды данных",
     "notes": "Заметки докладчика", "image": "Картинка", "image_size": "Размер картинки",
     "items": "Пункты", "blocks": "Блоки текста", "left": "Левая колонка", "right": "Правая колонка",
     "text": "Текст", "header": "Шапка таблицы", "rows": "Строки таблицы", "images": "Картинки",
@@ -123,6 +123,18 @@ def _resolve_mut(props: dict, defs: dict, path: str) -> dict | None:
         container.pop("$ref", None)
         container.update(target)
     return container.get("properties", {}).get(tail)
+
+
+def field_kind(stype: str, path: str) -> str | None:
+    """Вид поля по пути: «text», «strings», «list» или None — тот же, по которому
+    clamp решает, применим ли ключ.
+
+    Нужен и тому, кто по объявлению собирает слайд (contract.filled_slide): форму
+    значения задаёт схема, а не догадка по имени поля, и путь через точку разбирается
+    там же, где здесь, — иначе предел лёг бы в поле с точкой в имени.
+    """
+    prop = _resolve(DEFS.get(stype, {}).get("properties", {}), SCHEMA["$defs"], path)
+    return _kind(prop) if prop is not None else None
 
 
 def clamp(raw: object, where: str = "") -> dict:
@@ -234,11 +246,29 @@ def _measures(value: object) -> dict[str, int]:
     return {}
 
 
-def _excess(key: str, limit: int, now: object, was: object) -> int | None:
-    """Замер, который нарушает предел и стал хуже прежнего; None — нарушения нет.
+def _excess(key: str, limit: int, now: object, was: object) -> tuple[int, int | None] | None:
+    """Замер, который нарушает предел и стал хуже прежнего, и номер нарушившего
+    элемента списка (None — судится поле целиком); None — нарушения нет.
 
     was — значение поля до правки (None, если сравнивать не с чем).
     """
+    if key == "lines" and isinstance(now, list):
+        # Путь через массив (columns.blocks.text, metrics.items.label,
+        # gallery.images.caption): строки меряются у каждого элемента отдельно.
+        # Иначе _measures(list) отдавал только count, предел lines никогда не
+        # нарушался — и объявление, которое measure_slots.py выдаёт для пробы по
+        # точке, доходило до модели мёртвым: обещано, но не проверяется.
+        prev = was if isinstance(was, list) else []
+        for i, item in enumerate(now):
+            actual = _measures(item).get("lines")
+            if actual is None or actual <= limit:
+                continue
+            # скидка «не стало хуже» (спека §8) — поэлементно, по месту в списке
+            old = _measures(prev[i]).get("lines") if i < len(prev) else None
+            if old is not None and actual <= old:
+                continue
+            return actual, i + 1
+        return None
     if key == "max" and isinstance(now, list):
         # Элементы списка судятся поштучно, а не по самому длинному: иначе новый
         # длинный тезис рядом со старым проходил бы — самый длинный ведь не вырос.
@@ -249,14 +279,14 @@ def _excess(key: str, limit: int, now: object, was: object) -> int | None:
         kept = sorted((len(x) for x in was if isinstance(x, str) and len(x) > limit),
                       reverse=True) if isinstance(was, list) else []
         bad = [n for i, n in enumerate(over) if i >= len(kept) or n > kept[i]]
-        return max(bad) if bad else None
+        return (max(bad), None) if bad else None
     actual = _measures(now).get(key)
     if actual is None or actual <= limit:
         return None
     prev = _measures(was).get(key)
     if prev is not None and actual <= prev:
         return None
-    return actual
+    return actual, None
 
 
 def _value(slide, path: str):
@@ -287,11 +317,16 @@ def check_slide(slide, declared: dict, *, n: int, template_name: str, before=Non
         now = _value(slide, field)
         was = _value(before, field) if same_type else None
         for key, limit in limits.items():
-            actual = _excess(key, limit, now, was)
-            if actual is None:
+            found = _excess(key, limit, now, was)
+            if found is None:
                 continue
-            label = FIELD_RU.get(field.partition(".")[0], field)
-            out.append(f"слайд {n}, поле «{label}»: "
+            actual, item = found
+            # Полный путь, а не его голова: «Блоки текста» подписывали и blocks,
+            # и blocks.text, и человек не понимал, какой из двух объявленных
+            # пределов он задел.
+            label = " → ".join(FIELD_RU.get(part, part) for part in field.split("."))
+            where = f", элемент {item}" if item else ""
+            out.append(f"слайд {n}, поле «{label}»{where}: "
                        f"{_phrase(key, actual)} при пределе {limit} в шаблоне «{template_name}»")
     return out
 
