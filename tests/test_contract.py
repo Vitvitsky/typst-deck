@@ -97,7 +97,7 @@ def test_overflow_on_oversized_or_declared_text_is_an_error(tmp_path):
     """Правила 3 и 5: финальный слайд без обрезки переливается на вторую страницу."""
     d = make_template(tmp_path, "overflow", deck_edit=NO_CLIP_FINAL,
                       meta={"name": "П", "slots": {"final": {"title": {"max": 120},
-                                                            "contact": {"max": 120, "lines": 9}}}})
+                                                            "contact": {"max": 120, "lines": 30}}}})
     errors = check_template(d, "typst", tmp_path / "w").errors
     assert any("переросший текст" in e for e in errors), errors
     assert any("по объявленным пределам" in e for e in errors), errors

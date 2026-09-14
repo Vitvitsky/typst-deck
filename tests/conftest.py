@@ -39,7 +39,7 @@ TWO_PAGES = ("#let slide-final(title: none, contact: none) = slide(fill: accent)
              "#let slide-final(title: none, contact: none) = page[] + slide(fill: accent)[")
 NO_CLIP_FINAL = ("#let slide-final(title: none, contact: none) = slide(fill: accent)[",
                  "#let slide-final(title: none, contact: none) = page(fill: accent)[")
-NO_CONTACT = ("#if contact != none { v(0.4cm); text(size: 12pt, contact) }", "")
+NO_CONTACT = ("#if contact != none { v(0.4cm); fit-text(1.0cm, (12pt, 11pt, 10pt), contact) }", "")
 FALLBACK_FONT = ('set text(font: "DejaVu Sans",', 'set text(font: ("DejaVu Sans", "Нет Такого Шрифта"),')
 
 

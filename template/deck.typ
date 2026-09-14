@@ -157,8 +157,8 @@
 #let slide-agenda(title: none, items: ()) = slide[
   #heading-block(title)
   #layout(full-sz => context {
-    let budget = body-h - measure(width: full-sz.width, heading-block(title)).height
-    let steps = ((11pt, 0.45em), (10pt, 0.38em), (9pt, 0.3em), (8pt, 0.22em))
+    let budget = body-bottom - here().position().y
+    let steps = ((11pt, 0.45em), (10pt, 0.38em), (9pt, 0.3em), (8pt, 0.22em), (7pt, 0.18em))
     let render(step) = {
       let (size, spacing) = step
       text(size: size, enum(spacing: spacing, ..items))
@@ -263,7 +263,7 @@
 #let slide-comparison(title: none, left: (:), right: (:)) = slide[
   #heading-block(title)
   #layout(full-sz => context {
-    let budget = body-h - measure(width: full-sz.width, heading-block(title)).height
+    let budget = body-bottom - here().position().y
     let gap = 0.7cm
     let w = (full-sz.width - gap) / 2
     let side-block(side, step) = {
@@ -274,7 +274,8 @@
         #if side.bullets != none { text(size: size, list(spacing: spacing, ..side.bullets)) }
       ]
     }
-    let steps = ((9.5pt, 0.35em), (8.5pt, 0.28em), (7.5pt, 0.22em), (6.5pt, 0.16em))
+    let steps = ((9.5pt, 0.35em), (8.5pt, 0.28em), (7.5pt, 0.22em), (6.5pt, 0.16em),
+                 (6pt, 0.14em), (5.5pt, 0.12em), (5pt, 0.1em), (4.5pt, 0.08em), (4pt, 0.06em))
     let pick = steps.last()
     for step in steps {
       if calc.max(
@@ -457,9 +458,9 @@
 #let slide-dual-chart(title: none, left: (:), right: (:)) = slide[
   #heading-block(title)
   #layout(full-sz => context {
-    // высоту шапки меряем, а не берём с потолка: заголовок — от одной до
-    // двух строк (fit-text), и от этого зависит, сколько места остаётся ниже
-    let budget = body-h - measure(width: full-sz.width, heading-block(title)).height
+    // сколько осталось под шапкой — по месту, а не измерением шапки:
+    // measure(heading-block(…)) занижает её примерно на 26 пт (см. body-bottom)
+    let budget = body-bottom - here().position().y
     body-area(grid(
       columns: (1fr, 1fr), column-gutter: 0.7cm,
       ..(left, right).map(side => layout(sz => context {
@@ -516,7 +517,7 @@
 #let slide-metrics(title: none, items: ()) = slide[
   #heading-block(title)
   #layout(full-sz => context {
-    let budget = body-h - measure(width: full-sz.width, heading-block(title)).height
+    let budget = body-bottom - here().position().y
     let gap = 0.5cm
     let cols = items.map(_ => 1fr)
     let value-cell(m, vs) = text(size: vs, weight: "bold", m.value)
@@ -532,7 +533,8 @@
       columns: cols, column-gutter: gap, row-gutter: 4pt, align: center + top,
       ..rows(step),
     )
-    let steps = ((28pt, 9pt, 9pt), (22pt, 8pt, 8pt), (18pt, 7pt, 7pt), (14pt, 6.5pt, 6.5pt))
+    let steps = ((28pt, 9pt, 9pt), (22pt, 8pt, 8pt), (18pt, 7pt, 7pt), (14pt, 6.5pt, 6.5pt),
+                 (11pt, 6pt, 6pt), (9pt, 5.5pt, 5.5pt))
     let pick = steps.last()
     for step in steps {
       if measure(width: full-sz.width, build(step)).height + fit-safety <= budget {
@@ -544,48 +546,89 @@
   })
 ]
 
+// Кегль и поля ячеек — по месту: восемь строк по шесть ячеек (потолок модели)
+// на прежних жёстких 9pt уходили под обрез на сотню пунктов, и восьмая строка
+// пропадала молча. Отступ ячейки убавляется вместе с кеглем: на восьми строках
+// он весит не меньше самого текста.
 #let slide-table(title: none, header: (), rows: (), numeric: ()) = slide[
   #heading-block(title)
-  #body-area(table(
-    columns: header.map(_ => 1fr),
-    align: numeric.map(n => if n { right } else { left }),
-    stroke: 0.5pt + tint(18%),
-    fill: (_, y) => if y == 0 { tint(9%) } else if calc.even(y) { tint(4%) },
-    table.header(..header.map(h => text(size: 9pt, weight: "bold", h))),
-    ..rows.flatten().map(c => text(size: 9pt, c)),
-  ))
+  #layout(full-sz => context {
+    let budget = body-bottom - here().position().y
+    let build(step) = {
+      let (size, pad) = step
+      table(
+        columns: header.map(_ => 1fr),
+        align: numeric.map(n => if n { right } else { left }),
+        stroke: 0.5pt + tint(18%),
+        inset: pad,
+        fill: (_, y) => if y == 0 { tint(9%) } else if calc.even(y) { tint(4%) },
+        table.header(..header.map(h => text(size: size, weight: "bold", h))),
+        ..rows.flatten().map(c => text(size: size, c)),
+      )
+    }
+    let steps = ((9pt, 5pt), (8pt, 4pt), (7pt, 3.5pt), (6pt, 3pt), (5.5pt, 2.5pt),
+                 (5pt, 2pt), (4.5pt, 1.5pt), (4pt, 1.2pt))
+    let pick = steps.last()
+    for step in steps {
+      if measure(block(width: full-sz.width, build(step))).height + fit-safety <= budget {
+        pick = step
+        break
+      }
+    }
+    body-area(build(pick))
+  })
 ]
 
+// Высота кадров — из оставшейся полосы, а не константами 1.7/3.6 см: при
+// четырёх картинках с подписями второй ряд уходил под обрез на 90 пт. Подпись
+// внутри ячейки берёт своё (auto), кадр — остальное (1fr); мерить подпись
+// заранее нельзя, см. оговорку у fit-bullets.
 #let slide-gallery(title: none, images: ()) = slide[
   #heading-block(title)
-  #body-area(grid(
-    columns: if images.len() == 4 { (1fr, 1fr) } else { images.map(_ => 1fr) },
-    column-gutter: 0.4cm, row-gutter: 0.3cm,
-    ..images.map(p => [
-      #box(width: 100%, height: if images.len() == 4 { 1.7cm } else { 3.6cm }, p.image)
-      #if p.caption != none { v(2pt); text(size: 8pt, fill: muted, p.caption) }
-    ]),
-  ))
+  #layout(full-sz => context {
+    let budget = body-bottom - here().position().y
+    let two-rows = images.len() == 4
+    let rg = 0.3cm
+    let cell-h = if two-rows { (budget - rg) / 2 } else { budget }
+    let cell(p) = block(height: cell-h, grid(
+      rows: (1fr, auto), row-gutter: 2pt,
+      box(width: 100%, height: 100%, p.image),
+      if p.caption != none { text(size: 8pt, fill: muted, p.caption) } else { [] },
+    ))
+    body-area(grid(
+      columns: if two-rows { (1fr, 1fr) } else { images.map(_ => 1fr) },
+      column-gutter: 0.4cm, row-gutter: rg,
+      ..images.map(cell),
+    ))
+  })
 ]
 
+// Кадр — в оставшуюся полосу, а не жёсткие 3.6 см: подпись под ним уходила
+// под обрез на 32 пт. Раскладку делает grid, как у картинки и галереи.
 #let slide-video(title: none, poster: none, url: none, caption: none) = slide[
   #heading-block(title)
-  #body-area[
-    #let frame = box(width: 100%, height: 3.6cm, fill: if poster == none { tint(12%) } else { none })[
+  #layout(full-sz => context {
+    let budget = body-bottom - here().position().y
+    let frame = box(width: 100%, height: 100%, fill: if poster == none { tint(12%) } else { none })[
       #if poster != none { poster }
       #place(center + horizon, circle(radius: 0.6cm, fill: accent.transparentize(20%))[
         #align(center + horizon, text(fill: white, size: 14pt, "▶"))
       ])
     ]
-    #if url == none { frame } else { link(url, frame) }
-    #if caption != none { v(2pt); text(size: 8pt, fill: muted, caption) }
-  ]
+    body-area(block(height: budget, grid(
+      rows: (1fr, auto), row-gutter: 2pt,
+      if url == none { frame } else { link(url, frame) },
+      if caption != none { text(size: 8pt, fill: muted, caption) } else { [] },
+    )))
+  })
 ]
 
 #let slide-final(title: none, contact: none) = slide(fill: accent)[
   #set text(fill: white)
   #v(1fr)
-  #if title != none { text(size: 28pt, weight: "bold", title) }
-  #if contact != none { v(0.4cm); text(size: 12pt, contact) }
+  // автокегль, как у титульного и разделительного: заголовок в 120 знаков
+  // жёстким 28pt уходил под обрез на 88 пт
+  #if title != none { fit-text(2.6cm, (28pt, 22pt, 17pt, 14pt), title, weight: "bold") }
+  #if contact != none { v(0.4cm); fit-text(1.0cm, (12pt, 11pt, 10pt), contact) }
   #v(1fr)
 ]
