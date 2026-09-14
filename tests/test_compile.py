@@ -6,7 +6,10 @@ import pytest
 
 from tests.conftest import ROOT, TEMPLATE_DIR, requires_typst
 from tests.test_render import full_deck
-from typst_deck.model import Deck
+from typst_deck.model import (
+    BULLET_MAX, CELL_MAX, CHART_BULLET_MAX, CHART_LABEL_MAX, Deck, LARGE_IMAGE_BULLETS,
+    TITLE_MAX, UNIT_MAX,
+)
 from typst_deck.render import CompileError, compile_deck
 
 pytestmark = requires_typst
@@ -382,53 +385,68 @@ def _chars(n: int) -> str:
 def maxed_slides() -> list[dict]:
     """По слайду каждого из пятнадцати типов, набитому ровно по пределам model.py.
 
-    Число подписей и рядов у графиков держим читаемым: они растягивают график
-    вширь, а меряется низ полей. Всё, что влияет на высоту, — по максимуму.
+    Длины берутся из констант модели, а не литералами: расширят предел — покраснеет
+    тест, который про пределы и написан. (Проверено: с литералами патч
+    CHART_BULLET_MAX=200, CELL_MAX=60, LARGE_IMAGE_BULLETS=1200 тест не красил.)
+
+    По максимуму берётся и легенда, а не только содержимое: имена рядов, единица
+    и подписи категорий. Прежняя оговорка «подписи и ряды растягивают график
+    вширь» верна для подписей и неверна для имён рядов — легенда переносится
+    и сдвигает вниз колонку выводов, а единица печаталась у каждого ряда.
     Id слайда — имя типа: тогда сообщение об ошибке сразу называет виноватый тип.
     """
     return [
-        {"id": "title", "type": "title", "title": _chars(120), "subtitle": _chars(120),
-         "author": _chars(120), "department": _chars(120)},
-        {"id": "agenda", "type": "agenda", "title": _chars(120), "items": [_chars(80)] * 7},
-        {"id": "section", "type": "section", "title": _chars(120), "subtitle": _chars(120)},
-        {"id": "text", "type": "text", "title": _chars(120), "bullets": [_chars(200)] * 6},
+        {"id": "title", "type": "title", "title": _chars(TITLE_MAX), "subtitle": _chars(TITLE_MAX),
+         "author": _chars(TITLE_MAX), "department": _chars(TITLE_MAX)},
+        {"id": "agenda", "type": "agenda", "title": _chars(TITLE_MAX), "items": [_chars(80)] * 7},
+        {"id": "section", "type": "section", "title": _chars(TITLE_MAX), "subtitle": _chars(TITLE_MAX)},
+        {"id": "text", "type": "text", "title": _chars(TITLE_MAX), "bullets": [_chars(BULLET_MAX)] * 6},
         # image_size — выбор оформления, а не предел ёмкости: "large" отдаёт
         # картинке 55 % ширины и нарочно морит колонку тезисов (ей остаётся
         # 159 пт против 209 при "medium"). Берём значение по умолчанию, как и
         # у прочих необязательных полей оформления.
-        {"id": "image", "type": "image", "title": _chars(120), "bullets": [_chars(200)] * 6,
-         "image": "p1.png", "image_size": "medium", "caption": _chars(120)},
+        {"id": "image", "type": "image", "title": _chars(TITLE_MAX), "bullets": [_chars(BULLET_MAX)] * 6,
+         "image": "p1.png", "image_size": "medium", "caption": _chars(TITLE_MAX)},
         # То же поле в худшем оформлении: "large" отдаёт картинке 55 % ширины, и
         # колонке тезисов остаётся 159 пт вместо 209. Выбрать такое сочетание
         # пользователю никто не мешает, значит, оно должно влезать — поэтому
         # модель и держит для него отдельный перекрёстный предел
         # (LARGE_IMAGE_BULLETS: суммарно 900 знаков, здесь это 6×150).
-        {"id": "image-large", "type": "image", "title": _chars(120), "bullets": [_chars(150)] * 6,
-         "image": "p1.png", "image_size": "large", "caption": _chars(120)},
-        {"id": "columns", "type": "columns", "title": _chars(120),
+        {"id": "image-large", "type": "image", "title": _chars(TITLE_MAX),
+         "bullets": [_chars(LARGE_IMAGE_BULLETS // 6)] * 6,
+         "image": "p1.png", "image_size": "large", "caption": _chars(TITLE_MAX)},
+        {"id": "columns", "type": "columns", "title": _chars(TITLE_MAX),
          "blocks": [{"heading": _chars(60), "text": _chars(300)}] * 3},
-        {"id": "comparison", "type": "comparison", "title": _chars(120),
+        {"id": "comparison", "type": "comparison", "title": _chars(TITLE_MAX),
          "left": {"heading": _chars(60), "bullets": [_chars(120)] * 5},
          "right": {"heading": _chars(60), "bullets": [_chars(120)] * 5}},
-        {"id": "quote", "type": "quote", "text": _chars(300), "author": _chars(120)},
-        {"id": "chart", "type": "chart", "title": _chars(120), "kind": "bar",
-         "labels": ["Q1", "Q2", "Q3", "Q4"], "unit": "млн",
-         "series": [{"name": f"Ряд {i + 1}", "values": [4, -2, 3, 1]} for i in range(4)],
-         "bullets": [_chars(120)] * 4},
-        {"id": "dual-chart", "type": "dual-chart", "title": _chars(120),
-         "left": {"caption": _chars(80), "kind": "line", "labels": ["Q1", "Q2", "Q3"], "unit": "млн",
-                  "series": [{"name": f"Р{i + 1}", "values": [1, 2, 3]} for i in range(3)]},
-         "right": {"caption": _chars(80), "kind": "bar", "labels": ["A", "B", "C"], "unit": "млн",
-                   "series": [{"name": f"Р{i + 1}", "values": [3, 1, 2]} for i in range(3)]}},
-        {"id": "metrics", "type": "metrics", "title": _chars(120),
+        {"id": "quote", "type": "quote", "text": _chars(300), "author": _chars(TITLE_MAX)},
+        # Худшая легенда, а не только худшее содержимое: имена рядов, единица и
+        # подписи категорий — все по потолку модели. Единица печаталась у каждого
+        # ряда, и четыре ряда по 60 знаков давали +27.77 пт под обрез.
+        {"id": "chart", "type": "chart", "title": _chars(TITLE_MAX), "kind": "bar",
+         "labels": [_chars(CHART_LABEL_MAX)] * 24, "unit": _chars(UNIT_MAX),
+         "series": [{"name": _chars(TITLE_MAX), "values": list(range(24))} for _ in range(4)],
+         "bullets": [_chars(CHART_BULLET_MAX)] * 4},
+        # Сторона dual-chart — самый тесный носитель легенды и подписей: колонка
+        # вдвое уже, чем у одиночного графика. Здесь по потолку и подписи (12 штук),
+        # и имена рядов, и единица.
+        {"id": "dual-chart", "type": "dual-chart", "title": _chars(TITLE_MAX),
+         "left": {"caption": _chars(80), "kind": "line",
+                  "labels": [_chars(CHART_LABEL_MAX)] * 12, "unit": _chars(UNIT_MAX),
+                  "series": [{"name": _chars(TITLE_MAX), "values": list(range(12))} for _ in range(3)]},
+         "right": {"caption": _chars(80), "kind": "bar",
+                   "labels": [_chars(CHART_LABEL_MAX)] * 12, "unit": _chars(UNIT_MAX),
+                   "series": [{"name": _chars(TITLE_MAX), "values": list(range(12))} for _ in range(3)]}},
+        {"id": "metrics", "type": "metrics", "title": _chars(TITLE_MAX),
          "items": [{"value": _chars(16), "label": _chars(60), "delta": _chars(12)}] * 4},
-        {"id": "table", "type": "table", "title": _chars(120), "header": [_chars(40)] * 6,
-         "rows": [[_chars(40)] * 6] * 8},
-        {"id": "gallery", "type": "gallery", "title": _chars(120),
+        {"id": "table", "type": "table", "title": _chars(TITLE_MAX), "header": [_chars(40)] * 6,
+         "rows": [[_chars(CELL_MAX)] * 6] * 8},
+        {"id": "gallery", "type": "gallery", "title": _chars(TITLE_MAX),
          "images": [{"image": f"p{i + 1}.png", "caption": _chars(80)} for i in range(4)]},
-        {"id": "video", "type": "video", "title": _chars(120), "video": "v.mp4",
-         "poster": "p1.png", "caption": _chars(120)},
-        {"id": "final", "type": "final", "title": _chars(120), "contact": _chars(120)},
+        {"id": "video", "type": "video", "title": _chars(TITLE_MAX), "video": "v.mp4",
+         "poster": "p1.png", "caption": _chars(TITLE_MAX)},
+        {"id": "final", "type": "final", "title": _chars(TITLE_MAX), "contact": _chars(TITLE_MAX)},
     ]
 
 
@@ -457,9 +475,38 @@ def maxed_slides() -> list[dict]:
 #                                предел перекрёстный, а не в самом поле)
 #
 # Множество ниже — не индульгенция, а замок: тип, который переполнился, не будучи
-# здесь названным, валит тест. Оно пусто — значит, у всех пятнадцати типов
-# содержимое по верхнему пределу модели укладывается в страницу.
-OUT_OF_SCOPE_OVERFLOW: set[str] = set()
+# здесь названным, валит тест.
+#
+# Волна 3 — худшая ЛЕГЕНДА, которой тут раньше не было вовсе (имена рядов брались
+# как «Ряд 1»). Вёрстка забрала почти всё: единица печатается один раз на легенду,
+# а не у каждого ряда; кегль легенды подбирается лесенкой; имена рядов вынесены
+# из box (box не переносит содержимое, и имя в 120 знаков занимало целую строку);
+# строка подписей категорий у bars() тоже подбирает кегль. Замер по дороге:
+#   chart      +38.33 → +21.82 (перенос имён) → +9.38 (ступень 4pt в легенде)
+#   dual-chart легенда стороны 141.10 → 67.06 пт, rest 262.92 → 188.88
+#
+# Два типа закрыть не удалось, и обоих не чинит ни кегль, ни предел на имя ряда:
+#
+#   chart       +9.38  Кривая ёмкости рваная: при имени ряда 80 знаков слайд
+#                      влезает (−1.77), при 60, 40, 30, 24 и 20 — нет (+0.98…+2.30),
+#                      при 16 снова влезает (−9.41). Это не ёмкость, а скачки
+#                      ступеней: короче имя → лесенка берёт ступень крупнее и
+#                      съедает выигрыш. Предел, выбранный по такой кривой, держался
+#                      бы на 1.77 пт запаса между двумя переполнениями — то есть
+#                      на удаче, а не на запасе. Ставить его нельзя.
+#   dual-chart +43.83  Не зависит от имени ряда вовсе: +43.83 и при 120 знаках,
+#                      и при 16, дно около +19.84 при 12. Сторона шириной 185.67 пт
+#                      несёт при бюджете 102.55 «обстановку» примерно на 190 пт:
+#                      легенда 67.06 (уже на нижней ступени 4pt), строка подписей
+#                      ~25 (уже ужата до 5pt), подпись стороны 28.63, полосы
+#                      подписей значений ~24, отбивки ~31. Графику при этом
+#                      остаётся отрицательная высота (chart-h ≈ −110), он
+#                      схлопывается, и высота перестаёт зависеть от входа.
+#
+# Чинить их — решение не вёрстки, а пределов: у стороны dual-chart надо резать
+# число подписей, длину подписи стороны или число рядов, либо переделывать расчёт
+# высоты стороны. И то и другое крупнее этой правки, и выбирать за автора я не стал.
+OUT_OF_SCOPE_OVERFLOW: set[str] = {"chart", "dual-chart"}
 
 # department титульного слайда прижат к низу ровно на границе (низ 232.44 при
 # границе 232.44) — на точном равенстве тест не должен разваливаться

@@ -16,8 +16,26 @@ BULLET_MAX = 200
 # tests/test_compile.py ловило переполнение у chart, table и image с крупной
 # картинкой. Числа — не на глаз: рядом указано, где начинается обрез.
 CHART_BULLET_MAX = 120   # колонка выводов 124×76.7 пт: 4×150 знаков вылезают на 3.80 пт
-CELL_MAX = 40            # 8 строк × 6 ячеек: 44 знака вылезают на 15.52 пт
+# Ячейка таблицы: не «сколько влезает на нижней ступени», а «сколько влезает,
+# когда ступень ещё остаётся в запасе». На полу 4pt помещались и 40 знаков
+# (−4.05 пт), но запаса по кеглю не было вовсе — при чуть более широкой
+# гарнитуре таблица сразу уходила под обрез. Замер поднятым полом 4.5pt:
+# 24 знака вылезают на +11.26, 23 влезают с −33.60. Сузить ячейку объявлением
+# slots нельзя (у rows есть только count), поэтому запас закладывает модель.
+CELL_MAX = 23
 LARGE_IMAGE_BULLETS = 900  # при image_size large: 6×200 знаков вылезают на 18.38 пт
+# Единица измерения печатается в легенде графика. Предела у неё не было вовсе —
+# проходила строка в 5000 знаков. Узкое место не сам график, а сторона
+# dual-chart, где легенда вдвое уже: замер 2026-09-14 — 120 знаков влезают
+# (−10.15 пт), 200 вылезают (+14.03); у одиночного графика запас больше
+# (200 — −7.81, ломается на 500: +12.95). Берём меньшее из двух.
+UNIT_MAX = 120
+# Подпись категории под графиком. Была Title, то есть 120 знаков: одиночный
+# график столько держит (24 подписи — −37.18 пт), но у стороны dual-chart
+# колонка вдвое уже, и там замер 2026-09-14 даёт 60 знаков → +43.83,
+# 40 → +28.23, 30 → −5.61. Предел общий на оба типа: подпись переносят из
+# графика в двойной, не переписывая, и она обязана влезать там же.
+CHART_LABEL_MAX = 30
 TEMPLATE_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,40}$"
 URL_MAX = 500
 ASSET_NAME_MAX = 120
@@ -40,6 +58,8 @@ ChartBullet = Annotated[str, Field(min_length=1, max_length=CHART_BULLET_MAX)]
 Short = Annotated[str, Field(max_length=80)]        # пункт повестки, подпись галереи, подпись графика
 Heading = Annotated[str, Field(max_length=60)]      # заголовок блока, колонки, метрики
 Cell = Annotated[str, Field(max_length=CELL_MAX)]   # ячейка таблицы
+Unit = Annotated[str, Field(max_length=UNIT_MAX)]   # единица измерения в легенде
+ChartLabel = Annotated[str, Field(max_length=CHART_LABEL_MAX)]  # подпись категории
 ImageSize = Literal["small", "medium", "large"]
 ChartKind = Literal["bar", "line"]
 
@@ -94,9 +114,9 @@ class Picture(_Strict):
 class ChartSide(_Strict):
     caption: Short = ""
     kind: ChartKind = "line"
-    labels: list[Title] = Field(min_length=1, max_length=12)
+    labels: list[ChartLabel] = Field(min_length=1, max_length=12)
     series: list[Series] = Field(min_length=1, max_length=3)
-    unit: str = ""
+    unit: Unit = ""
 
     @model_validator(mode="after")
     def _lengths(self):
@@ -180,9 +200,9 @@ class ChartSlide(SlideBase):
     type: Literal["chart"]
     title: Title
     kind: ChartKind = "line"
-    labels: list[Title] = Field(min_length=1, max_length=24)
+    labels: list[ChartLabel] = Field(min_length=1, max_length=24)
     series: list[Series] = Field(min_length=1, max_length=4)
-    unit: str = ""
+    unit: Unit = ""
     bullets: list[ChartBullet] = Field(default_factory=list, max_length=4)
 
     @model_validator(mode="after")

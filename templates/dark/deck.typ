@@ -363,8 +363,26 @@
     #place(top + left, dy: lab + up,
       line(start: (0pt, 0pt), end: (100%, 0pt), stroke: 0.5pt + muted))
   ]
-  grid(columns: cols, column-gutter: 0.35cm, align: center,
-    ..labels.map(l => text(size: 8pt, fill: muted, l)))
+  // Строка подписей категорий росла без всякого предела: 24 подписи по 30 знаков
+  // в колонках по ~14 пт переносятся каждая на несколько строк и в одиночку
+  // перерастают полосу — оттого chart по верхнему пределу давал +38.33, а сторона
+  // dual-chart +43.83. У lines() этой беды нет: там подписи place-ятся в коробку
+  // постоянной высоты и вниз ничего не двигают. Подписи приходят сырыми строками,
+  // без маркеров поля, поэтому measure() им можно верить (ср. оговорку
+  // у fit-bullets) — ужимаем кегль, пока строка не уляжется в свою долю высоты.
+  layout(sz => context {
+    let row(size) = grid(columns: cols, column-gutter: 0.35cm, align: center,
+      ..labels.map(l => text(size: size, fill: muted, l)))
+    let sizes = (8pt, 7pt, 6pt, 5pt, 4.5pt, 4pt)
+    let pick = sizes.last()
+    for cand in sizes {
+      if measure(block(width: sz.width, row(cand))).height <= 0.9cm {
+        pick = cand
+        break
+      }
+    }
+    row(pick)
+  })
 }
 
 // Линейный график: одна или несколько серий, точки соединены кривой,
@@ -412,14 +430,44 @@
   #let show-legend = kind == "line" or series.len() > 1
   #let chart-h = if show-legend { 2.9cm } else { 3.4cm }
   #let chart = if kind == "bar" { bars(labels, series, unit, height: chart-h) } else { lines(labels, series, height: chart-h) }
-  #let legend = if show-legend {
-    series.enumerate().map(((i, s)) => box(inset: (right: 10pt))[
-      #box(width: 8pt, height: 8pt, fill: palette.at(calc.rem(i, palette.len())))
-      #h(3pt) #text(size: 8pt, s.name)
-      #if unit != none { text(size: 8pt, fill: muted, ", " + unit) }
-    ]).join()
+  // Единица печатается один раз на всю легенду, а не у каждого ряда: она у рядов
+  // общая, а при четырёх рядах единица в 60 знаков повторялась четырежды — 248
+  // знаков одной только единицы. Легенда переносилась на несколько строк и
+  // сдвигала вниз колонку выводов: замерено +27.77 пт под обрез на обоих
+  // шаблонах, ровно столько же давали имена рядов по 60 знаков.
+  // Имя ряда — обычным текстом, а не внутри box: box с автоширины не переносит
+  // содержимое вовсе, и имя в 120 знаков занимало целую строку независимо от
+  // кегля. Оттого легенда из четырёх таких имён выходила 134.25 пт на 8pt и
+  // всё ещё 65.45 пт на нижней ступени 4.5pt — вдвое выше своего потолка.
+  // В боксе остаётся только квадратик цвета: ему переноситься нельзя.
+  #let legend-at(size) = {
+    series.enumerate().map(((i, s)) => {
+      box(width: size, height: size, fill: palette.at(calc.rem(i, palette.len())))
+      h(3pt)
+      text(size: size, s.name)
+      h(10pt)
+    }).join()
+    if unit != none { text(size: size, fill: muted, ", " + unit) }
   }
-  #if legend != none { legend; v(0.15cm) }
+  // Кегль легенды — по месту, как у остального: легенде отводится не больше
+  // трети оставшейся полосы, иначе она съедает то, что подписывает. Имена рядов
+  // и единица приходят сырыми строками, без маркеров поля, поэтому measure()
+  // здесь можно верить (см. оговорку у fit-bullets).
+  #if show-legend {
+    layout(sz => context {
+      let cap = calc.min(1.2cm, (body-bottom - here().position().y) * 0.3)
+      let sizes = (8pt, 7pt, 6pt, 5pt, 4.5pt, 4pt)
+      let pick = sizes.last()
+      for cand in sizes {
+        if measure(block(width: sz.width, legend-at(cand))).height <= cap {
+          pick = cand
+          break
+        }
+      }
+      legend-at(pick)
+    })
+    v(0.15cm)
+  }
   // Колонка выводов — та же подгонка, что у slide-text, но в узкой колонке и от
   // прежнего кегля 9.5pt вниз: без неё четыре вывода по 200 знаков (предел
   // модели) показывали примерно один. Бюджет — тело минус шапка и легенда.
@@ -473,12 +521,38 @@
         // единицу называет легенда — как в slide-chart. Иначе unit, объявленный
         // спекой полем стороны, не показывался нигде: bars() печатает его только
         // у единственной серии, а у линий подписей значений нет вовсе.
+        // единица — один раз на легенду, а не у каждого ряда (см. slide-chart)
+        // имя ряда — обычным текстом, не внутри box: box не переносит содержимое,
+        // и имя в 120 знаков занимало целую строку (см. slide-chart). У стороны
+        // dual-chart это стоило дороже всего: «остальное» разрасталось до 225–270 пт
+        // при бюджете 102.55, chart-h уходил в −146…−191, график схлопывался,
+        // а остаток всё равно не влезал — отсюда неподвижные +43.83.
+        let legend-at(size) = {
+          side.series.enumerate().map(((i, s)) => {
+            box(width: size, height: size, fill: palette.at(calc.rem(i, palette.len())))
+            h(2pt)
+            text(size: size, s.name)
+            h(6pt)
+          }).join()
+          if side.unit != none { text(size: size, fill: muted, ", " + side.unit) }
+        }
+        // Кегль легенды подбирается, а не берётся жёстким 6.5pt. Замер: на потолке
+        // модели легенда стороны занимала 141.10 пт — больше всего бюджета стороны
+        // (102.55), из-за чего «остальное» перерастало полосу, chart-h уходил
+        // в минус, график схлопывался, а высота переставала зависеть от входа
+        // вовсе: +43.83 держались хоть при именах в 120 знаков, хоть в 16.
+        // Потолок — треть бюджета, как у slide-chart.
         let legend = if show-legend {
-          side.series.enumerate().map(((i, s)) => box(inset: (right: 6pt))[
-            #box(width: 6pt, height: 6pt, fill: palette.at(calc.rem(i, palette.len())))
-            #h(2pt) #text(size: 6.5pt, s.name)
-            #if side.unit != none { text(size: 6.5pt, fill: muted, ", " + side.unit) }
-          ]).join()
+          let cap = budget * 0.3
+          let sizes = (6.5pt, 6pt, 5.5pt, 5pt, 4.5pt, 4pt)
+          let pick = sizes.last()
+          for cand in sizes {
+            if measure(block(width: sz.width, legend-at(cand))).height <= cap {
+              pick = cand
+              break
+            }
+          }
+          legend-at(pick)
         }
         let caption = if side.caption != none { align(center, text(size: 8pt, fill: muted, side.caption)) }
         let probe-h = 2cm // с любой пробной высотой — линейно, разница даёт «остальное»

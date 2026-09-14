@@ -112,11 +112,13 @@ def test_chart_bullets_are_capped_at_the_measured_length():
 
 
 def test_table_cell_is_capped_at_the_measured_length():
-    """Восемь строк по шесть ячеек: 44 знака уже уходят под обрез, предел — 40."""
+    """Восемь строк по шесть ячеек. Предел — не «сколько влезает на нижней
+    ступени кегля» (там помещались и 40 знаков), а «сколько влезает, когда
+    ступень ещё остаётся в запасе»: с полом 4.5pt 24 знака вылезают, 23 влезают."""
     base = {"type": "table", "title": "Т", "header": ["а", "б"]}
-    SlideAdapter.validate_python(base | {"rows": [["Э" * 40, "б"]]})
+    SlideAdapter.validate_python(base | {"rows": [["Э" * 23, "б"]]})
     with pytest.raises(ValidationError):
-        SlideAdapter.validate_python(base | {"rows": [["Э" * 41, "б"]]})
+        SlideAdapter.validate_python(base | {"rows": [["Э" * 24, "б"]]})
 
 
 def test_large_picture_leaves_less_room_for_bullets():
