@@ -11,6 +11,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 from urllib.parse import quote
 
 from .logs import log_event
@@ -140,22 +141,28 @@ def _mark(slide_id: str, name: str, value: str) -> str:
     return _text(slide_id, name, value)
 
 
-def _numeric(header: list[str], rows: list[list[str]]) -> list[bool]:
-    """Колонки, где каждая ячейка читается как число: шаблон выравнивает их вправо."""
+def numeric_columns(header: list[str], rows: list[list[str]]) -> list[bool]:
+    """Колонки, где каждая ячейка читается как число: шаблон и PPTX выравнивают их вправо."""
     return [all(NUMBER.match(row[i] or "") for row in rows) if rows else False
             for i in range(len(header))]
 
 
-def _trend(delta: str) -> str:
+def trend_of(delta: str) -> Literal["up", "down"] | None:
+    """Направление изменения метрики по знаку в начале delta — для шаблона и для PPTX."""
     # Тире пишет модель, по-русски: кроме дефиса (U+002D) и минуса (U+2212) там
     # бывают короткое (U+2013) и длинное (U+2014) тире — «–12 %» читается падением
     # и обязано его получить, а не остаться метрикой без цвета.
     d = delta.strip()
     if d.startswith("+"):
-        return typ_str("up")
+        return "up"
     if d.startswith(("-", "−", "–", "—")):
-        return typ_str("down")
-    return "none"
+        return "down"
+    return None
+
+
+def _trend(delta: str) -> str:
+    t = trend_of(delta)
+    return typ_str(t) if t else "none"
 
 
 def _image_field(slide_id: str, name: str, asset: str) -> str:
@@ -250,7 +257,7 @@ def render_typ(deck: Deck, assets: set[str], base_url: str = "") -> tuple[str, l
             header = _seq([_mark(sid, "header", h) for h in s.header])
             rows = _seq([_seq([_mark(sid, "rows", c) for c in row]) for row in s.rows])
             out.append(f"#slide-table(title: {_text(sid, 'title', s.title)}, header: {header}, "
-                       f"rows: {rows}, numeric: {typ_value(_numeric(s.header, s.rows))})\n")
+                       f"rows: {rows}, numeric: {typ_value(numeric_columns(s.header, s.rows))})\n")
         elif isinstance(s, GallerySlide):
             pics = []
             for pic in s.images:

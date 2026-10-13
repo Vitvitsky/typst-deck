@@ -327,6 +327,60 @@ def test_text_fields_drop_control_characters(tdir):
     assert first._element.xpath(".//a:br")  # \n — разрыв строки внутри абзаца
 
 
+def test_metrics_columns_with_trend_colors(tdir):
+    deck = Deck(slides=[{"type": "metrics", "title": "Т", "items": [
+        {"value": "12,5 млн", "label": "выручка", "delta": "+12 %"},
+        {"value": "3,4 %", "label": "доля", "delta": "–1 п. п."},
+        {"value": "17", "label": "проектов\x1f"}]}])
+    cols = sorted(boxes(export(tdir, deck).slides[0]), key=lambda b: b.left)
+    assert len(cols) == 3 and all(inside(b) for b in cols)
+    value, label, delta = cols[0].text_frame.paragraphs
+    assert value.text == "12,5 млн" and value.runs[0].font.size == Pt(60) and value.runs[0].font.bold
+    assert label.text == "выручка" and str(label.runs[0].font.color.rgb) == "666666"
+    assert str(delta.runs[0].font.color.rgb) == "1E1E1E"  # рост — trend.up
+    assert str(cols[1].text_frame.paragraphs[2].runs[0].font.color.rgb) == "FF2E00"  # «–» — падение
+    assert [p.text for p in cols[2].text_frame.paragraphs] == ["17", "проектов"]  # без delta — два абзаца
+
+
+def table_of(slide):
+    return next(sh for sh in slide.shapes if sh.has_table)
+
+
+def test_table_is_native_with_header_stripes_and_numeric_alignment(tdir):
+    deck = Deck(slides=[{"type": "table", "title": "Т", "header": ["Регион", "Выручка"],
+                         "rows": [["Центр", "42"], ["Север\nи запад", "17,5"], ["Юг", "28 %"]]}])
+    frame = table_of(export(tdir, deck).slides[0])
+    tbl = frame.table
+    assert (len(tbl.rows), len(tbl.columns)) == (4, 2) and inside(frame)
+    head = tbl.cell(0, 0)
+    assert head.text == "Регион" and head.text_frame.paragraphs[0].runs[0].font.bold
+    assert head._tc.xpath("./a:tcPr/a:solidFill/a:srgbClr[@val='DDDDDD']")
+    assert tbl.cell(2, 0)._tc.xpath("./a:tcPr/a:solidFill/a:srgbClr[@val='F8F8F8']")  # вторая строка данных
+    assert tbl.cell(1, 0)._tc.xpath("./a:tcPr/a:noFill")
+    assert tbl.cell(1, 1).text_frame.paragraphs[0].alignment == PP_ALIGN.RIGHT  # числа вправо
+    assert tbl.cell(1, 0).text_frame.paragraphs[0].alignment != PP_ALIGN.RIGHT
+    assert tbl.cell(2, 0)._tc.xpath(".//a:br")
+    # линии раньше заливки — иначе PowerPoint предложит восстановить файл
+    tags = [etree.QName(e).localname for e in tbl.cell(0, 0)._tc.tcPr]
+    assert tags[:4] == ["lnL", "lnR", "lnT", "lnB"] and tags[4] == "solidFill"
+    assert not frame._element.xpath(".//a:tblPr[@bandRow='1' or @firstRow='1']")
+
+
+def test_table_at_model_limits_fits_the_zone(tdir):
+    from typst_deck.model import CELL_MAX
+
+    cell = "x" * CELL_MAX
+    deck = Deck(slides=[{"type": "table", "title": "Т", "header": ["h" * 40] * 6, "rows": [[cell] * 6] * 8}])
+    frame = table_of(export(tdir, deck).slides[0])
+    assert inside(frame) and frame.height <= int(ZONE[3] * MM)
+
+
+def test_short_table_rows_are_capped(tdir):
+    deck = Deck(slides=[{"type": "table", "title": "Т", "header": ["a", "b"], "rows": [["1", "2"]]}])
+    frame = table_of(export(tdir, deck).slides[0])
+    assert frame.table.rows[0].height == 15 * MM and frame.height == 30 * MM
+
+
 def test_notes_go_to_speaker_notes(tdir):
     deck = Deck(slides=[{"type": "final", "notes": "Сказать спасибо"}])
     assert export(tdir, deck).slides[0].notes_slide.notes_text_frame.text == "Сказать спасибо"

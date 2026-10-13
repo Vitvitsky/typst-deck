@@ -69,7 +69,7 @@ def test_product_computes_trend_and_numeric():
 
 def test_numeric_detects_only_true_numbers_not_dates():
     """Числовая колонка не путается с датой: «2026-09-13» числом не считается."""
-    from typst_deck.render import _numeric
+    from typst_deck.render import numeric_columns as _numeric
 
     # Столбцы (текст, число): текстовой не должно быть числовыми, числовой - должно
     header = ["Регион", "Выручка"]
@@ -95,7 +95,7 @@ def test_trend_sees_every_kind_of_dash():
 
 def test_numeric_is_symmetric_about_stray_whitespace():
     """Случайный пробел слева тихо отнимал выключку вправо у всей колонки."""
-    from typst_deck.render import _numeric
+    from typst_deck.render import numeric_columns as _numeric
 
     assert _numeric(["Регион", "Выручка"], [["Центр", "  42"], ["Север", "17,5 %\n"]]) == [False, True]
     assert _numeric(["Регион", "Дата"], [["Центр", " 2026-09-13 "]]) == [False, False]
@@ -378,3 +378,11 @@ def test_rasterize_broken_svg_is_a_compile_error(tmp_path):
     svg.write_text("<svg")
     with pytest.raises(CompileError):
         rasterize_svg(svg, tmp_path / "bad.png")
+
+
+def test_trend_and_numeric_are_shared_with_pptx():
+    from typst_deck.render import numeric_columns, trend_of
+
+    assert [trend_of(d) for d in ("+12 %", "-3", "−1", "–2", "—4", "17", "")] == [
+        "up", "down", "down", "down", "down", None, None]
+    assert numeric_columns(["Регион", "Выручка"], [["Центр", "1 200,5"], ["Юг", "28 %"]]) == [False, True]

@@ -33,7 +33,7 @@ from pptx.util import Emu, Mm, Pt
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .model import SLIDE_TYPES, Deck
-from .render import CompileError, inside_template, rasterize_svg
+from .render import CompileError, inside_template, numeric_columns, rasterize_svg, trend_of
 
 MM = 36000  # EMU в миллиметре
 # Поля, которые обязаны лежать в заполнителях, — в порядке модели: он же задаёт
@@ -60,6 +60,8 @@ BLOCKS = 3  # столько блоков допускает ColumnsSlide.blocks
 
 CAPTION_STRIP = 15   # мм под подпись к картинке
 CAPTION_SCALE = 0.7  # кегль подписи от кегля тезисов
+ROW_MAX = 15        # мм — предел высоты строки таблицы: короткая таблица не тянется на всю зону
+RULE_W = 6350       # EMU — 0.5 пт, тонкая линия таблицы
 # Управляющие символы, которых не бывает в тексте слайда; \t и \n остаются.
 # python-pptx на них не падает, а пишет в текст видимый мусор вида _x001F_.
 CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f]")
@@ -665,10 +667,62 @@ def _quote_body(c: Ctx) -> set[int]:
     return set()
 
 
+def _metrics_body(c: Ctx) -> set[int]:
+    """Равные колонки: крупное число, подпись цветом подписи, изменение цветом тренда."""
+    st = c.m.text
+    colors = {"up": c.m.trend.up, "down": c.m.trend.down}
+    for item, box in zip(c.s.items, _split(_mm_box(c.sm.body), len(c.s.items), c.sm.gap)):
+        tf = _textbox(c.slide, box)
+        _paragraph(tf, 0, item.value, st.metric, bold=True, align=PP_ALIGN.CENTER, keep_newlines=False)
+        k = 1
+        for text, color in ((item.label, st.caption),
+                            (item.delta, colors.get(trend_of(item.delta), st.caption))):
+            if clean(text).strip():
+                _paragraph(tf, k, text, st.size, color=color, align=PP_ALIGN.CENTER)
+                k += 1
+    return set()
+
+
+def _cell_rules(cell, color: str) -> None:
+    """Тонкие линии со всех сторон. Пишутся до заливки: в a:tcPr линии идут раньше
+    заливки по схеме, а python-pptx вставляет заливку на её место сам."""
+    tcpr = cell._tc.get_or_add_tcPr()
+    for tag in ("a:lnL", "a:lnR", "a:lnT", "a:lnB"):
+        ln = etree.SubElement(tcpr, qn(tag), w=str(RULE_W))
+        fill = etree.SubElement(ln, qn("a:solidFill"))
+        etree.SubElement(fill, qn("a:srgbClr"), val=color.upper())
+
+
+def _table_body(c: Ctx) -> set[int]:
+    """Нативная таблица: жирная шапка на заливке, «зебра», тонкие линии, числа вправо."""
+    st = c.m.table
+    x, y, w, h = _mm_box(c.sm.body)
+    nrows, ncols = len(c.s.rows) + 1, len(c.s.header)
+    rh = min(h // nrows, ROW_MAX * MM)
+    tbl = c.slide.shapes.add_table(nrows, ncols, Emu(x), Emu(y), Emu(w), Emu(rh * nrows)).table
+    tbl.first_row = False     # стиль таблицы по умолчанию не красит шапку и полосы —
+    tbl.horz_banding = False  # это делает сопоставление
+    numeric = numeric_columns(c.s.header, c.s.rows)
+    for r, row in enumerate([c.s.header, *c.s.rows]):
+        tbl.rows[r].height = Emu(rh)
+        for col, text in enumerate(row):
+            cell = tbl.cell(r, col)
+            _cell_rules(cell, st.rule)
+            fill = st.header_fill if r == 0 else (st.stripe_fill if r % 2 == 0 else None)
+            if fill:
+                cell.fill.solid()
+                cell.fill.fore_color.rgb = RGBColor.from_string(fill.upper())
+            else:
+                cell.fill.background()
+            align = PP_ALIGN.RIGHT if r and numeric[col] else None
+            _paragraph(cell.text_frame, 0, text, st.size, bold=(r == 0), align=align)
+    return set()
+
+
 BODIES: dict[str, Callable[[Ctx], set[int]]] = {
     "agenda": _agenda_body, "text": _text_body, "image": _image_body, "columns": _columns_body,
     "comparison": _comparison_body, "quote": _quote_body, "chart": _chart_body,
-    "dual-chart": _dual_chart_body,
+    "dual-chart": _dual_chart_body, "metrics": _metrics_body, "table": _table_body,
 }
 
 
