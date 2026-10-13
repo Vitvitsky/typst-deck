@@ -450,12 +450,33 @@ def test_link_video_is_a_poster_with_a_hyperlink(tdir):
     assert not [sh for sh in slide.shapes if sh.shape_type == MSO_SHAPE_TYPE.MEDIA]
 
 
-def test_placeholder_poster_takes_the_mapping_colors(tdir):
+def _poster_pixels(tdir):
     slide = export(tdir, video_deck(url="https://example.com")).slides[0]
     [pic] = pictures(slide)
     with Image.open(io.BytesIO(pic.image.blob)) as im:
-        assert im.getpixel((5, 5)) == (0xDD, 0xDD, 0xDD)  # table.header_fill
-        assert im.getpixel((im.width // 2, im.height // 2)) == (0xFF, 0xDE, 0x00)  # «▶» — text.bullet
+        w, h = im.size
+        # фон — угол; круг — у его края, вне треугольника; «▶» — центр
+        return im.getpixel((5, 5)), im.getpixel((w // 2, h // 2 - h // 6 + 4)), im.getpixel((w // 2, h // 2))
+
+
+def test_placeholder_poster_is_drawn_like_the_pdf_frame(tdir):
+    """Как кадр видео в PDF: светлый фон (table.stripe_fill), круг цвета text.bullet,
+    «▶» — контрастный к кругу. Прежде «▶» цвета text.bullet лежал на table.header_fill —
+    у Lemana оба FFDE00, и в PowerPoint был сплошной жёлтый прямоугольник (2026-10-13)."""
+    bg, circle, play = _poster_pixels(tdir)
+    assert bg == (0xF8, 0xF8, 0xF8)          # table.stripe_fill синтетического мастера
+    assert circle == (0xFF, 0xDE, 0x00)      # text.bullet
+    assert play == (0x1E, 0x1E, 0x1E)        # на жёлтом — тёмный
+
+
+def test_placeholder_poster_play_mark_stays_visible_on_a_dark_bullet(tdir):
+    import json
+    p = tdir / "pptx.json"
+    m = json.loads(p.read_text())
+    m["text"]["bullet"] = "1E3A8A"; m["table"]["header_fill"] = "1E3A8A"
+    p.write_text(json.dumps(m))
+    bg, circle, play = _poster_pixels(tdir)
+    assert circle == (0x1E, 0x3A, 0x8A) and play == (0xFF, 0xFF, 0xFF)
 
 
 def test_notes_go_to_speaker_notes(tdir):

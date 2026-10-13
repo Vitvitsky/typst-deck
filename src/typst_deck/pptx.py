@@ -791,12 +791,20 @@ def _gallery_body(c: Ctx) -> set[int]:
 
 
 def _placeholder_poster(m: Mapping, tmp: Path) -> Path:
-    """Заглушка обложки: фон table.header_fill, по центру «▶» цвета text.bullet."""
+    """Заглушка обложки — как кадр видео в PDF: светлый фон table.stripe_fill, круг
+    цвета text.bullet, «▶» тёмный или белый — что контрастнее к кругу. Прежде «▶»
+    цвета text.bullet лежал прямо на table.header_fill: у Lemana оба FFDE00, и в
+    PowerPoint был сплошной жёлтый прямоугольник (2026-10-13)."""
     w, h = POSTER
-    im = Image.new("RGB", POSTER, _rgb(m.table.header_fill))
-    r = h // 6
-    ImageDraw.Draw(im).polygon([(w / 2 - r * 0.8, h / 2 - r), (w / 2 - r * 0.8, h / 2 + r), (w / 2 + r, h / 2)],
-                               fill=_rgb(m.text.bullet))
+    im = Image.new("RGB", POSTER, _rgb(m.table.stripe_fill))
+    d = ImageDraw.Draw(im)
+    circle = _rgb(m.text.bullet)
+    R = h // 6
+    d.ellipse([w / 2 - R, h / 2 - R, w / 2 + R, h / 2 + R], fill=circle)
+    luma = 0.2126 * circle[0] + 0.7152 * circle[1] + 0.0722 * circle[2]
+    mark = (0x1E, 0x1E, 0x1E) if luma > 140 else (0xFF, 0xFF, 0xFF)
+    r = R * 0.45
+    d.polygon([(w / 2 - r * 0.8, h / 2 - r), (w / 2 - r * 0.8, h / 2 + r), (w / 2 + r, h / 2)], fill=mark)
     path = tmp / "poster-placeholder.png"
     im.save(path)
     return path
