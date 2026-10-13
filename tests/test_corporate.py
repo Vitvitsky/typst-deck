@@ -75,7 +75,10 @@ def test_corp_declared_text_fits_its_measured_zone(t, tmp_path):
     cfg = json.loads((t.path / meta["measure"]).read_text())
     for i, p in enumerate(cfg["probes"]):
         lim = t.slots.get(p["slide"], {}).get(p["field"])
-        if not lim:
+        if not lim or "." in p["field"]:
+            # вложенное поле (images.caption) помечено маркером поля верхнего уровня
+            # вместе с соседями (картинкой) — его высоту отдельно не достать;
+            # вложенные пределы держит test_corp_type_at_declared_limits_stays_on_the_page
             continue
         slide = filled_slide(p["slide"], {p["field"]: lim}, sample=cfg.get("sample", "Итоги квартала "))
         r = compile_deck(Deck(slides=[slide]), tmp_path / f"p{i}", t.path, fonts_dir=t.fonts)
