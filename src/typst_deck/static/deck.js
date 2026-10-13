@@ -555,7 +555,9 @@ function renderProps(focus) {
         }
       }
       if (!Object.keys(patch).length) { toast("Изменений нет"); return; }
-      const bad = schemaError(await schemaOf(state.info.deck.template), { ...(latest || slide), ...patch });
+      const base = latest || slide;
+      const bad = schemaError(await schemaOf(state.info.deck.template), { ...base, ...patch },
+        { only: Object.keys(patch), before: base });
       if (bad) throw new Error(bad);
       await applyResult(patchSlide(slide.id, patch));
       // форму сохранили, а ввод во время сохранения её удержал — свежая основа для предупреждения

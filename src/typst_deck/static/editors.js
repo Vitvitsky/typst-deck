@@ -56,8 +56,10 @@ const SUBFIELD_RU = { heading: "Заголовок", name: "Название р�
 
 // Первая ошибка длины или числа элементов в слайде по схеме шаблона
 // (GET /api/templates/{id}/schema — схема модели, суженная slots). Неизвестное
-// схеме не судим: последнее слово — за сервером.
-export function schemaError(schema, slide) {
+// схеме не судим: последнее слово — за сервером. only — поля, которые человек
+// менял; before — слайд до правки: как и сервер (slots._excess, спека §8),
+// панель не отказывает, если нарушение не стало хуже прежнего.
+export function schemaError(schema, slide, { only = null, before = null } = {}) {
   if (!schema || !slide) return null;
   const defs = schema.$defs || {};
   const deref = (s) => { for (let i = 0; s && s.$ref && i < 20; i++) s = defs[s.$ref.split("/").pop()]; return s; };
@@ -67,38 +69,55 @@ export function schemaError(schema, slide) {
   const name = (path) => path.map((p, i) => typeof p === "number" ? `№ ${p + 1}`
     : (i === 0 ? top[p] || FIELD_RU[p] : SUBFIELD_RU[p] || FIELD_RU[p]) || p)
     .join(" · ").replace(/ · (№ \d+)/g, ", $1");
-  const walk = (s, v, path) => {
+  const len = (v) => typeof v === "string" ? [...v].length : Array.isArray(v) ? v.length : -1;
+  // длинных строк списка не стало больше и они не выросли — сравнение попарно, как в _excess
+  const worseStrings = (now, was, max) => {
+    const over = now.filter((x) => typeof x === "string" && len(x) > max).map(len).sort((a, b) => b - a);
+    const kept = (Array.isArray(was) ? was : []).filter((x) => typeof x === "string" && len(x) > max).map(len).sort((a, b) => b - a);
+    return over.some((n, i) => i >= kept.length || n > kept[i]);
+  };
+  const walk = (s, v, path, was) => {
     s = deref(s);
     if (!s || v == null) return null;
     if (s.anyOf) {
       const alt = s.anyOf.map(deref).find((a) => a && a.type !== "null");
-      return alt ? walk(alt, v, path) : null;
+      return alt ? walk(alt, v, path, was) : null;
     }
     if (typeof v === "string") {
-      const n = [...v].length;  // знаки, а не UTF-16: так считает pydantic
+      const n = len(v);  // знаки, а не UTF-16: так считает pydantic
       if (s.minLength && n < s.minLength) return `${name(path)}: пусто`;
-      if (s.maxLength != null && n > s.maxLength) return `${name(path)}: ${n} ${plural(n, "знак", "знака", "знаков")} при пределе ${s.maxLength}`;
+      if (s.maxLength != null && n > s.maxLength && !(len(was) >= n)) {
+        return `${name(path)}: ${n} ${plural(n, "знак", "знака", "знаков")} при пределе ${s.maxLength}`;
+      }
       return null;
     }
     if (Array.isArray(v)) {
-      if (s.maxItems != null && v.length > s.maxItems) {
+      if (s.maxItems != null && v.length > s.maxItems && !(len(was) >= v.length)) {
         return `${name(path)}: ${v.length} ${plural(v.length, "элемент", "элемента", "элементов")} при пределе ${s.maxItems}`;
       }
+      const item = deref(s.items);
+      const flat = item && item.type === "string" && item.maxLength != null;
+      if (flat && was !== undefined && !worseStrings(v, was, item.maxLength)) {
+        // длины в норме по правилу «не хуже»; пустые строки всё равно недопустимы
+        const i = v.findIndex((x) => item.minLength && typeof x === "string" && len(x) < item.minLength);
+        return i < 0 ? null : `${name([...path, i])}: пусто`;
+      }
       for (let i = 0; i < v.length; i++) {
-        const e = walk(s.items, v[i], [...path, i]);
+        const e = walk(s.items, v[i], [...path, i], Array.isArray(was) ? was[i] : undefined);
         if (e) return e;
       }
       return null;
     }
     if (typeof v === "object" && s.properties) {
       for (const [k, sub] of Object.entries(s.properties)) {
-        const e = walk(sub, v[k], [...path, k]);
+        if (path.length === 0 && only && !only.includes(k)) continue;
+        const e = walk(sub, v[k], [...path, k], was && typeof was === "object" ? was[k] : undefined);
         if (e) return e;
       }
     }
     return null;
   };
-  return root ? walk(root, slide, []) : null;
+  return root ? walk(root, slide, [], before && before.type === slide.type ? before : undefined) : null;
 }
 
 export const dropBlank = (rows) => rows.filter((r) => Object.values(r).some((v) => String(v ?? "").trim() !== ""));

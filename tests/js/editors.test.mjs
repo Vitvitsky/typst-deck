@@ -165,6 +165,20 @@ test("длины по схеме шаблона — до отправки и п�
   assert.equal(schemaError(null, { type: "text" }), null);
 });
 
+test("панель судит только изменённое и не строже сервера", () => {
+  const old = { type: "text", title: "x".repeat(70), bullets: [] };
+  // правка заметок не упирается в давний длинный заголовок (сервер: «не стало хуже», спека §8)
+  assert.equal(schemaError(SCHEMA, { ...old, notes: "н" }, { only: ["notes"], before: old }), null);
+  // заголовок сократили, но всё ещё длиннее предела — сервер примет, панель тоже
+  assert.equal(schemaError(SCHEMA, { ...old, title: "x".repeat(65) }, { only: ["title"], before: old }), null);
+  assert.equal(schemaError(SCHEMA, { ...old, title: "x".repeat(71) }, { only: ["title"], before: old }),
+    "Заголовок: 71 знак при пределе 60");
+  const b = { type: "text", title: "", bullets: ["a".repeat(12), "ок"] };
+  assert.equal(schemaError(SCHEMA, { ...b, bullets: ["a".repeat(12), "ок", "в"] }, { only: ["bullets"], before: b }), null);
+  assert.equal(schemaError(SCHEMA, { ...b, bullets: ["ок", "a".repeat(13)] }, { only: ["bullets"], before: b }),
+    "Тезисы, № 2: 13 знаков при пределе 10");
+});
+
 test("линии нужны две подписи", () => {
   assert.equal(lineLabelsError("line", ["Q1"]), "Линейному графику нужны хотя бы две подписи по оси");
   assert.equal(lineLabelsError("line", ["Q1", "Q2"]), null);
