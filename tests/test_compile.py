@@ -765,3 +765,46 @@ def test_model_maximum_does_not_overflow_the_page(deck_dir, png_bytes, tid):
         f"содержимое уходит под обрез страницы (граница {bound:.2f} пт): "
         + ", ".join(f"{t}.{f} низ {b:.2f} (+{b - bound:.2f})"
                     for t, (b, f) in sorted(extra.items())))
+
+
+def test_field_zone_follows_alignment(tmp_path):
+    """Зона поля ложится на текст при любом выравнивании: по центру (метрики),
+    вправо (числа в таблице), в ячейках table и grid. Раньше x был левым краем
+    области, а ширина — ширина текста, и зона уезжала влево от выровненного текста.
+    Настоящий край текста — метка <at> прямо перед текстом и после него; метка
+    в box, иначе typst отдаёт строчной метке x начала строки."""
+    import shutil
+    import subprocess
+
+    from typst_deck.render import FIELDS_TYP
+
+    shutil.copy(FIELDS_TYP, tmp_path / "fields.typ")
+    (tmp_path / "t.typ").write_text('''
+#import "/fields.typ": field
+#set page(width: 400pt, height: auto)
+#let mk(s) = box(context [#metadata((field: s, x: here().position().x.pt())) <at>])
+#let t(s) = [#mk(s)#s#mk(s)]
+#field("x", "left", t("слева"))
+#align(center, field("x", "center", t("по центру")))
+#align(right, field("x", "right", t("справа")))
+#set align(end)
+#field("x", "end", t("в конце"))
+#set align(start)
+#table(columns: (120pt, 120pt), align: (left, right),
+  field("x", "cell-left", t("ячейка")), field("x", "cell-right", t("+14%")))
+#grid(columns: (200pt,), align: center, field("x", "grid", t("41")))
+''')
+    def query(label):
+        r = subprocess.run(["typst", "eval", f"query(<{label}>).map(it => it.value)", "--root", str(tmp_path),
+                            "--in", str(tmp_path / "t.typ"), "--format", "json"],
+                           capture_output=True, text=True, check=True)
+        return json.loads(r.stdout)
+
+    zones = {p["field"]: p for p in query("edit")}
+    marks = query("at")
+    for name, text in [("left", "слева"), ("center", "по центру"), ("right", "справа"), ("end", "в конце"),
+                       ("cell-left", "ячейка"), ("cell-right", "+14%"), ("grid", "41")]:
+        x0, x1 = (m["x"] for m in marks if m["field"] == text)
+        z = zones[name]
+        assert z["x"] == pytest.approx(x0, abs=0.5), name
+        assert z["x"] + z["w"] == pytest.approx(x1, abs=0.5), name
