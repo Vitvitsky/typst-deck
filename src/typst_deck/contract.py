@@ -351,29 +351,26 @@ def _rule_declared_fit(path: Path, typst_bin: str, work_dir: Path, fonts: Path |
 
 
 def _rule_pptx(path: Path, meta: dict, typst_bin: str, work_dir: Path) -> list[str]:
-    """Правило 7: сопоставление читается, мастер с ним сходится, образец экспортируется.
-
-    Экспортируются только слайды тех типов, которые называет само сопоставление:
-    PowerPoint-мастер пока обещает не все пятнадцать типов слайда (см. SLIDE_TYPES
-    в src/typst_deck/pptx.py), и рано валить шаблон за типы, которых сопоставление
-    и не брало на себя.
-    """
+    """Правило 7: сопоставление читается, мастер с ним сходится, образец из 15 типов
+    экспортируется — с картинками и роликом образца, чтобы встроенное видео и
+    сетка галереи тоже проходили через python-pptx."""
     if "pptx" not in meta:
         return []
     try:
-        m = load_mapping(path, meta["pptx"])
+        load_mapping(path, meta["pptx"])
     except MappingError as e:
         return [f"pptx: {e}"]
-    sample = SAMPLE_DECK.model_copy(update={"slides": [s for s in SAMPLE_DECK.slides if s.type in m.slides]})
+    deck_dir = work_dir / "pptx-sample"
+    write_sample_assets(deck_dir)
     try:
-        data = export_pptx(sample, path, meta["pptx"], work_dir / "no-assets", typst_bin)
+        data = export_pptx(SAMPLE_DECK, path, meta["pptx"], deck_dir / "assets", typst_bin)
         n = len(Presentation(io.BytesIO(data)).slides)
     except MappingError as e:
         return [f"pptx: {e}"]
     except Exception as e:  # сбой python-pptx на мастере или на повторном открытии — нарушение, а не падение проверки
         return [f"pptx: образец не экспортируется: {type(e).__name__}: {e}"]
-    if n != len(sample.slides):
-        return [f"pptx: в файле {n} слайдов при {len(sample.slides)} в образце"]
+    if n != len(SAMPLE_DECK.slides):
+        return [f"pptx: в файле {n} слайдов при {len(SAMPLE_DECK.slides)} в образце"]
     return []
 
 

@@ -248,3 +248,19 @@ def test_start_check_turns_pptx_off_but_keeps_the_template(tmp_path):
     assert reg.get("badpptx").pptx is None and reg.get("badpptx").public()["pptx"] is False
     assert "goodpptx" not in reg.pptx_off and reg.get("goodpptx").pptx == "pptx.json"
     assert any("нет макета" in w for w in reg.warnings["badpptx"])
+
+
+@requires_typst
+def test_rule_pptx_exports_the_whole_sample(tmp_path):
+    from typst_deck.contract import _rule_pptx
+
+    d = make_pptx_template(tmp_path)
+    assert _rule_pptx(d, {"pptx": "pptx.json"}, "typst", tmp_path / "work") == []
+
+
+def test_rule_pptx_fails_a_mapping_without_new_types(tmp_path):
+    from typst_deck.contract import _rule_pptx
+
+    d = make_pptx_template(tmp_path, mapping_edit=lambda m: m["slides"].pop("gallery"))
+    [msg] = _rule_pptx(d, {"pptx": "pptx.json"}, "typst", tmp_path / "work")
+    assert "нет типа gallery" in msg

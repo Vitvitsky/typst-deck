@@ -69,47 +69,47 @@ def image_deck(size="medium", **kw) -> Deck:
                          "image_size": size, "caption": "Подпись", **kw}])
 
 
-# План A даёт 15 типов, а сопоставление pptx.json знает шесть: экспорт переезжает
-# планом B (docs/superpowers/specs/2026-09-13-slide-set-design.md §7). До него
-# эти тесты ожидаемо падают — xfail, чтобы набор оставался зелёным.
-@pytest.mark.xfail(reason="экспорт в PPTX переезжает на новые типы планом B", strict=False)
 def test_every_type_lands_on_its_layout_at_the_masters_size(tdir):
+    from tests.conftest import PPTX_MAPPING
+
     prs = export(tdir, SAMPLE_DECK)
     assert [s.slide_layout.name for s in prs.slides] == [
-        "Title Slide", "Section Header", "Title and Content", "Title Only", "Title Only", "Title Slide"]
+        PPTX_MAPPING["slides"][s.type]["layout"] for s in SAMPLE_DECK.slides]
+    assert len(prs.slides) == 15
     assert (prs.slide_width, prs.slide_height) == (Mm(677), Mm(381))
     # слайд-образец мастера не пережил экспорт: первый слайд — титул колоды
     assert by_idx(prs.slides[0])[0] == ["Название презентации"]
 
 
-@pytest.mark.xfail(reason="экспорт в PPTX переезжает на новые типы планом B", strict=False)
 def test_fields_fill_placeholders_and_share_one_in_model_order(tdir):
     title = by_idx(export(tdir, SAMPLE_DECK).slides[0])
     assert title[1] == ["Подзаголовок и дата"]
     assert title[21] == ["Имя Фамилия", "Подразделение"]
 
 
-@pytest.mark.xfail(reason="экспорт в PPTX переезжает на новые типы планом B", strict=False)
-def test_empty_and_unmapped_placeholders_are_removed(tdir):
-    deck = Deck(slides=[{"type": "title", "title": "Итоги"}, {"type": "image", "title": "Рост"}])
-    prs = export(tdir, deck)
+def test_empty_and_unmapped_placeholders_are_removed(tdir, tmp_path):
+    (tmp_path / "a").mkdir()
+    png(tmp_path / "a" / "pic.png")
+    deck = Deck(slides=[{"type": "title", "title": "Итоги"},
+                        {"type": "image", "title": "Рост", "image": "pic.png"}])
+    prs = export(tdir, deck, assets=tmp_path / "a")
     # ни подзаголовка, ни подписи, ни idx 1 «Title and Content»; дату и колонтитул python-pptx не переносит
     assert set(by_idx(prs.slides[0])) == {0, 12}
     assert set(by_idx(prs.slides[1])) == {0, 12}
 
 
-@pytest.mark.xfail(reason="экспорт в PPTX переезжает на новые типы планом B", strict=False)
 def test_slide_number_is_a_field(tdir):
     for n, slide in enumerate(export(tdir, SAMPLE_DECK).slides, 1):
-        num = next(sh for sh in slide.placeholders if sh.placeholder_format.idx == 12)
-        assert num._element.xpath(".//a:fld[@type='slidenum']"), n
-        assert num.text_frame.text == str(n)
+        nums = [sh for sh in slide.placeholders if sh.placeholder_format.idx == 12]
+        assert len(nums) == 1, n  # у «Blank» номер тоже есть
+        assert nums[0]._element.xpath(".//a:fld[@type='slidenum']"), n
+        assert nums[0].text_frame.text == str(n)
 
 
-@pytest.mark.xfail(reason="экспорт в PPTX переезжает на новые типы планом B", strict=False)
 def test_titles_shrink_on_edit(tdir):
     for slide in export(tdir, SAMPLE_DECK).slides:
-        assert slide.shapes.title._element.xpath(".//a:bodyPr/a:normAutofit")
+        if slide.shapes.title is not None:  # у цитаты заголовка нет
+            assert slide.shapes.title._element.xpath(".//a:bodyPr/a:normAutofit")
 
 
 def test_image_keeps_proportions_inside_the_zone(tdir, tmp_path):
@@ -468,10 +468,9 @@ def test_notes_go_to_speaker_notes(tdir):
     assert export(tdir, deck).slides[0].notes_slide.notes_text_frame.text == "Сказать спасибо"
 
 
-@pytest.mark.xfail(reason="экспорт в PPTX переезжает на новые типы планом B", strict=False)
 def test_control_characters_dropped_and_newline_breaks_the_line(tdir):
     deck = Deck(slides=[{"type": "title", "title": "\x0bИтоги\x1f", "subtitle": "первая\nвторая"},
-                        {"type": "image", "title": "T", "bullets": ["тезис\nпродолжение"]}])
+                        {"type": "text", "title": "T", "bullets": ["тезис\nпродолжение"]}])
     prs = export(tdir, deck)
     assert by_idx(prs.slides[0])[0] == ["Итоги"]
     sub = next(sh for sh in prs.slides[0].placeholders if sh.placeholder_format.idx == 1)
@@ -480,13 +479,13 @@ def test_control_characters_dropped_and_newline_breaks_the_line(tdir):
     assert len(text.text_frame.paragraphs) == 1 and text._element.xpath(".//a:br")
 
 
-@pytest.mark.xfail(reason="экспорт в PPTX переезжает на новые типы планом B", strict=False)
 def test_text_at_global_limits_exports(tdir):
-    title = {"title": {"max": 120, "lines": 2}}
-    bullets = {"image": 6, "bar-chart": 4, "chart": 4}
-    deck = Deck(slides=[filled_slide(t, title | ({"bullets": {"count": bullets[t], "max": 200}}
-                                                 if t in bullets else {})) for t in SLIDE_TYPES])
-    assert len(export(tdir, deck).slides) == len(SLIDE_TYPES)
+    """Каждый тип на глобальных пределах модели собирается и открывается заново."""
+    from typst_deck.model import SLIDE_TYPES as ALL
+
+    deck = Deck(slides=[filled_slide(t, {"title": {"max": 120, "lines": 2}} if t != "quote" else {})
+                        for t in ALL])
+    assert len(export(tdir, deck).slides) == len(ALL)
 
 
 def latin_faces(element) -> list[str]:
@@ -506,7 +505,6 @@ def with_helvetica_layout(tdir):
     prs.save(str(tdir / "master.pptx"))
 
 
-@pytest.mark.xfail(reason="экспорт в PPTX переезжает на новые типы планом B", strict=False)
 def test_template_font_replaces_explicit_latin_faces(tmp_path):
     tdir = make_pptx_template(tmp_path, mapping_edit=lambda m: m.update(font="Arial"))
     with_helvetica_layout(tdir)
@@ -525,7 +523,6 @@ def test_template_font_reaches_speaker_notes(tmp_path):
     assert set(latin_faces(etree.fromstring(notes_master.part_related_by(RT.THEME).blob))) == {"Arial"}
 
 
-@pytest.mark.xfail(reason="экспорт в PPTX переезжает на новые типы планом B", strict=False)
 def test_without_font_the_master_keeps_its_faces(tmp_path):
     tdir = make_pptx_template(tmp_path)
     with_helvetica_layout(tdir)
