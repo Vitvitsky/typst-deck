@@ -219,16 +219,53 @@ def _yellow_runs(png_path, y_frac):
 def test_corp_chart_with_bullets_keeps_the_last_bar_whole(t, tmp_path):
     """Колонка выводов и график не шире тела: иначе clip срезает последний столбец справа
     (было: 38 % + 62 % + зазор 12 мм — на 12 мм шире тела). У столбцов нет маркеров поля,
-    поэтому проверка — по картинке: при равных значениях все столбцы одной ширины."""
+    поэтому проверка — по картинке: при равных значениях все столбцы одной ширины.
+    Десять категорий, а не двенадцать: у шаблона с правилом ориентации (charts.columns)
+    двенадцать столбцов рядом с выводами уже горизонтальны — их стережёт тест ниже."""
     import subprocess
 
-    deck = Deck(slides=[{"type": "chart", "title": "Итоги", "kind": "bar", "labels": [f"М{i}" for i in range(1, 13)],
-                         "series": [{"name": "x", "values": [5] * 12}], "bullets": ["Вывод"]}])
+    deck = Deck(slides=[{"type": "chart", "title": "Итоги", "kind": "bar", "labels": [f"М{i}" for i in range(1, 11)],
+                         "series": [{"name": "x", "values": [5] * 10}], "bullets": ["Вывод"]}])
     compile_deck(deck, tmp_path, t.path, fonts_dir=t.fonts)
     png = tmp_path / "p.png"
     subprocess.run(["typst", "compile", "--root", str(tmp_path / "build"), "--font-path", str(t.fonts),
                     "--format", "png", "--ppi", "40", str(tmp_path / "build" / "deck.typ"), str(png)], check=True,
                    capture_output=True)
     runs = [r for r in _yellow_runs(png, 0.6) if r > 3]
-    assert len(runs) == 12, runs
+    assert len(runs) == 10, runs
     assert max(runs) - min(runs) <= 2, f"столбцы разной ширины — последний срезан: {runs}"
+
+
+def _yellow_column_runs(png_path, x_frac):
+    """Отрезки жёлтого в столбце картинки на ширине x_frac — толщины горизонтальных столбцов."""
+    from PIL import Image
+
+    im = Image.open(png_path).convert("RGB").transpose(Image.Transpose.TRANSPOSE)
+    tmp = png_path.with_suffix(".t.png")
+    im.save(tmp)
+    return _yellow_runs(tmp, x_frac)
+
+
+@requires_typst
+@pytest.mark.parametrize("t", CORP_PARAMS)
+def test_corp_bars_turn_horizontal_by_the_template_rule(t, tmp_path):
+    """Шаблон с правилом charts.columns: 24 подписи по 30 знаков под вертикальными
+    столбцами не помещаются (налезали друг на друга) — столбцы горизонтальны, по одному
+    на категорию. Шаблон без правила — пропуск: у него столбцы всегда вертикальны."""
+    import subprocess
+
+    from typst_deck.charts import horizontal, load_rule
+
+    src = "Стройматериалы Инструмент Сантехника Электрика Напольные покрытия Сад и огород " * 3
+    labels = [src[(i * 7) % 60:(i * 7) % 60 + 30].strip() for i in range(24)]
+    if not horizontal(labels, "full", load_rule(t.path)):
+        pytest.skip("у шаблона нет правила ориентации, по которому эти столбцы горизонтальны")
+    deck = Deck(slides=[{"type": "chart", "title": "Итоги", "kind": "bar", "labels": labels,
+                         "series": [{"name": "x", "values": [5] * 24}]}])
+    compile_deck(deck, tmp_path, t.path, fonts_dir=t.fonts)
+    png = tmp_path / "p.png"
+    subprocess.run(["typst", "compile", "--root", str(tmp_path / "build"), "--font-path", str(t.fonts),
+                    "--format", "png", "--ppi", "40", str(tmp_path / "build" / "deck.typ"), str(png)], check=True,
+                   capture_output=True)
+    runs = [r for r in _yellow_column_runs(png, 0.6) if r > 1]
+    assert len(runs) == 24, runs
