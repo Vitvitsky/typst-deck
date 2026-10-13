@@ -471,18 +471,30 @@ def compile_pdf(build_dir: Path, typst_bin: str = "typst", timeout: int = 60,
 
 
 RASTER_TYP = '#set page(width: auto, height: auto, margin: 0pt)\n#image("image.svg")\n'
+# вписать в рамку w×h pt с сохранением пропорций: и огромный width, и значок 16×16
+# растеризуются под место на слайде, а не в собственном размере
+RASTER_FIT_TYP = """#set page(width: auto, height: auto, margin: 0pt)
+#context {{
+  let s = measure(image("image.svg"))
+  let k = calc.min({w}pt / s.width, {h}pt / s.height)
+  image("image.svg", width: s.width * k)
+}}
+"""
 
 
-def rasterize_svg(svg: Path, out: Path, typst_bin: str = "typst", ppi: int = 200, timeout: int = 60) -> Path:
+def rasterize_svg(svg: Path, out: Path, typst_bin: str = "typst", ppi: int = 200, timeout: int = 60,
+                  box_pt: tuple[float, float] | None = None) -> Path:
     """SVG → PNG средствами typst: python-pptx SVG не вставляет, а колода их принимает.
 
     typst уже есть в образе, так что растеризатор не тянет новых зависимостей.
     Рабочий каталог — рядом с out: песочница typst видит только его.
+    box_pt — рамка на слайде: картинка вписывается в неё, иначе — собственный размер SVG.
     """
     work = out.parent / f"{out.stem}.raster"
     work.mkdir(parents=True, exist_ok=True)
     shutil.copy(svg, work / "image.svg")
-    (work / "raster.typ").write_text(RASTER_TYP)
+    typ = RASTER_TYP if box_pt is None else RASTER_FIT_TYP.format(w=f"{box_pt[0]:.2f}", h=f"{box_pt[1]:.2f}")
+    (work / "raster.typ").write_text(typ)
     r, _ = _run([typst_bin, "compile", "--root", str(work), "--format", "png", "--ppi", str(ppi),
                  str(work / "raster.typ"), str(out)], timeout)
     if r.returncode != 0:

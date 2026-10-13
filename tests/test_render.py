@@ -367,6 +367,27 @@ def test_rasterize_svg_keeps_proportions(tmp_path):
 
 
 @requires_typst
+def test_rasterize_svg_fits_the_box_not_its_natural_size(tmp_path):
+    # огромный width SVG растеризовался в естественном размере и тормозил экспорт PPTX
+    svg = tmp_path / "huge.svg"
+    svg.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="20000" height="10000">'
+                   '<rect width="20000" height="10000" fill="#00FFE0"/></svg>')
+    out = rasterize_svg(svg, tmp_path / "huge.png", box_pt=(144, 144), ppi=100)
+    with Image.open(out) as im:
+        assert abs(im.width - 200) <= 2 and abs(im.height - 100) <= 2
+
+
+@requires_typst
+def test_rasterize_small_svg_is_scaled_up_to_the_box(tmp_path):
+    svg = tmp_path / "icon.svg"
+    svg.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16">'
+                   '<rect width="16" height="16" fill="#00FFE0"/></svg>')
+    out = rasterize_svg(svg, tmp_path / "icon.png", box_pt=(72, 144), ppi=100)
+    with Image.open(out) as im:
+        assert abs(im.width - 100) <= 2 and abs(im.height - 100) <= 2
+
+
+@requires_typst
 def test_rasterize_broken_svg_is_a_compile_error(tmp_path):
     svg = tmp_path / "bad.svg"
     svg.write_text("<svg")

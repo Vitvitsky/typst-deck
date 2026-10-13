@@ -37,6 +37,7 @@ from .model import SLIDE_TYPES, Deck
 from .render import CompileError, inside_template, numeric_columns, rasterize_svg, trend_of
 
 MM = 36000  # EMU в миллиметре
+EMU_PER_PT = 12700
 # Поля, которые обязаны лежать в заполнителях, — в порядке модели: он же задаёт
 # порядок абзацев, когда несколько полей делят один заполнитель. Типам, которых
 # здесь нет, нужен только заголовок. Остальное идёт в зону body, notes — в заметки.
@@ -492,9 +493,9 @@ def _caption(slide, text: str, x: int, y: int, w: int, style: TextStyle, italic:
 
 
 def _image_file(name: str, assets_dir: Path, tmp: Path, typst_bin: str,
-                warnings: list[str], n: int) -> Path | None:
-    """Файл картинки; SVG — растром. Пропавшая или нерастеризуемая — None и предупреждение,
-    как у PDF: слайд собирается без неё."""
+                warnings: list[str], n: int, box: tuple[int, int] | None = None) -> Path | None:
+    """Файл картинки; SVG — растром, вписанным в рамку box (w, h в EMU). Пропавшая или
+    нерастеризуемая — None и предупреждение, как у PDF: слайд собирается без неё."""
     if not name:
         return None
     if Path(name).name != name:  # «/», «..»-путь или абсолютный путь — за пределы assets/
@@ -515,7 +516,8 @@ def _image_file(name: str, assets_dir: Path, tmp: Path, typst_bin: str,
             return None
         return src
     try:
-        return rasterize_svg(src, tmp / f"{src.stem}.png", typst_bin)
+        box_pt = None if box is None else (box[0] / EMU_PER_PT, box[1] / EMU_PER_PT)
+        return rasterize_svg(src, tmp / f"{src.stem}.png", typst_bin, box_pt=box_pt)
     except CompileError as e:
         warnings.append(f"слайд {n}: SVG {name} не растеризуется: {e}")
         return None
@@ -523,21 +525,21 @@ def _image_file(name: str, assets_dir: Path, tmp: Path, typst_bin: str,
 
 def _image_body(c: Ctx) -> set[int]:
     slide, s, sm, style = c.slide, c.s, c.sm, c.m.text
-    img = _image_file(s.image, c.assets, c.tmp, c.typst_bin, c.warnings, c.n)
     box = _mm_box(sm.body)
-    if img is None:
-        if s.bullets:
-            _bullets(slide, box, s.bullets, style)
-        return set()
     # картинка — ровно image_width % зоны справа, тезисы слева — остаток за вычетом зазора (спека §5.3)
     x, y, w, h = box
     iw = int(w * sm.image_width[s.image_size] / 100)
     g = int(sm.gap * MM)
     text_box, img_box = (x, y, w - iw - g, h), (x + w - iw, y, iw, h)
+    strip = int(CAPTION_STRIP * MM) if s.caption else 0
+    img = _image_file(s.image, c.assets, c.tmp, c.typst_bin, c.warnings, c.n, (iw, h - strip))
+    if img is None:
+        if s.bullets:
+            _bullets(slide, box, s.bullets, style)
+        return set()
     if s.bullets:
         _bullets(slide, text_box, s.bullets, style)
     x, y, w, h = img_box
-    strip = int(CAPTION_STRIP * MM) if s.caption else 0
     bottom = _picture(slide, img, (x, y, w, h - strip))
     if s.caption:
         _caption(slide, s.caption, x, bottom + int(2 * MM), w, style)
@@ -781,7 +783,7 @@ def _gallery_body(c: Ctx) -> set[int]:
     # полоса подписи — у всех клеток или ни у одной: иначе картинки одного ряда разной высоты
     strip = int(CAPTION_STRIP * MM) if any(clean(p.caption).strip() for p in c.s.images) else 0
     for pic, (cx, cy, cw, chh) in zip(c.s.images, cells):
-        img = _image_file(pic.image, c.assets, c.tmp, c.typst_bin, c.warnings, c.n)
+        img = _image_file(pic.image, c.assets, c.tmp, c.typst_bin, c.warnings, c.n, (cw, chh - strip))
         if img is None:
             continue  # клетка остаётся пустой, сетка не сдвигается
         bottom = _picture(c.slide, img, (cx, cy, cw, chh - strip))
@@ -812,12 +814,12 @@ def _placeholder_poster(m: Mapping, tmp: Path) -> Path:
 
 def _video_body(c: Ctx) -> set[int]:
     """Обложка (или заглушка) с гиперссылкой на ролик и подпись под ней (ADR 0022)."""
-    poster = (_image_file(c.s.poster, c.assets, c.tmp, c.typst_bin, c.warnings, c.n)
+    x, y, w, h = _mm_box(c.sm.body)
+    strip = int(CAPTION_STRIP * MM) if clean(c.s.caption).strip() else 0
+    poster = (_image_file(c.s.poster, c.assets, c.tmp, c.typst_bin, c.warnings, c.n, (w, h - strip))
               or _placeholder_poster(c.m, c.tmp))
     with Image.open(poster) as im:
         aspect = im.width / im.height
-    x, y, w, h = _mm_box(c.sm.body)
-    strip = int(CAPTION_STRIP * MM) if clean(c.s.caption).strip() else 0
     fx, fy, fw, fh = _fit((x, y, w, h - strip), aspect)
     pic = c.slide.shapes.add_picture(str(poster), Emu(fx), Emu(fy), Emu(fw), Emu(fh))
     pic.click_action.hyperlink.address = c.s.url

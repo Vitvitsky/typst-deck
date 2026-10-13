@@ -176,6 +176,18 @@ def test_svg_goes_in_as_png(tdir, tmp_path):
     assert pic.image.content_type == "image/png" and abs(pic.width / pic.height - 3) < 0.05
 
 
+
+@requires_typst
+def test_huge_svg_is_rasterized_to_its_box(tdir, tmp_path):
+    (tmp_path / "huge.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg" width="30000" height="10000">'
+                                       '<rect width="30000" height="10000" fill="#00FFE0"/></svg>')
+    slide = export(tdir, image_deck(image="huge.svg"), assets=tmp_path).slides[0]
+    [pic] = pictures(slide)
+    with Image.open(io.BytesIO(pic.image.blob)) as im:
+        # рамка картинки — доли ширины слайда; при 200 ppi это заведомо меньше 4000 px
+        assert im.width < 4000 and abs(im.width / im.height - 3) < 0.05
+
+
 def bar(**kw) -> dict:
     return {"type": "chart", "kind": "bar", "title": "Итоги", "unit": "млн",
             "labels": ["Центр", "Север", "Юг"], "series": [{"name": "млн", "values": [42, -17, 28]}]} | kw
