@@ -28,15 +28,11 @@ from .render import CompileError, CompileResult, compile_deck, resolve_fonts
 from .slots import clamp, field_kind
 
 # Образец: по слайду каждого типа в порядке SLIDE_TYPES. Им же рисуются превью
-# шаблонов в интерфейсе, поэтому картинки и ролик кладутся рядом (write_sample_assets).
+# шаблонов в интерфейсе, поэтому картинки кладутся рядом (write_sample_assets).
 PNG_1PX = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
-SAMPLE_ASSETS = {"sample-1.png": PNG_1PX, "sample-2.png": PNG_1PX, "sample-3.png": PNG_1PX,
-                 "sample.mp4": b"\x00\x00\x00\x18ftypmp42"}
-# только картинки образца, без ролика: gallery.images подставляет их по кругу,
-# а взять sample.mp4 в качестве картинки нельзя (инцидент — при count 3 и выше
-# list(SAMPLE_ASSETS) утыкался в ролик, идущий в словаре последним)
-SAMPLE_IMAGES = tuple(name for name in SAMPLE_ASSETS if name != "sample.mp4")
+SAMPLE_ASSETS = {"sample-1.png": PNG_1PX, "sample-2.png": PNG_1PX, "sample-3.png": PNG_1PX}
+SAMPLE_IMAGES = tuple(SAMPLE_ASSETS)
 
 SAMPLE_DECK = Deck(id="templatepreview", title="Образец шаблона", slides=[
     {"id": "s000001", "type": "title", "title": "Название презентации", "subtitle": "Подзаголовок и дата",
@@ -69,7 +65,7 @@ SAMPLE_DECK = Deck(id="templatepreview", title="Образец шаблона", 
      "rows": [["Центр", "42", "51 %"], ["Север", "17", "21 %"], ["Юг", "28", "28 %"]]},
     {"id": "s000013", "type": "gallery", "title": "Галерея",
      "images": [{"image": "sample-1.png", "caption": "Первая"}, {"image": "sample-2.png", "caption": "Вторая"}]},
-    {"id": "s000014", "type": "video", "title": "Видео", "video": "sample.mp4",
+    {"id": "s000014", "type": "video", "title": "Видео", "url": "https://example.com/video",
      "poster": "sample-1.png", "caption": "Подпись к ролику"},
     {"id": "s000015", "type": "final", "contact": "team@corp"},
 ])
@@ -78,7 +74,7 @@ TEXT_FIELDS = ("title", "subtitle", "author", "department", "caption", "contact"
 
 
 def write_sample_assets(deck_dir: Path) -> None:
-    """Картинки и ролик образца: без них image, gallery и video нечем рисовать."""
+    """Картинки образца: без них image, gallery и обложке video нечего рисовать."""
     assets = Path(deck_dir) / "assets"
     assets.mkdir(parents=True, exist_ok=True)
     for name, data in SAMPLE_ASSETS.items():
@@ -178,7 +174,7 @@ def _skeleton(stype: str, sample: str) -> dict:
     elif stype == "gallery":
         slide["images"] = [{"image": SAMPLE_IMAGES[0], "caption": _text(sample, 80)}] * 2
     elif stype == "video":
-        slide["video"], slide["poster"] = "sample.mp4", "sample-1.png"
+        slide["url"], slide["poster"] = "https://example.com/video", "sample-1.png"
     return slide
 
 
@@ -352,8 +348,8 @@ def _rule_declared_fit(path: Path, typst_bin: str, work_dir: Path, fonts: Path |
 
 def _rule_pptx(path: Path, meta: dict, typst_bin: str, work_dir: Path) -> list[str]:
     """Правило 7: сопоставление читается, мастер с ним сходится, образец из 15 типов
-    экспортируется — с картинками и роликом образца, чтобы встроенное видео и
-    сетка галереи тоже проходили через python-pptx."""
+    экспортируется — с картинками образца, чтобы обложка видео и сетка галереи
+    тоже проходили через python-pptx."""
     if "pptx" not in meta:
         return []
     try:

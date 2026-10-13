@@ -28,7 +28,7 @@ def rich_deck():
          "header": ["Регион", "Выручка"], "rows": [["Центр", "42"], ["Север", "17,5 %"]]},
         {"id": "s7", "type": "gallery", "title": "Галерея",
          "images": [{"image": "a1.png", "caption": "раз"}, {"image": "a2.png"}]},
-        {"id": "s8", "type": "video", "title": "Ролик", "video": "a3.mp4", "poster": "a1.png"},
+        {"id": "s8", "type": "video", "title": "Ролик", "url": "https://youtu.be/x", "poster": "a1.png"},
         {"id": "s9", "type": "video", "title": "Ссылка", "url": "https://v/1"},
         {"id": "s10", "type": "dual-chart", "title": "Два графика",
          "left": {"caption": "Прибыль", "kind": "line", "labels": ["Q1", "Q2"], "series": [{"name": "Выручка", "values": [10, 20]}]},
@@ -37,14 +37,14 @@ def rich_deck():
 
 
 def test_new_types_are_rendered_once_each():
-    typ, _ = render_typ(rich_deck(), assets={"a1.png", "a2.png", "a3.mp4"})
+    typ, _ = render_typ(rich_deck(), assets={"a1.png", "a2.png"})
     for name in ("agenda", "columns", "comparison", "quote", "metrics", "table", "gallery", "video", "dual-chart"):
         assert f"\n#slide-{name}(" in typ
     assert typ.count("\n#slide-") == 10
 
 
 def test_composite_fields_are_marked_by_top_level_name():
-    typ, _ = render_typ(rich_deck(), assets={"a1.png", "a2.png", "a3.mp4"})
+    typ, _ = render_typ(rich_deck(), assets={"a1.png", "a2.png"})
     assert 'field("s2", "blocks", "Первый")' in typ and 'field("s2", "blocks", "текст")' in typ
     assert 'field("s3", "left", "Было")' in typ and 'field("s3", "right", "два")' in typ
     assert 'field("s5", "items", "12,5 млн")' in typ
@@ -55,14 +55,14 @@ def test_composite_fields_are_marked_by_top_level_name():
 
 def test_dual_chart_has_both_sides_with_kinds():
     """Двойной график содержит обе стороны с их видами и маркированными подписями."""
-    typ, _ = render_typ(rich_deck(), assets={"a1.png", "a2.png", "a3.mp4"})
+    typ, _ = render_typ(rich_deck(), assets={"a1.png", "a2.png"})
     assert "\n#slide-dual-chart(" in typ
     assert 'kind: "line"' in typ and 'kind: "bar"' in typ
     assert 'field("s10", "left", "Прибыль")' in typ and 'field("s10", "right", "Затраты")' in typ
 
 
 def test_product_computes_trend_and_numeric():
-    typ, _ = render_typ(rich_deck(), assets={"a1.png", "a2.png", "a3.mp4"})
+    typ, _ = render_typ(rich_deck(), assets={"a1.png", "a2.png"})
     assert 'trend: "up"' in typ and 'trend: "down"' in typ and "trend: none" in typ
     assert "numeric: (false, true,)" in typ, "числовая колонка выравнивается вправо"
 
@@ -102,29 +102,23 @@ def test_numeric_is_symmetric_about_stray_whitespace():
     assert _numeric(["Регион", "Доля"], [["Центр", " -1 п. п. "]]) == [False, False]
 
 
-def test_video_asset_link_is_escaped():
-    """Имя ассета уходит в PDF живой ссылкой: пробел и # ломают её молча."""
-    deck = Deck(id="d1", slides=[{"type": "video", "title": "Ролик", "video": "my file #1.mp4"}])
-    typ, warnings = render_typ(deck, assets={"my file #1.mp4"}, base_url="http://h")
-    assert 'url: "http://h/api/decks/d1/assets/my%20file%20%231.mp4"' in typ
-    assert warnings == []
+def test_video_link_goes_to_the_template_as_is():
+    deck = Deck(id="d1", slides=[{"type": "video", "title": "Ролик", "url": "https://rutube.ru/video/abc/?t=1&x=2"}])
+    typ, warnings = render_typ(deck, assets=set())
+    assert 'url: "https://rutube.ru/video/abc/?t=1&x=2"' in typ and warnings == []
 
 
 def test_video_link_and_poster():
-    typ, warnings = render_typ(rich_deck(), assets={"a1.png", "a2.png", "a3.mp4"}, base_url="http://t")
-    assert 'url: "http://t/api/decks/d1/assets/a3.mp4"' in typ  # файл превращается в ссылку
-    assert 'url: "https://v/1"' in typ
+    typ, warnings = render_typ(rich_deck(), assets={"a1.png", "a2.png"})
+    assert 'url: "https://youtu.be/x"' in typ and 'url: "https://v/1"' in typ
     assert 'field("s8", "poster", image("/assets/a1.png"' in typ
     assert warnings == []
-    typ, warnings = render_typ(rich_deck(), assets={"a1.png", "a2.png", "a3.mp4"})
-    assert "url: none" in typ, "без base_url ссылку собрать не из чего"
-    assert warnings == [], "файл на месте — предупреждать не о чем"
-    typ, warnings = render_typ(rich_deck(), assets={"a1.png", "a2.png"}, base_url="http://t")
-    assert "url: none" in typ and any("a3.mp4" in w for w in warnings)
+    typ, warnings = render_typ(rich_deck(), assets={"a2.png"})
+    assert any("обложка a1.png не найдена" in w for w in warnings)
 
 
 def test_gallery_skips_missing_pictures_with_a_warning():
-    typ, warnings = render_typ(rich_deck(), assets={"a1.png", "a3.mp4"})
+    typ, warnings = render_typ(rich_deck(), assets={"a1.png"})
     assert typ.count('field("s7", "images"') >= 1
     assert any("a2.png" in w for w in warnings)
 

@@ -214,15 +214,9 @@ BASE = {
     "metrics": {"type": "metrics", "title": "А", "items": [{"value": "1"}, {"value": "2"}]},
     "table": {"type": "table", "title": "А", "header": ["а", "б"], "rows": [["1", "2"], ["3", "4"]]},
     "gallery": {"type": "gallery", "title": "А", "images": [{"image": "a.png"}, {"image": "b.png"}]},
-    "video": {"type": "video", "title": "А", "video": "a.mp4"},
+    "video": {"type": "video", "title": "А", "url": "https://a"},
     "final": {"type": "final"},
 }
-
-# У video ровно один источник (video xor url, спека модели): правка поля url
-# сама по себе не проходит валидатор, пока рядом стоит базовый video — при этой
-# правке video обнуляется отдельно.
-EXTRA_OVERRIDES = {("video", "url"): {"video": ""}}
-
 
 def _violating(prop: dict, key: str, base: object) -> object:
     """Значение поля, нарушающее предел 1 по этому ключу."""
@@ -238,15 +232,14 @@ def _violating(prop: dict, key: str, base: object) -> object:
 def _shaped(stype: str, field: str, value: object) -> object:
     """Нарушающее значение, оставшееся тем, чем поле назвалось.
 
-    У video модель требует не только длину: ассет .mp4, картинку в poster и
-    ссылку http(s) в url — значение уходит в PDF живой ссылкой. Предел здесь
+    У video модель требует не только длину: картинку в poster и ссылку
+    http(s) в url — значение уходит в PDF живой ссылкой. Предел здесь
     нарушает содержимое, а форма остаётся правильной, иначе слайд не собрать
     вовсе и проверять будет нечего.
     """
     if stype != "video" or not isinstance(value, str):
         return value
-    return {"video": value + ".mp4", "poster": value + ".png",
-            "url": "http://" + value}.get(field, value)
+    return {"poster": value + ".png", "url": "http://" + value}.get(field, value)
 
 
 def test_every_key_clamp_keeps_reaches_the_schema_and_is_enforced():
@@ -276,8 +269,7 @@ def test_every_key_clamp_keeps_reaches_the_schema_and_is_enforced():
 
         value = _shaped(stype, field,
                         _violating(DEFS[stype]["properties"][field], key, BASE[stype].get(field)))
-        extra = EXTRA_OVERRIDES.get((stype, field), {})
-        slide = Deck(slides=[BASE[stype] | {field: value} | extra]).slides[0]
+        slide = Deck(slides=[BASE[stype] | {field: value}]).slides[0]
         msgs = check_slide(slide, {stype: {field: {key: 1}}}, n=1, template_name="Т")
         assert len(msgs) == 1 and f"«{FIELD_RU.get(field, field)}»" in msgs[0], (stype, field, key, msgs)
 

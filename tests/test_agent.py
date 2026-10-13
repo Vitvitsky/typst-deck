@@ -177,13 +177,13 @@ def test_system_prompt_mentions_schema_deck_assets():
     assert "dual-chart" in p and '"T"' in p and "a1.png" in p and d.slides[0].id in p
 
 
-def test_prompt_names_every_type_and_splits_assets():
+def test_prompt_names_every_type_and_lists_pictures():
     from typst_deck.model import SLIDE_TYPES
 
-    p = build_system_prompt(Deck(title="T", slides=[{"type": "final"}]), ["a1.png", "a2.mp4"])
+    p = build_system_prompt(Deck(title="T", slides=[{"type": "final"}]), ["a1.png", "a2.png"])
     for t in SLIDE_TYPES:
         assert t in p
-    assert "Картинки: a1.png" in p and "Видео: a2.mp4" in p
+    assert "Картинки: a1.png, a2.png" in p and "Видео:" not in p
     assert "не чаще раза на 5–7 слайдов" in p, "памятка про цитату"
 
 

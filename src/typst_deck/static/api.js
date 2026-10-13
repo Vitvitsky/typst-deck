@@ -89,13 +89,13 @@ export const FIELD_RU = {
   series: "Ряды данных", image: "Картинка", image_size: "Размер картинки",
   items: "Пункты", blocks: "Блоки текста", left: "Левая колонка", right: "Правая колонка",
   text: "Текст", header: "Шапка таблицы", rows: "Строки таблицы", images: "Картинки",
-  video: "Видео", url: "Ссылка", poster: "Обложка", kind: "Вид графика",
+  url: "Ссылка на видео", poster: "Обложка", kind: "Вид графика",
 };
 export const SIZE_RU = { small: "маленькая", medium: "средняя", large: "крупная" };
 // Вид графика — закрытый список (Literal в модели): всё, кроме bar и line, вернулось бы 422
 export const KIND_RU = { bar: "Столбцы", line: "Линии" };
-export const fileKind = (name) => /\.(png|jpe?g|svg)$/i.test(name) ? "image" : /\.mp4$/i.test(name) ? "video" : /\.(xlsx|csv)$/i.test(name) ? "table" : /\.(txt|md|docx)$/i.test(name) ? "text" : "bad";
-export const KIND_ICON = { image: "▨", video: "▶", table: "▦", text: "Т", bad: "?" };
+export const fileKind = (name) => /\.(png|jpe?g|svg)$/i.test(name) ? "image" : /\.(xlsx|csv)$/i.test(name) ? "table" : /\.(txt|md|docx)$/i.test(name) ? "text" : "bad";
+export const KIND_ICON = { image: "▨", table: "▦", text: "Т", bad: "?" };
 export const fmtSize = (b) => b < 1024 * 1024 ? `${Math.max(1, Math.round(b / 1024))} КБ` : `${(b / 1024 / 1024).toFixed(1)} МБ`;
 export const fmtTokens = (n) => Number(n || 0).toLocaleString("ru-RU");
 export const fmtDate = (iso) => new Date(iso).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });

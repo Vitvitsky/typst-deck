@@ -420,20 +420,25 @@ def test_gallery_missing_picture_keeps_the_grid(tdir, tmp_path):
 
 
 def video_deck(**kw):
-    return Deck(slides=[{"type": "video", "title": "В", "caption": "Ролик"} | kw])
+    return Deck(slides=[{"type": "video", "title": "В", "caption": "Ролик", "url": "https://example.com/v"} | kw])
 
 
-def test_uploaded_video_is_embedded_with_its_poster(tdir, tmp_path):
+def test_video_poster_carries_the_link(tdir, tmp_path):
     (tmp_path / "a").mkdir()
-    (tmp_path / "a" / "clip.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42")
     png(tmp_path / "a" / "cover.png", 320, 240)
-    slide = export(tdir, video_deck(video="clip.mp4", poster="cover.png"), assets=tmp_path / "a").slides[0]
-    [movie] = [sh for sh in slide.shapes if sh.shape_type == MSO_SHAPE_TYPE.MEDIA]
-    assert inside(movie) and abs(movie.width / movie.height - 4 / 3) < 0.01
-    rels = [r.reltype for r in slide.part.rels.values()]
-    assert RT.VIDEO in rels and RT.MEDIA in rels
+    url = "https://vk.com/video-1_2?list=a&t=3"
+    slide = export(tdir, video_deck(url=url, poster="cover.png"), assets=tmp_path / "a").slides[0]
+    [pic] = pictures(slide)
+    assert pic.click_action.hyperlink.address == url and abs(pic.width / pic.height - 4 / 3) < 0.01
     [cap] = boxes(slide)
-    assert cap.text_frame.text == "Ролик" and cap.top >= movie.top + movie.height
+    assert cap.text_frame.text == "Ролик" and cap.top >= pic.top + pic.height
+
+
+def test_missing_poster_falls_back_to_the_placeholder(tdir, tmp_path):
+    warnings: list[str] = []
+    slide = export(tdir, video_deck(poster="gone.png"), assets=tmp_path, warnings=warnings).slides[0]
+    [pic] = pictures(slide)
+    assert abs(pic.width / pic.height - 16 / 9) < 0.01 and any("gone.png не найдена" in w for w in warnings)
 
 
 def test_link_video_is_a_poster_with_a_hyperlink(tdir):
@@ -451,25 +456,6 @@ def test_placeholder_poster_takes_the_mapping_colors(tdir):
     with Image.open(io.BytesIO(pic.image.blob)) as im:
         assert im.getpixel((5, 5)) == (0xDD, 0xDD, 0xDD)  # table.header_fill
         assert im.getpixel((im.width // 2, im.height // 2)) == (0xFF, 0xDE, 0x00)  # «▶» — text.bullet
-
-
-def test_missing_video_file_leaves_the_poster_and_warns(tdir, tmp_path):
-    warnings: list[str] = []
-    slide = export(tdir, video_deck(video="gone.mp4", poster="gone.png"), assets=tmp_path,
-                   warnings=warnings).slides[0]
-    assert len(pictures(slide)) == 1
-    assert not [sh for sh in slide.shapes if sh.shape_type == MSO_SHAPE_TYPE.MEDIA]
-    assert any("видео gone.mp4 не найдено" in w for w in warnings)
-    assert any("gone.png не найдена" in w for w in warnings)
-
-
-def test_video_cannot_escape_assets(tdir, tmp_path):
-    (tmp_path / "a").mkdir()
-    (tmp_path / "secret.mp4").write_bytes(b"x")
-    warnings: list[str] = []
-    slide = export(tdir, video_deck(video="../secret.mp4"), assets=tmp_path / "a", warnings=warnings).slides[0]
-    assert not [sh for sh in slide.shapes if sh.shape_type == MSO_SHAPE_TYPE.MEDIA]
-    assert any("не найдено" in w for w in warnings)
 
 
 def test_notes_go_to_speaker_notes(tdir):

@@ -789,18 +789,8 @@ def _placeholder_poster(m: Mapping, tmp: Path) -> Path:
     return path
 
 
-def _video_file(name: str, assets: Path, warnings: list[str], n: int) -> Path | None:
-    if not name:
-        return None
-    src = Path(assets) / name
-    if Path(name).name != name or not src.is_file():  # «..»-путь или абсолютный — за пределы assets/
-        warnings.append(f"слайд {n}: видео {name} не найдено")
-        return None
-    return src
-
-
 def _video_body(c: Ctx) -> set[int]:
-    """Файл — встроенный ролик с обложкой; ссылка — обложка с гиперссылкой. Подпись — под рамкой."""
+    """Обложка (или заглушка) с гиперссылкой на ролик и подпись под ней (ADR 0022)."""
     poster = (_image_file(c.s.poster, c.assets, c.tmp, c.typst_bin, c.warnings, c.n)
               or _placeholder_poster(c.m, c.tmp))
     with Image.open(poster) as im:
@@ -808,14 +798,8 @@ def _video_body(c: Ctx) -> set[int]:
     x, y, w, h = _mm_box(c.sm.body)
     strip = int(CAPTION_STRIP * MM) if clean(c.s.caption).strip() else 0
     fx, fy, fw, fh = _fit((x, y, w, h - strip), aspect)
-    video = _video_file(c.s.video, c.assets, c.warnings, c.n)
-    if video is not None:
-        c.slide.shapes.add_movie(str(video), Emu(fx), Emu(fy), Emu(fw), Emu(fh),
-                                 poster_frame_image=str(poster), mime_type="video/mp4")
-    else:
-        pic = c.slide.shapes.add_picture(str(poster), Emu(fx), Emu(fy), Emu(fw), Emu(fh))
-        if c.s.url:
-            pic.click_action.hyperlink.address = c.s.url
+    pic = c.slide.shapes.add_picture(str(poster), Emu(fx), Emu(fy), Emu(fw), Emu(fh))
+    pic.click_action.hyperlink.address = c.s.url
     if strip:
         _caption(c.slide, c.s.caption, fx, fy + fh + int(2 * MM), fw, c.m.text)
     return set()

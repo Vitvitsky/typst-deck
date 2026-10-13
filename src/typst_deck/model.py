@@ -5,7 +5,7 @@ import secrets
 from datetime import datetime, timezone
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
 ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
 TITLE_MAX = 120
@@ -67,7 +67,6 @@ SIDE_CAPTION_MAX = 68
 TEMPLATE_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,40}$"
 URL_MAX = 500
 ASSET_NAME_MAX = 120
-VIDEO_EXT = (".mp4",)
 POSTER_EXT = (".png", ".jpg", ".jpeg", ".svg")
 
 
@@ -276,27 +275,23 @@ class GallerySlide(SlideBase):
 class VideoSlide(SlideBase):
     type: Literal["video"]
     title: Title
-    video: Annotated[str, Field(max_length=ASSET_NAME_MAX)] = ""   # ассет .mp4 в колоде
-    url: Annotated[str, Field(max_length=URL_MAX)] = ""            # внешняя ссылка
+    # ссылка на ролик на внешней платформе (ADR 0022): в PDF и PPTX — обложка с этой ссылкой
+    url: Annotated[str, Field(min_length=1, max_length=URL_MAX)]
     poster: Annotated[str, Field(max_length=ASSET_NAME_MAX)] = ""  # ассет-картинка обложки
     caption: Annotated[str, Field(max_length=120)] = ""
 
-    @model_validator(mode="after")
-    def _source(self):
-        """Ровно один источник — и он должен быть тем, чем назвался.
+    @field_validator("url", mode="before")
+    @classmethod
+    def _strip(cls, v):
+        return v.strip() if isinstance(v, str) else v
 
-        Значение уходит в PDF живой ссылкой, поэтому схема и длина проверяются
-        здесь, пока это одна строка кода: сегодня поле пишет только агентское API,
-        а план C открывает загрузку ролика и поле ссылки в интерфейсе.
-        """
-        if bool(self.video) == bool(self.url):
-            raise ValueError("у видео должно быть ровно одно: файл video или ссылка url")
-        if self.video and not self.video.lower().endswith(VIDEO_EXT):
-            raise ValueError(f"video: нужен ассет .mp4, а не «{self.video}»")
+    @model_validator(mode="after")
+    def _link(self):
+        """Ссылка уходит в PDF и PPTX живой ссылкой, поэтому схема проверяется здесь."""
+        if not self.url.lower().startswith(("http://", "https://")):
+            raise ValueError("url: ссылка должна начинаться с http:// или https://")
         if self.poster and not self.poster.lower().endswith(POSTER_EXT):
             raise ValueError(f"poster: нужна картинка ({', '.join(POSTER_EXT)}), а не «{self.poster}»")
-        if self.url and not self.url.lower().startswith(("http://", "https://")):
-            raise ValueError("url: ссылка должна начинаться с http:// или https://")
         return self
 
 

@@ -22,7 +22,6 @@ def test_every_template_draws_all_types(deck_dir, png_bytes, tid):
 
     for name in ("a1.png", "a2.png"):
         (deck_dir / "assets" / name).write_bytes(png_bytes)
-    (deck_dir / "assets" / "a3.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42")
     deck = rich_deck()
     deck.slides += Deck(slides=[
         {"type": "text", "title": "Тезисы", "bullets": ["раз", "два"]},
@@ -36,8 +35,7 @@ def test_every_template_draws_all_types(deck_dir, png_bytes, tid):
         {"type": "section", "title": "Раздел", "subtitle": "Про"},
         {"type": "final", "contact": "team@corp"},
     ]).slides
-    r = compile_deck(deck, deck_dir, TEMPLATE_DIR if tid == "default" else ROOT / "templates" / tid,
-                     base_url="http://t")
+    r = compile_deck(deck, deck_dir, TEMPLATE_DIR if tid == "default" else ROOT / "templates" / tid)
     assert len(r.svgs) == len(deck.slides), "одна функция — одна страница"
     fields = {(p["slide"], p["field"]) for p in r.positions}
     for slide_id, field in [("s1", "items"), ("s2", "blocks"), ("s3", "left"), ("s3", "right"),
@@ -56,8 +54,7 @@ def test_grouped_bars_keep_every_series(deck_dir, tid):
         {"type": "chart", "title": "Сравнение", "kind": "bar", "labels": ["A", "B", "C"],
          "series": [{"name": "план", "values": [4, -2, 3]}, {"name": "факт", "values": [-1, 5, 2]}]},
     ])
-    r = compile_deck(deck, deck_dir, TEMPLATE_DIR if tid == "default" else ROOT / "templates" / tid,
-                     base_url="http://t")
+    r = compile_deck(deck, deck_dir, TEMPLATE_DIR if tid == "default" else ROOT / "templates" / tid)
     assert len(r.svgs) == 1
     fields = {(p["slide"], p["field"]) for p in r.positions}
     assert (deck.slides[0].id, "title") in fields
@@ -504,7 +501,7 @@ def maxed_slides() -> list[dict]:
         {"id": "gallery", "type": "gallery", "title": _chars(_len("gallery", "title")),
          "images": [{"image": f"p{i + 1}.png", "caption": _chars(_len("gallery", "images", "caption"))}
                     for i in range(_n("gallery", "images"))]},
-        {"id": "video", "type": "video", "title": _chars(_len("video", "title")), "video": "v.mp4",
+        {"id": "video", "type": "video", "title": _chars(_len("video", "title")), "url": "https://example.com/v",
          "poster": "p1.png", "caption": _chars(_len("video", "caption"))},
         {"id": "final", "type": "final", "title": _chars(_len("final", "title")),
          "contact": _chars(_len("final", "contact"))},
@@ -737,7 +734,7 @@ def test_minimum_counts_do_not_overflow_the_page(deck_dir, png_bytes, tid):
         (deck_dir / "assets" / f"p{n}.png").write_bytes(png_bytes)
     tdir = TEMPLATE_DIR if tid == "default" else ROOT / "templates" / tid
     deck = Deck(id="cornerdeck", slides=cornered_slides())
-    r = compile_deck(deck, deck_dir, tdir, base_url="http://t")
+    r = compile_deck(deck, deck_dir, tdir)
     assert len(r.svgs) == len(deck.slides), "одна функция — одна страница"
     bound = content_bottom(tdir)
     extra = _overflowing(r, bound)
@@ -753,10 +750,9 @@ def test_model_maximum_does_not_overflow_the_page(deck_dir, png_bytes, tid):
     """Слайд по верхнему пределу модели не уходит содержимым под обрез страницы."""
     for n in range(1, 5):
         (deck_dir / "assets" / f"p{n}.png").write_bytes(png_bytes)
-    (deck_dir / "assets" / "v.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42")
     tdir = TEMPLATE_DIR if tid == "default" else ROOT / "templates" / tid
     deck = Deck(id="maxdeck", slides=maxed_slides())
-    r = compile_deck(deck, deck_dir, tdir, base_url="http://t")
+    r = compile_deck(deck, deck_dir, tdir)
     assert len(r.svgs) == len(deck.slides), "одна функция — одна страница"
     bound = content_bottom(tdir)
     worst: dict[str, tuple[float, str]] = {}

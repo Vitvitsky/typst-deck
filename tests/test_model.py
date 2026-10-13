@@ -86,19 +86,22 @@ def test_table_rows_match_the_header():
                                       "header": ["Регион", "Выручка"], "rows": [["Центр"]]})
 
 
-def test_video_refuses_a_wrong_asset_and_a_wrong_link():
-    """План C откроет загрузку видео и поле ссылки в интерфейсе; пределы ставим сейчас."""
+def test_video_is_a_link_with_an_optional_poster():
+    v = SlideAdapter.validate_python({"type": "video", "title": "Ролик", "url": " https://youtu.be/dQw4w9WgXcQ "})
+    assert v.url == "https://youtu.be/dQw4w9WgXcQ" and v.poster == "" and v.caption == ""
+    v = SlideAdapter.validate_python({"type": "video", "title": "Ролик", "url": "https://disk.yandex.ru/i/abc",
+                                      "poster": "a1.png", "caption": "Подпись"})
+    assert v.poster == "a1.png"
+
+
+@pytest.mark.parametrize("bad", [
+    {}, {"url": ""}, {"url": "javascript:alert(1)"}, {"url": "data:text/html,x"}, {"url": "//host/v"},
+    {"url": "ftp://h/1.mp4"}, {"url": "https://h/" + "x" * 600},
+    {"url": "https://h/v", "poster": "clip.mp4"}, {"url": "https://h/v", "video": "a1.mp4"},
+])
+def test_video_rejects_what_is_not_a_link(bad):
     with pytest.raises(ValidationError):
-        SlideAdapter.validate_python({"type": "video", "title": "Р", "video": "photo.png"})
-    with pytest.raises(ValidationError):
-        SlideAdapter.validate_python({"type": "video", "title": "Р", "video": "a1.mp4",
-                                      "poster": "clip.mp4"})
-    for bad in ("javascript:alert(1)", "ftp://h/1.mp4", "h" * 5000):
-        with pytest.raises(ValidationError):
-            SlideAdapter.validate_python({"type": "video", "title": "Р", "url": bad})
-    ok = SlideAdapter.validate_python({"type": "video", "title": "Р", "url": "http://h/1.mp4",
-                                       "poster": "a1.jpg"})
-    assert ok.poster == "a1.jpg"
+        SlideAdapter.validate_python({"type": "video", "title": "Ролик"} | bad)
 
 
 def test_chart_bullets_are_capped_at_the_measured_length():
@@ -131,16 +134,6 @@ def test_large_picture_leaves_less_room_for_bullets():
     with pytest.raises(ValidationError) as e:
         SlideAdapter.validate_python(base | {"bullets": ["Э" * 200] * 6, "image_size": "large"})
     assert "large" in str(e.value)
-
-
-def test_video_takes_exactly_one_source():
-    f = SlideAdapter.validate_python({"type": "video", "title": "Ролик", "video": "a1.mp4"})
-    assert f.video == "a1.mp4" and f.url == ""
-    u = SlideAdapter.validate_python({"type": "video", "title": "Ролик", "url": "https://v/1"})
-    assert u.url == "https://v/1"
-    for bad in ({}, {"video": "a1.mp4", "url": "https://v/1"}):
-        with pytest.raises(ValidationError):
-            SlideAdapter.validate_python({"type": "video", "title": "Ролик", **bad})
 
 
 @pytest.mark.parametrize("bad", [

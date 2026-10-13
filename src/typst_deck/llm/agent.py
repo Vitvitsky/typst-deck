@@ -39,12 +39,8 @@ def _template_list(templates: list[dict] | None) -> str:
 
 
 def _asset_list(assets: list[str]) -> str:
-    """Ассеты делятся на картинки и видео по расширению — модели проще выбрать
-    id для image/gallery отдельно от id для video, не перебирая общий список."""
-    images = [a for a in assets if not a.lower().endswith(".mp4")]
-    videos = [a for a in assets if a.lower().endswith(".mp4")]
-    return (f"Картинки: {', '.join(images) if images else '(нет)'}\n"
-            f"Видео: {', '.join(videos) if videos else '(нет)'}")
+    """Ассеты колоды — только картинки (видео — ссылкой, ADR 0022)."""
+    return f"Картинки: {', '.join(assets) if assets else '(нет)'}"
 
 
 def build_system_prompt(deck: Deck, assets: list[str], templates: list[dict] | None = None,

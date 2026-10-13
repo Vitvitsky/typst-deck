@@ -12,7 +12,6 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
-from urllib.parse import quote
 
 from .logs import log_event
 from .model import (
@@ -171,11 +170,8 @@ def _image_field(slide_id: str, name: str, asset: str) -> str:
             f'image({typ_str("/assets/" + asset)}, width: 100%, height: 100%, fit: "contain"))')
 
 
-def render_typ(deck: Deck, assets: set[str], base_url: str = "") -> tuple[str, list[str]]:
-    """Возвращает текст deck.typ и предупреждения (например, о пропавших картинках).
-
-    base_url нужен слайду video: загруженный файл превращается в ссылку на него.
-    """
+def render_typ(deck: Deck, assets: set[str]) -> tuple[str, list[str]]:
+    """Возвращает текст deck.typ и предупреждения (например, о пропавших картинках)."""
     out = [HEADER, f"#show: deck.with(title: {typ_str(deck.title)})\n"]
     warnings: list[str] = []
     for n, s in enumerate(deck.slides, 1):
@@ -277,16 +273,6 @@ def render_typ(deck: Deck, assets: set[str], base_url: str = "") -> tuple[str, l
                     "caption": "none"}))
             out.append(f"#slide-gallery(title: {_text(sid, 'title', s.title)}, images: {_seq(pics)})\n")
         elif isinstance(s, VideoSlide):
-            url = s.url
-            if s.video:
-                if s.video not in assets:
-                    warnings.append(f"слайд {n}: видео {s.video} не найдено")
-                # без base_url ссылку собрать не из чего (например, проверка контракта):
-                # слайд рисуется обложкой без ссылки, и это не повод предупреждать.
-                # Имя ассета экранируется: «my file #1.mp4» давало живой пробел и #,
-                # и ссылка в PDF обрывалась на первом же из них.
-                url = (f"{base_url.rstrip('/')}/api/decks/{deck.id}/assets/{quote(s.video, safe='')}"
-                       if s.video in assets and base_url else "")
             poster = "none"
             if s.poster:
                 if s.poster in assets:
@@ -294,7 +280,7 @@ def render_typ(deck: Deck, assets: set[str], base_url: str = "") -> tuple[str, l
                 else:
                     warnings.append(f"слайд {n}: обложка {s.poster} не найдена")
             out.append(f"#slide-video(title: {_text(sid, 'title', s.title)}, poster: {poster}, "
-                       f"url: {_opt(url)}, caption: {_text(sid, 'caption', s.caption)})\n")
+                       f"url: {_opt(s.url)}, caption: {_text(sid, 'caption', s.caption)})\n")
         elif isinstance(s, FinalSlide):
             out.append(
                 f"#slide-final(title: {_text(sid, 'title', s.title)}, "
@@ -341,7 +327,7 @@ def _run(cmd: list[str], timeout: int) -> tuple[subprocess.CompletedProcess, int
 
 def compile_deck(
     deck: Deck, deck_dir: Path, template_dir: Path, typst_bin: str = "typst", timeout: int = 60,
-    fonts_dir: Path | None = None, system_fonts: bool = True, base_url: str = "",
+    fonts_dir: Path | None = None, system_fonts: bool = True,
 ) -> CompileResult:
     """Собирает build/: deck.typ, slide-N.svg, positions.json, warnings.json, pages.json.
 
@@ -353,7 +339,7 @@ def compile_deck(
     assets_dir = deck_dir / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
     assets = {p.name for p in assets_dir.iterdir() if p.is_file()}
-    typ, warnings = render_typ(deck, assets, base_url)
+    typ, warnings = render_typ(deck, assets)
 
     tmp = deck_dir / "build.tmp"
     shutil.rmtree(tmp, ignore_errors=True)
