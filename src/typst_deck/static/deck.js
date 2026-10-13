@@ -43,12 +43,17 @@ async function refresh() {
   }
   stopTimer();
   state.page = info.page || state.page;
-  if (info.has_build) state.positions = await api(`api/decks/${deckId}/positions`);
+  // без сборки зон нет: прежние вели бы на страницы, которых не видно
+  state.positions = info.has_build ? await api(`api/decks/${deckId}/positions`) : [];
   if (state.selected && !info.deck.slides.some((s) => s.id === state.selected)) state.selected = null;
   renderStage();
   renderRail();
   if (state.tab === "slide") rerenderProps();
   setLock(false);
+  // превью ещё собирается (колоду держит фон или правка) — заглянуть позже
+  if (info.deck.slides.length && !info.has_build && !info.build_error && !state.buildPoll) {
+    state.buildPoll = setTimeout(() => { state.buildPoll = null; refresh(); }, 2000);
+  }
 }
 
 async function pollUntilReady() {
@@ -126,7 +131,7 @@ function renderTopbar() {
   renderTplSelect();
   const pdf = $("pdf");
   pdf.href = `api/decks/${deckId}/deck.pdf`;
-  pdf.classList.toggle("hidden", !state.info.has_build);
+  pdf.classList.toggle("hidden", !state.info.deck.slides.length);  // PDF собирается по запросу
   // PPTX собирается из модели на лету и сборки не ждёт; есть только у шаблона с PowerPoint-мастером
   const pptx = $("pptx");
   pptx.href = `api/decks/${deckId}/deck.pptx`;
@@ -212,11 +217,17 @@ function startTimer() {
 function stopTimer() { if (state.timer) clearInterval(state.timer); state.timer = null; }
 
 function renderStage() {
-  const { deck, warnings, status, last_error } = state.info;
+  const { deck, warnings, status, last_error, has_build, build_error } = state.info;
   const inner = $("stage-inner");
   const parts = [];
   if (status === "failed" && last_error && !deck.slides.length) {
     parts.push(el("div", { class: "notice err inline" }, `Не удалось собрать: ${errorText(last_error)}`));
+  }
+  if (deck.slides.length && build_error) {
+    parts.push(el("div", { class: "notice err inline" },
+      `${has_build ? "Превью устарели — не удалось пересобрать" : "Превью не собрано"}: ${errorText(build_error)}`));
+  } else if (deck.slides.length && !has_build) {
+    parts.push(el("div", { class: "notice info inline" }, "Превью собирается…"));
   }
   if (warnings && warnings.length) parts.push(el("div", { class: "notice warn inline" }, warnings.join("; ")));
   if (!deck.slides.length) {
@@ -242,7 +253,10 @@ function renderStage() {
     const play = slide.type === "video" && slide.url
       ? el("button", { type: "button", class: "play", onclick: (e) => { e.stopPropagation(); playVideo(slide); } }, "▶ Смотреть")
       : null;
-    const page = el("div", { class: "page" }, el("img", { src: `api/decks/${deckId}/slides/${n}.svg?v=${slideVer(i)}`, alt: `Слайд ${n}` }), overlay, play);
+    // без сборки — заглушка, а не битая картинка
+    const pic = has_build ? el("img", { src: `api/decks/${deckId}/slides/${n}.svg?v=${slideVer(i)}`, alt: `Слайд ${n}` })
+      : el("div", { class: "skeleton", role: "img", "aria-label": `Слайд ${n}: превью нет` });
+    const page = el("div", { class: "page" }, pic, overlay, play);
     parts.push(el("div", { class: `pagewrap${state.selected === slide.id ? " selected" : ""}`, id: `slide-${slide.id}` },
       el("div", { class: "pagebar" }, el("span", { class: "n num" }, n), el("span", {}, TYPE_RU[slide.type]),
         el("span", { class: "hint" }, "Нажмите на текст, чтобы изменить")),
@@ -298,7 +312,8 @@ async function applyResult(promise) {
   const info = await promise;
   state.info = info;
   state.page = info.page || state.page;
-  if (info.has_build) state.positions = await api(`api/decks/${deckId}/positions`);
+  // без сборки зон нет: прежние вели бы на страницы, которых не видно
+  state.positions = info.has_build ? await api(`api/decks/${deckId}/positions`) : [];
   renderTopbar(); renderStage(); renderRail();
   if (state.tab === "slide" && state.selected === sel) rerenderProps();
   return info;

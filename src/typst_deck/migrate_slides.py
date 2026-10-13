@@ -92,8 +92,10 @@ def migrate(data_dir: Path, check: bool = False) -> list[tuple[str, int]]:
             # Сборка переписанной колоды устарела: её deck.typ вызывает функции
             # старого контракта, а deck.pdf и превью — старый вид. После выкатки
             # 2026-10-13 PDF такой колоды отвечал 500. Сервис соберёт её заново
-            # при первом обращении (DeckService.ensure_build).
-            shutil.rmtree(d / "build", ignore_errors=True)
+            # при первом обращении (DeckService.ensure_build). Переписаны только
+            # снимки versions/ — сборка отвечает текущей колоде, её не трогаем.
+            if any(p.name == "deck.json" and p.parent == d for p, _ in planned):
+                shutil.rmtree(d / "build", ignore_errors=True)
         # Extract deck ID (before dash for trash items, full name for decks)
         deck_id = d.name.split('-')[0]
         done.append((deck_id, len(planned)))

@@ -146,6 +146,7 @@ async def test_list_decks(client):
     items = (await client.get("/api/decks")).json()
     assert [i["title"] for i in items] == ["Вторая", "Первая"]
     assert items[1]["slide_count"] == 1 and items[1]["status"] == "ready" and items[1]["has_build"] is False
+    assert items[1]["building"] is True and items[0]["building"] is False, "пустой колоде собирать нечего"
 
 
 @requires_typst
@@ -1126,3 +1127,94 @@ async def test_template_schema_carries_the_template_slots(tight_client):
     assert defs["TitleSlide"]["properties"]["title"]["maxLength"] == 60
     assert defs["TextSlide"]["properties"]["title"]["maxLength"] == 120  # не сужен — глобальный
     assert (await tight_client.get("/api/templates/nope/schema")).status_code == 422
+
+
+def _stamp(client, d) -> str:
+    return (client.app.state.store.deck_dir(d.id) / "build" / "stamp.txt").read_text()
+
+
+@requires_typst
+async def test_stale_build_is_rebuilt_on_view_and_pdf(client, monkeypatch):
+    """Сборка помнит, чем собрана (код рендера, typst, шаблон): после выкатки или
+    правки канона устаревшая пересобирается сама, без rm -rf build/ руками."""
+    from typst_deck import render
+
+    store = client.app.state.store
+    d = store.create(Deck(title="Т", slides=[{"type": "final"}]))
+    assert (await client.get(f"/api/decks/{d.id}/deck.pdf")).status_code == 200
+    before = _stamp(client, d)
+    pdf = store.deck_dir(d.id) / "build" / "deck.pdf"
+    pdf.write_bytes(b"%PDF old")
+    monkeypatch.setattr(render, "RENDER_VERSION", render.RENDER_VERSION + 1)
+    r = await client.get(f"/api/decks/{d.id}/deck.pdf")
+    assert r.status_code == 200 and r.content != b"%PDF old", "устаревший PDF не отдаётся"
+    assert _stamp(client, d) != before
+    monkeypatch.setattr(render, "RENDER_VERSION", render.RENDER_VERSION + 1)
+    info = (await client.get(f"/api/decks/{d.id}")).json()
+    assert info["has_build"] is True and _stamp(client, d) != before
+
+
+@requires_typst
+async def test_template_edit_makes_the_build_stale(settings, fake_llm, tmp_path):
+    """Канон правят вживую, без рестарта: правка файла шаблона — новая метка."""
+    import shutil
+
+    from tests.conftest import TEMPLATE_DIR
+    from typst_deck import service
+    from typst_deck.app import create_app
+
+    root = tmp_path / "tpl"
+    shutil.copytree(TEMPLATE_DIR, root / "live")
+    app = create_app(settings.model_copy(update={"templates_dir": str(root)}), llm=fake_llm)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        d = app.state.store.create(Deck(title="Т", template="live", slides=[{"type": "final"}]))
+        await c.get(f"/api/decks/{d.id}")
+        before = (app.state.store.deck_dir(d.id) / "build" / "stamp.txt").read_text()
+        (root / "live" / "deck.typ").write_text((root / "live" / "deck.typ").read_text() + "\n// правка\n")
+        service.FINGERPRINTS.clear()  # кэш отпечатка живёт секунды — в тесте ждать незачем
+        await c.get(f"/api/decks/{d.id}")
+        assert (app.state.store.deck_dir(d.id) / "build" / "stamp.txt").read_text() != before
+
+
+def test_template_fingerprint_ignores_git(tmp_path):
+    from typst_deck.service import template_fingerprint
+
+    (tmp_path / "deck.typ").write_text("x")
+    (tmp_path / ".git").mkdir()
+    a = template_fingerprint(tmp_path, ttl=0)
+    (tmp_path / ".git" / "index").write_text("y")
+    assert template_fingerprint(tmp_path, ttl=0) == a
+    (tmp_path / "new.typ").write_text("z")
+    assert template_fingerprint(tmp_path, ttl=0) != a
+
+
+async def test_failed_lazy_build_reason_is_in_the_deck_response(client, monkeypatch):
+    """Провал сборки страница показывает с причиной, а не как «готово» с пустыми превью."""
+    from typst_deck.api.common import ApiError
+
+    _count_render_boom(monkeypatch, ApiError(500, "render", "шаблон не собрался"))
+    d = client.app.state.store.create(Deck(title="Т", slides=[{"type": "final"}]))
+    info = (await client.get(f"/api/decks/{d.id}")).json()
+    assert info["has_build"] is False and "шаблон не собрался" in info["build_error"]
+    listed = (await client.get("/api/decks")).json()
+    assert "шаблон не собрался" in listed[0]["build_error"]
+
+
+@requires_typst
+async def test_deck_list_builds_missing_previews_in_the_background(client):
+    """Список колод сам запускает сборку превью — по одной колоде за раз — и
+    отдаёт адрес миниатюры по хешу страницы, а не по версии колоды."""
+    store = client.app.state.store
+    ids = [store.create(Deck(title=f"Т{i}", slides=[{"type": "final"}])).id for i in range(2)]
+    items = (await client.get("/api/decks")).json()
+    assert all(i["building"] for i in items) and not any(i["has_build"] for i in items)
+    for _ in range(100):
+        items = (await client.get("/api/decks")).json()
+        if all(i["has_build"] for i in items):
+            break
+        await asyncio.sleep(0.1)
+    assert all(i["has_build"] and not i["building"] for i in items)
+    for i in items:
+        pages = json.loads((store.deck_dir(i["id"]) / "build" / "pages.json").read_text())
+        assert i["thumb"] == pages[0]
+    assert sorted(i["id"] for i in items) == sorted(ids)

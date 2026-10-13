@@ -9,7 +9,8 @@ const STATUS = { generating: "собирается", failed: "ошибка ге�
 async function load() {
   try { all = await api("api/decks"); } catch (e) { $("decks").replaceChildren(el("div", { class: "error" }, e.message)); return; }
   render();
-  if (all.some((d) => d.status === "generating")) setTimeout(load, 3000);
+  // превью собирает фон (list_decks): опрос, пока он не закончит
+  if (all.some((d) => d.status === "generating" || d.building)) setTimeout(load, 3000);
 }
 
 function render() {
@@ -26,14 +27,16 @@ function render() {
     }));
     return el("article", { class: "card" },
       el("a", { class: "thumb", href: `d/${d.id}`, "aria-label": `Открыть ${d.title}` },
-        d.has_build ? el("img", { src: `api/decks/${d.id}/slides/1.svg?v=${d.version}`, alt: "", loading: "lazy" })
-          : el("div", { class: "nothumb" }, d.status === "generating" ? el("span", { class: "spinner" }) : "нет слайдов")),
+        d.has_build ? el("img", { src: `api/decks/${d.id}/slides/1.svg?v=${d.thumb || d.version}`, alt: "", loading: "lazy" })
+          : el("div", { class: "nothumb" }, d.status === "generating" || d.building ? el("span", { class: "spinner" })
+            : !d.slide_count ? "нет слайдов" : d.build_error ? el("span", { title: d.build_error }, "превью не собрано") : "превью нет")),
       el("div", { class: "meta" },
         el("a", { class: "name", href: `d/${d.id}`, title: d.title }, d.title),
         el("div", { class: "muted tiny num" }, el("span", { class: `status-dot ${d.status}` }), `${STATUS[d.status]} · ${d.slide_count} сл. · ${fmtDate(d.updated_at)}`),
         el("div", { class: "row" },
           el("a", { class: "btn sm primary", href: `d/${d.id}` }, "Открыть"),
-          d.has_build ? el("a", { class: "btn sm", href: `api/decks/${d.id}/deck.pdf`, download: true }, "PDF") : null,
+          // PDF собирается по запросу, в том числе без готовых превью
+          d.slide_count ? el("a", { class: "btn sm", href: `api/decks/${d.id}/deck.pdf`, download: true }, "PDF") : null,
           d.pptx && d.slide_count ? el("a", { class: "btn sm", href: `api/decks/${d.id}/deck.pptx`, download: true }, "PPTX") : null,
           el("span", { class: "sp" }), del)));
   }));

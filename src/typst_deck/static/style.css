@@ -51,6 +51,7 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); ou
 .notice { border-radius: var(--r-lg); padding: 10px 14px; margin-bottom: 16px; border: 1px solid; }
 .notice.warn { background: var(--warn-bg); border-color: #f1d9a8; color: #6b4a0d; }
 .notice.err { background: var(--danger-bg); border-color: #f3c6c6; color: var(--danger); }
+.notice.info { background: var(--accent-soft); border-color: var(--line); }
 .create { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 20px; display: grid; grid-template-columns: 1.4fr 1fr; gap: 18px; }
 .create h2 { font-size: 16px; margin-bottom: 4px; }
 .create textarea { min-height: 128px; }

@@ -186,3 +186,15 @@ def test_untouched_deck_keeps_its_build(tmp_path):
     (d / "build").mkdir()
     (d / "build" / "deck.typ").write_text("свежая")
     assert migrate(tmp_path) == [] and (d / "build" / "deck.typ").read_text() == "свежая"
+
+
+def test_rewritten_snapshots_alone_keep_the_build(tmp_path):
+    """Переписаны только снимки versions/, deck.json уже на новых типах — сборка
+    отвечает текущей колоде, сносить её незачем."""
+    d = write_deck(tmp_path, "d0000000008", versions=1)
+    migrate(tmp_path)
+    (d / "versions" / "000001.json").write_text(json.dumps(LEGACY | {"id": "d0000000008"}, ensure_ascii=False))
+    (d / "build").mkdir()
+    (d / "build" / "deck.typ").write_text("свежая")
+    assert migrate(tmp_path) == [("d0000000008", 1)]
+    assert (d / "build" / "deck.typ").read_text() == "свежая"

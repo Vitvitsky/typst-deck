@@ -317,6 +317,12 @@ def render_typ(deck: Deck, assets: set[str]) -> tuple[str, list[str]]:
 
 
 FIELDS_TYP = Path(__file__).parent / "typst" / "fields.typ"
+# Версия того, как колода превращается в deck.typ (render_typ). Входит в метку
+# сборки (build/stamp.txt): поднять при правке render_typ, меняющей вывод, — и
+# устаревшие сборки колод пересоберутся сами при первом обращении. fields.typ
+# в метку входит своим хешем, его правка версии не требует.
+RENDER_VERSION = 1
+FIELDS_HASH = hashlib.blake2b(FIELDS_TYP.read_bytes(), digest_size=8).hexdigest()
 
 
 class CompileError(Exception):
@@ -352,9 +358,10 @@ def _run(cmd: list[str], timeout: int) -> tuple[subprocess.CompletedProcess, int
 
 def compile_deck(
     deck: Deck, deck_dir: Path, template_dir: Path, typst_bin: str = "typst", timeout: int = 60,
-    fonts_dir: Path | None = None, system_fonts: bool = True,
+    fonts_dir: Path | None = None, system_fonts: bool = True, stamp: str = "",
 ) -> CompileResult:
-    """Собирает build/: deck.typ, slide-N.svg, positions.json, warnings.json, pages.json.
+    """Собирает build/: deck.typ, slide-N.svg, positions.json, warnings.json, pages.json
+    и stamp.txt — метку, чем собрано (DeckService.build_stamp), если она передана.
 
     PDF не собирается — его делает compile_pdf() по требованию.
 
@@ -423,6 +430,8 @@ def compile_deck(
     (tmp / "positions.json").write_text(json.dumps(positions, ensure_ascii=False))
     (tmp / "warnings.json").write_text(json.dumps(warnings, ensure_ascii=False))
     (tmp / "pages.json").write_text(json.dumps(pages))
+    if stamp:
+        (tmp / "stamp.txt").write_text(stamp)
 
     build = deck_dir / "build"
     old = deck_dir / "build.old"

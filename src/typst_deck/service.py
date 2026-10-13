@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+import os
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -22,6 +25,7 @@ from .llm.tools import format_validation
 from .logs import log_event
 from .model import Deck, utcnow
 from .pptx import MappingError, export_pptx
+from . import render as render_mod
 from .render import CompileError, CompileResult, compile_deck, compile_pdf, page_size
 from .slots import apply_to_schema, check_deck, first_few
 from .store import DeckNotFound, DeckStore
@@ -31,6 +35,33 @@ from .templates import SAMPLE_DECK, TemplateBroken, TemplateInfo, TemplateNotFou
 IngestedFile = tuple[str, bytes, str | None]
 
 log = logging.getLogger(__name__)
+
+
+# путь шаблона → (time.monotonic(), отпечаток): обход канона — сотни файлов, а
+# свежесть сборки проверяется на каждый опрос страницы и на каждую колоду списка
+FINGERPRINTS: dict[str, tuple[float, str]] = {}
+
+
+def template_fingerprint(path: Path, ttl: float = 10.0) -> str:
+    """Отпечаток файлов шаблона: число, сумма размеров и последний mtime. Канон
+    примонтирован вживую и правится без рестарта; .git пропускается — его файлы
+    меняются от git status и fetch, а не от правки шаблона."""
+    key = str(path)
+    hit = FINGERPRINTS.get(key)
+    if hit and time.monotonic() - hit[0] < ttl:
+        return hit[1]
+    n = size = newest = 0
+    for root, dirs, files in os.walk(path, followlinks=True):
+        dirs[:] = [d for d in dirs if d != ".git"]
+        for f in files:
+            try:
+                st = os.stat(os.path.join(root, f))
+            except OSError:
+                continue
+            n, size, newest = n + 1, size + st.st_size, max(newest, st.st_mtime_ns)
+    fp = f"{n}:{size}:{newest}"
+    FINGERPRINTS[key] = (time.monotonic(), fp)
+    return fp
 
 
 def _ms(started_ns: int) -> int:
@@ -63,8 +94,13 @@ class DeckService:
                                           settings.template_alias_map)
         self.meter = TokenMeter()
         self._preview_locks: dict[str, asyncio.Lock] = {}
-        # колода -> (версия, time.monotonic()) последней неудачной ленивой сборки
-        self._lazy_failed: dict[str, tuple[int, float]] = {}
+        # колода -> (версия, time.monotonic(), причина) последней неудачной ленивой сборки
+        self._lazy_failed: dict[str, tuple[int, float, str]] = {}
+        # колоды, чьи превью собирает фон по просьбе списка; по одной за раз
+        self._building: set[str] = set()
+        self._bg_tasks: set[asyncio.Task] = set()
+        self._bg_slot = asyncio.Semaphore(1)
+        self._typst_version: str | None = None
         # причина, если фоновая проверка шаблонов упала целиком; иначе checked=False
         # неотличимо от «ещё выполняется» (/api/health её и показывает)
         self.template_check_error: str | None = None
@@ -204,6 +240,8 @@ class DeckService:
             "last_error": last.error if last else None,
             # признак сборки — слайды, а не PDF: он собирается лениво
             "has_build": (build / "slide-1.svg").exists(),
+            # причина провала ленивой сборки этой версии; страница её показывает
+            "build_error": self.build_error(deck),
             # размер страницы отсюда, чтобы фронт не качал slide-1.svg целиком ради viewBox
             "page": page_size(build / "slide-1.svg"),
             # версия на слайд: правка одного слайда не меняет URL остальных
@@ -211,6 +249,9 @@ class DeckService:
         }
 
     def list_decks(self) -> list[dict]:
+        """Каталог. Колоды без свежей сборки ставятся в фоновую очередь: превью
+        появляются без открытия каждой колоды, а typst идёт по одной колоде за раз,
+        а не двадцатью сразу при открытии списка."""
         out = []
         pptx: dict[str, bool] = {}  # шаблон → есть ли мастер; реестр читает template.json на каждый get
         for d in self.store.list_decks():
@@ -218,14 +259,43 @@ class DeckService:
             status = "generating" if active else ("failed" if last and last.status == "failed" else "ready")
             if d.template not in pptx:
                 pptx[d.template] = self._has_pptx(d.template)
+            build = self.store.deck_dir(d.id) / "build"
+            error = self.build_error(d)
+            if d.slides and not active and error is None and not self.build_fresh(d):
+                self._build_in_background(d.id)
+            pages = json.loads(pp.read_text()) if (pp := build / "pages.json").exists() else []
             out.append({
                 "id": d.id, "title": d.title, "slide_count": len(d.slides), "version": d.version,
                 "created_at": d.created_at.isoformat(), "updated_at": d.updated_at.isoformat(),
                 "status": status,
-                "has_build": (self.store.deck_dir(d.id) / "build" / "slide-1.svg").exists(),
+                "has_build": (build / "slide-1.svg").exists(),
+                "building": d.id in self._building,
+                "build_error": error,
+                # версия миниатюры — хеш первой страницы: пересборка без новой версии
+                # колоды (метка, канон) меняет адрес, и браузер не держит старую год
+                "thumb": pages[0] if pages else None,
                 "pptx": pptx[d.template],
             })
         return out
+
+    def _build_in_background(self, deck_id: str) -> None:
+        if deck_id in self._building:
+            return
+        self._building.add(deck_id)
+
+        async def run():
+            try:
+                async with self._bg_slot:
+                    await self.ensure_build(deck_id)
+            except Exception as e:  # колоду удалили, пока ждала очереди, и т. п.
+                log_event(log, "build.background_failed", deck=deck_id, err=f"{type(e).__name__}: {e}"[:300],
+                          level=logging.WARNING)
+            finally:
+                self._building.discard(deck_id)
+
+        task = asyncio.get_running_loop().create_task(run())
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
 
     def _has_pptx(self, tid: str) -> bool:
         try:
@@ -255,21 +325,54 @@ class DeckService:
         Блокировку колоды не берёт и колоду не сохраняет: блокировку держит
         вызывающий (manual, generate, pdf, ensure_build), а asyncio.Lock не реентерабелен."""
         t = self.template(deck.template)
+        stamp = await asyncio.to_thread(self.build_stamp, t)
         try:
             return await asyncio.to_thread(
                 compile_deck, deck, self.store.deck_dir(deck.id), t.path,
-                self.settings.typst_bin, fonts_dir=t.fonts,
+                self.settings.typst_bin, fonts_dir=t.fonts, stamp=stamp,
             )
         except CompileError as e:
             raise ApiError(500, "render", f"{e}: {e.stderr[:2000]}")
 
+    def build_stamp(self, t: TemplateInfo) -> str:
+        """Метка сборки: чем она собрана — код рендера, typst, шаблон (путь и
+        отпечаток файлов). Сборка с другой меткой устарела и пересобирается при
+        первом обращении: после выкатки и правки канона — без rm -rf build/."""
+        if self._typst_version is None:
+            try:
+                r = subprocess.run([self.settings.typst_bin, "--version"], capture_output=True, text=True, timeout=10)
+                self._typst_version = r.stdout.strip()
+            except (OSError, subprocess.SubprocessError):
+                self._typst_version = ""
+        raw = json.dumps([render_mod.RENDER_VERSION, render_mod.FIELDS_HASH, self._typst_version,
+                          str(t.path.resolve()), str(t.fonts), template_fingerprint(t.path)])
+        return hashlib.blake2b(raw.encode(), digest_size=8).hexdigest()
+
+    def build_fresh(self, deck: Deck) -> bool:
+        """Сборка есть и собрана тем же, чем собралась бы сейчас. Шаблон пропал или
+        сломан — пересобрать всё равно не выйдет: годится любая имеющаяся."""
+        build = self.store.deck_dir(deck.id) / "build"
+        if not (build / "slide-1.svg").exists():
+            return False
+        try:
+            t = self.templates.get(deck.template)
+        except TemplateNotFound:
+            return True
+        stamp = build / "stamp.txt"
+        return stamp.exists() and stamp.read_text() == self.build_stamp(t)
+
+    def build_error(self, deck: Deck) -> str | None:
+        failed = self._lazy_failed.get(deck.id)
+        return failed[2] if failed and failed[0] == deck.version else None
+
     LAZY_RETRY_S = 300
 
     async def ensure_build(self, deck_id: str, *, for_pdf: bool = False) -> None:
-        """Сборки нет — собрать при первом обращении: перенос колод (migrate_slides)
-        сносит устаревший build/, и без этого колода стояла бы без превью, а PDF
-        отвечал бы 404 до первой правки. Пустая колода и колода, которую сейчас
-        собирает модель, не трогаются.
+        """Сборки нет или она устарела (build_fresh) — собрать при первом обращении:
+        перенос колод (migrate_slides) сносит устаревший build/, выкатка и правка
+        канона меняют метку, и без этого колода стояла бы без превью или со старыми,
+        а PDF отвечал бы 404 до первой правки. Пустая колода и колода, которую
+        сейчас собирает модель, не трогаются.
 
         Страница колоды (for_pdf=False) не ждёт чужую блокировку и не падает:
         провал виден как отсутствие сборки, причина пишется в лог и запоминается,
@@ -277,17 +380,16 @@ class DeckService:
         после правки колоды (новая версия) или через LAZY_RETRY_S: канон правят
         вживую, без рестарта. PDF (for_pdf=True) ждёт блокировку и отдаёт ошибку
         сборки как есть — с причиной, а не 404."""
-        build = self.store.deck_dir(deck_id) / "build"
-        if (build / "slide-1.svg").exists():
+        if await asyncio.to_thread(self.build_fresh, self.load(deck_id)):
             return
         lock = self.store.lock(deck_id)
         if not for_pdf and lock.locked():
             return  # колоду сейчас правят или собирают — не висеть на этом
         async with lock:
-            if (build / "slide-1.svg").exists():  # мог успеть параллельный запрос
-                return
             # под блокировкой: колоду могли опустошить, а модель — начать сборку
             deck = self.load(deck_id)
+            if await asyncio.to_thread(self.build_fresh, deck):  # мог успеть параллельный запрос
+                return
             if not deck.slides or self.jobs.active_for(deck_id):
                 return
             failed = self._lazy_failed.get(deck_id)
@@ -297,7 +399,8 @@ class DeckService:
             try:
                 await self.render(deck)
             except Exception as e:
-                self._lazy_failed[deck_id] = (deck.version, time.monotonic())
+                reason = e.detail["message"] if isinstance(e, ApiError) else f"{type(e).__name__}: {e}"
+                self._lazy_failed[deck_id] = (deck.version, time.monotonic(), reason[:2000])
                 log_event(log, "build.lazy_failed", deck=deck_id, err=f"{type(e).__name__}: {e}"[:300],
                           level=logging.WARNING)
                 if for_pdf:
@@ -308,12 +411,13 @@ class DeckService:
     async def pdf(self, deck_id: str) -> Path:
         """PDF по требованию: собирается при первом скачивании и лежит в build/
         до следующей правки, которая заменяет build/ целиком и снимает его."""
-        self.load(deck_id)
+        deck = self.load(deck_id)
         build = self.store.deck_dir(deck_id) / "build"
         ready = build / "deck.pdf"
-        if ready.exists():
+        fresh = await asyncio.to_thread(self.build_fresh, deck)
+        if ready.exists() and fresh:
             return ready
-        if not (build / "deck.typ").exists():
+        if not fresh:  # пересборка снимает и устаревший deck.pdf
             await self.ensure_build(deck_id, for_pdf=True)
         if not (build / "deck.typ").exists():
             raise not_found("PDF")
