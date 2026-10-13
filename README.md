@@ -124,7 +124,8 @@ src/typst_deck/     сервис: модель, рендер, хранилище
   typst/fields.typ  маркеры полей для кликов по превью
 template/           шаблон default — эталон контракта
 templates/dark/     встроенный шаблон dark
-scripts/            dev.sh — локальный запуск; measure_slots.py — замер ёмкости слотов
+scripts/            dev.sh — локальный запуск; measure_slots.py — замер ёмкости слотов;
+                    ui_smoke.py, ui_panel.py — проверки интерфейса в браузере (Playwright)
 tests/              pytest; tests/golden — эталонный .typ
 docs/               документация, бэклог, решения — см. ниже
 DESIGN.md           правила интерфейса
