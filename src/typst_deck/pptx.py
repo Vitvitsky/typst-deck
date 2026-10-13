@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Annotated, Callable, Literal
 
 from lxml import etree
-from PIL import Image
+from PIL import Image, ImageDraw
 from pptx import Presentation
 from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
@@ -61,6 +61,8 @@ BLOCKS = 3  # столько блоков допускает ColumnsSlide.blocks
 CAPTION_STRIP = 15   # мм под подпись к картинке
 CAPTION_SCALE = 0.7  # кегль подписи от кегля тезисов
 ROW_MAX = 15        # мм — предел высоты строки таблицы: короткая таблица не тянется на всю зону
+GRID = {2: (1, 2), 3: (1, 3), 4: (2, 2)}  # картинок галереи → (строк, колонок)
+POSTER = (1600, 900)  # заглушка обложки видео, 16:9
 RULE_W = 6350       # EMU — 0.5 пт, тонкая линия таблицы
 # Управляющие символы, которых не бывает в тексте слайда; \t и \n остаются.
 # python-pptx на них не падает, а пишет в текст видимый мусор вида _x001F_.
@@ -719,10 +721,85 @@ def _table_body(c: Ctx) -> set[int]:
     return set()
 
 
+def _rgb(hex6: str) -> tuple[int, int, int]:
+    return tuple(int(hex6[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _fit(box, aspect: float) -> tuple[int, int, int, int]:
+    """Наибольший прямоугольник с пропорцией aspect (w/h) в box: по центру, к верху."""
+    x, y, w, h = box
+    pw, ph = (w, int(w / aspect)) if w / h < aspect else (int(h * aspect), h)
+    return x + (w - pw) // 2, y, pw, ph
+
+
+def _gallery_body(c: Ctx) -> set[int]:
+    """Сетка: 2 и 3 — в ряд, 4 — 2×2; картинка вписана в клетку, подпись под ней."""
+    rows, cols = GRID[len(c.s.images)]
+    x, y, w, h = _mm_box(c.sm.body)
+    g = int(c.sm.gap * MM)
+    ch = (h - g * (rows - 1)) // rows
+    cells = [cell for r in range(rows) for cell in _split((x, y + r * (ch + g), w, ch), cols, c.sm.gap)]
+    # полоса подписи — у всех клеток или ни у одной: иначе картинки одного ряда разной высоты
+    strip = int(CAPTION_STRIP * MM) if any(clean(p.caption).strip() for p in c.s.images) else 0
+    for pic, (cx, cy, cw, chh) in zip(c.s.images, cells):
+        img = _image_file(pic.image, c.assets, c.tmp, c.typst_bin, c.warnings, c.n)
+        if img is None:
+            continue  # клетка остаётся пустой, сетка не сдвигается
+        bottom = _picture(c.slide, img, (cx, cy, cw, chh - strip))
+        if clean(pic.caption).strip():
+            _caption(c.slide, pic.caption, cx, bottom + int(2 * MM), cw, c.m.text)
+    return set()
+
+
+def _placeholder_poster(m: Mapping, tmp: Path) -> Path:
+    """Заглушка обложки: фон table.header_fill, по центру «▶» цвета text.bullet."""
+    w, h = POSTER
+    im = Image.new("RGB", POSTER, _rgb(m.table.header_fill))
+    r = h // 6
+    ImageDraw.Draw(im).polygon([(w / 2 - r * 0.8, h / 2 - r), (w / 2 - r * 0.8, h / 2 + r), (w / 2 + r, h / 2)],
+                               fill=_rgb(m.text.bullet))
+    path = tmp / "poster-placeholder.png"
+    im.save(path)
+    return path
+
+
+def _video_file(name: str, assets: Path, warnings: list[str], n: int) -> Path | None:
+    if not name:
+        return None
+    src = Path(assets) / name
+    if Path(name).name != name or not src.is_file():  # «..»-путь или абсолютный — за пределы assets/
+        warnings.append(f"слайд {n}: видео {name} не найдено")
+        return None
+    return src
+
+
+def _video_body(c: Ctx) -> set[int]:
+    """Файл — встроенный ролик с обложкой; ссылка — обложка с гиперссылкой. Подпись — под рамкой."""
+    poster = (_image_file(c.s.poster, c.assets, c.tmp, c.typst_bin, c.warnings, c.n)
+              or _placeholder_poster(c.m, c.tmp))
+    with Image.open(poster) as im:
+        aspect = im.width / im.height
+    x, y, w, h = _mm_box(c.sm.body)
+    strip = int(CAPTION_STRIP * MM) if clean(c.s.caption).strip() else 0
+    fx, fy, fw, fh = _fit((x, y, w, h - strip), aspect)
+    video = _video_file(c.s.video, c.assets, c.warnings, c.n)
+    if video is not None:
+        c.slide.shapes.add_movie(str(video), Emu(fx), Emu(fy), Emu(fw), Emu(fh),
+                                 poster_frame_image=str(poster), mime_type="video/mp4")
+    else:
+        pic = c.slide.shapes.add_picture(str(poster), Emu(fx), Emu(fy), Emu(fw), Emu(fh))
+        if c.s.url:
+            pic.click_action.hyperlink.address = c.s.url
+    if strip:
+        _caption(c.slide, c.s.caption, fx, fy + fh + int(2 * MM), fw, c.m.text)
+    return set()
+
+
 BODIES: dict[str, Callable[[Ctx], set[int]]] = {
     "agenda": _agenda_body, "text": _text_body, "image": _image_body, "columns": _columns_body,
     "comparison": _comparison_body, "quote": _quote_body, "chart": _chart_body,
     "dual-chart": _dual_chart_body, "metrics": _metrics_body, "table": _table_body,
+    "gallery": _gallery_body, "video": _video_body,
 }
 
 

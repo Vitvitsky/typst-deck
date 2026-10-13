@@ -381,6 +381,88 @@ def test_short_table_rows_are_capped(tdir):
     assert frame.table.rows[0].height == 15 * MM and frame.height == 30 * MM
 
 
+def gallery(n, caption="Подпись"):
+    return Deck(slides=[{"type": "gallery", "title": "Г",
+                         "images": [{"image": f"p{i}.png", "caption": caption} for i in range(n)]}])
+
+
+@pytest.mark.parametrize("n,rows,cols", [(2, 1, 2), (3, 1, 3), (4, 2, 2)])
+def test_gallery_grid(tdir, tmp_path, n, rows, cols):
+    (tmp_path / "a").mkdir()
+    for i in range(n):
+        png(tmp_path / "a" / f"p{i}.png")
+    slide = export(tdir, gallery(n), assets=tmp_path / "a").slides[0]
+    pics = pictures(slide)
+    assert len(pics) == n and all(inside(p) for p in pics)
+    assert len({p.left for p in pics}) == cols and len({p.top for p in pics}) == rows
+    assert all(abs(p.width / p.height - 2) < 0.01 for p in pics)
+    caps = boxes(slide)
+    assert len(caps) == n and all(inside(b) for b in caps)
+
+
+def test_gallery_missing_picture_keeps_the_grid(tdir, tmp_path):
+    (tmp_path / "a").mkdir()
+    png(tmp_path / "a" / "p0.png")
+    warnings: list[str] = []
+    slide = export(tdir, gallery(2), assets=tmp_path / "a", warnings=warnings).slides[0]
+    [pic] = pictures(slide)
+    assert pic.left < int((ZONE[0] + ZONE[2] / 2) * MM)  # осталась левая, правая клетка пустая
+    assert any("p1.png не найдена" in w for w in warnings)
+
+
+def video_deck(**kw):
+    return Deck(slides=[{"type": "video", "title": "В", "caption": "Ролик"} | kw])
+
+
+def test_uploaded_video_is_embedded_with_its_poster(tdir, tmp_path):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "clip.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    png(tmp_path / "a" / "cover.png", 320, 240)
+    slide = export(tdir, video_deck(video="clip.mp4", poster="cover.png"), assets=tmp_path / "a").slides[0]
+    [movie] = [sh for sh in slide.shapes if sh.shape_type == MSO_SHAPE_TYPE.MEDIA]
+    assert inside(movie) and abs(movie.width / movie.height - 4 / 3) < 0.01
+    rels = [r.reltype for r in slide.part.rels.values()]
+    assert RT.VIDEO in rels and RT.MEDIA in rels
+    [cap] = boxes(slide)
+    assert cap.text_frame.text == "Ролик" and cap.top >= movie.top + movie.height
+
+
+def test_link_video_is_a_poster_with_a_hyperlink(tdir):
+    url = "https://example.com/watch?v=1&t=2"
+    slide = export(tdir, video_deck(url=url)).slides[0]
+    [pic] = pictures(slide)
+    assert pic.click_action.hyperlink.address == url
+    assert abs(pic.width / pic.height - 16 / 9) < 0.01  # заглушка 16:9
+    assert not [sh for sh in slide.shapes if sh.shape_type == MSO_SHAPE_TYPE.MEDIA]
+
+
+def test_placeholder_poster_takes_the_mapping_colors(tdir):
+    slide = export(tdir, video_deck(url="https://example.com")).slides[0]
+    [pic] = pictures(slide)
+    with Image.open(io.BytesIO(pic.image.blob)) as im:
+        assert im.getpixel((5, 5)) == (0xDD, 0xDD, 0xDD)  # table.header_fill
+        assert im.getpixel((im.width // 2, im.height // 2)) == (0xFF, 0xDE, 0x00)  # «▶» — text.bullet
+
+
+def test_missing_video_file_leaves_the_poster_and_warns(tdir, tmp_path):
+    warnings: list[str] = []
+    slide = export(tdir, video_deck(video="gone.mp4", poster="gone.png"), assets=tmp_path,
+                   warnings=warnings).slides[0]
+    assert len(pictures(slide)) == 1
+    assert not [sh for sh in slide.shapes if sh.shape_type == MSO_SHAPE_TYPE.MEDIA]
+    assert any("видео gone.mp4 не найдено" in w for w in warnings)
+    assert any("gone.png не найдена" in w for w in warnings)
+
+
+def test_video_cannot_escape_assets(tdir, tmp_path):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "secret.mp4").write_bytes(b"x")
+    warnings: list[str] = []
+    slide = export(tdir, video_deck(video="../secret.mp4"), assets=tmp_path / "a", warnings=warnings).slides[0]
+    assert not [sh for sh in slide.shapes if sh.shape_type == MSO_SHAPE_TYPE.MEDIA]
+    assert any("не найдено" in w for w in warnings)
+
+
 def test_notes_go_to_speaker_notes(tdir):
     deck = Deck(slides=[{"type": "final", "notes": "Сказать спасибо"}])
     assert export(tdir, deck).slides[0].notes_slide.notes_text_frame.text == "Сказать спасибо"
