@@ -10,7 +10,8 @@ from pptx.enum.chart import XL_LEGEND_POSITION
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.oxml.ns import qn
-from pptx.util import Mm
+from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+from pptx.util import Mm, Pt
 
 from tests.conftest import make_pptx_template, requires_typst
 from typst_deck.contract import SAMPLE_DECK, filled_slide
@@ -217,6 +218,80 @@ def test_chart_takes_the_zone_or_shares_it_with_bullets(tdir):
     heading, bullet = text.text_frame.paragraphs
     assert heading.text == "Выводы" and not heading._p.xpath("./a:pPr/a:buChar")
     assert bullet._p.xpath("./a:pPr/a:buChar[@char='•']")
+
+
+def test_agenda_is_a_numbered_list_in_the_zone(tdir):
+    deck = Deck(slides=[{"type": "agenda", "items": ["Итоги", "Планы", "Риски"]}])
+    slide = export(tdir, deck).slides[0]
+    assert by_idx(slide)[0] == ["Повестка"]
+    [box] = boxes(slide)
+    assert inside(box) and [p.text for p in box.text_frame.paragraphs] == ["Итоги", "Планы", "Риски"]
+    for p in box.text_frame.paragraphs:
+        assert p._p.xpath("./a:pPr/a:buAutoNum[@type='arabicPeriod']")
+        assert p._p.xpath("./a:pPr/a:buClr/a:srgbClr[@val='FFDE00']")
+
+
+def test_text_bullets_take_the_whole_zone(tdir):
+    slide = export(tdir, Deck(slides=[{"type": "text", "title": "Т", "bullets": ["раз", "два"]}])).slides[0]
+    [box] = boxes(slide)
+    assert (box.left, box.top, box.width, box.height) == tuple(int(v * MM) for v in ZONE)
+    assert [p.text for p in box.text_frame.paragraphs] == ["раз", "два"]
+
+
+def test_columns_split_the_zone(tdir):
+    deck = Deck(slides=[{"type": "columns", "title": "Т", "blocks": [
+        {"heading": "Первый", "text": "раз"}, {"heading": "", "text": "два"}, {"heading": "Третий", "text": "три"}]}])
+    cols = sorted(boxes(export(tdir, deck).slides[0]), key=lambda b: b.left)
+    assert len(cols) == 3 and all(inside(b) for b in cols)
+    assert cols[1].left - (cols[0].left + cols[0].width) == 10 * MM  # gap
+    first = cols[0].text_frame.paragraphs
+    assert [p.text for p in first] == ["Первый", "раз"] and first[0].runs[0].font.bold
+    assert [p.text for p in cols[1].text_frame.paragraphs] == ["два"]  # пустой заголовок не печатается
+
+
+def test_columns_on_placeholders_drop_the_spare_one(tmp_path):
+    tdir = make_pptx_template(tmp_path, mapping_edit=lambda m: m["slides"]["columns"].update(
+        layout="Comparison", ph={"title": 0, "blocks": [1, 2, 3]}, body=None, gap=None))
+    deck = Deck(slides=[{"type": "columns", "title": "Т", "blocks": [
+        {"heading": "Первый", "text": "раз"}, {"heading": "Второй", "text": "два"}]}])
+    slide = export(tdir, deck).slides[0]
+    got = by_idx(slide)
+    assert got[1] == ["Первый", "раз"] and got[2] == ["Второй", "два"]
+    assert 3 not in got and 4 not in got  # третьего блока нет, idx 4 не сопоставлен
+    assert boxes(slide) == []
+
+
+def test_comparison_two_columns_with_headings(tdir):
+    deck = Deck(slides=[{"type": "comparison", "title": "Т",
+                         "left": {"heading": "Было", "bullets": ["а"]},
+                         "right": {"heading": "Стало", "bullets": ["б", "в"]}}])
+    left, right = sorted(boxes(export(tdir, deck).slides[0]), key=lambda b: b.left)
+    assert [p.text for p in left.text_frame.paragraphs] == ["Было", "а"]
+    assert [p.text for p in right.text_frame.paragraphs] == ["Стало", "б", "в"]
+    assert left.width == right.width and right.left - (left.left + left.width) == 20 * MM
+
+
+def test_quote_is_centered_on_a_layout_without_title(tdir):
+    deck = Deck(slides=[{"type": "quote", "text": "Мысль", "author": "Автор"}])
+    slide = export(tdir, deck).slides[0]
+    [box] = boxes(slide)
+    assert inside(box) and box.text_frame.vertical_anchor == MSO_ANCHOR.MIDDLE
+    quote, author = box.text_frame.paragraphs
+    assert quote.alignment == PP_ALIGN.CENTER and quote.runs[0].font.size == Pt(40)
+    assert author.text == "Автор" and str(author.runs[0].font.color.rgb) == "666666"
+    assert set(by_idx(slide)) <= {12}  # кроме номера слайда заполнителей нет
+
+
+def test_text_fields_drop_control_characters(tdir):
+    deck = Deck(slides=[
+        {"type": "columns", "title": "Т", "blocks": [{"text": "раз\x1f\nдва"}, {"text": "три"}]},
+        {"type": "quote", "text": "мысль\x0b"},
+    ])
+    prs = export(tdir, deck)
+    xml = b"".join(etree.tostring(s._element) for s in prs.slides)
+    assert b"_x001F_" not in xml and b"_x000B_" not in xml
+    first = sorted(boxes(prs.slides[0]), key=lambda b: b.left)[0]
+    assert first._element.xpath(".//a:br")  # \n — разрыв строки внутри абзаца
 
 
 def test_notes_go_to_speaker_notes(tdir):

@@ -26,7 +26,7 @@ from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
 from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION, XL_LEGEND_POSITION
 from pptx.enum.shapes import PP_PLACEHOLDER
-from pptx.enum.text import MSO_AUTO_SIZE
+from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE, PP_ALIGN
 from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.oxml.ns import qn
 from pptx.util import Emu, Mm, Pt
@@ -371,29 +371,60 @@ def _slide_number(slide, layout, n: int) -> None:
         return
 
 
-def _bullets(slide, box, items: list[str], style: TextStyle, heading: str | None = None) -> None:
-    """Тезисы надписью в зоне: маркер цвета style.bullet, шрифт — из темы мастера."""
+def _paragraph(tf, k: int, text: str, size: float, *, bold: bool = False, color: str | None = None,
+               align=None, keep_newlines: bool = True):
+    """k-й абзац надписи: первый уже есть, остальные добавляются."""
+    p = tf.paragraphs[0] if k == 0 else tf.add_paragraph()
+    text = clean(text)
+    p.text = text.replace("\n", "\v") if keep_newlines else text.replace("\n", " ")
+    if align is not None:
+        p.alignment = align
+    for r in p.runs:
+        r.font.size = Pt(size)
+        if bold:
+            r.font.bold = True
+        if color:
+            r.font.color.rgb = RGBColor.from_string(color.upper())
+    return p
+
+
+def _textbox(slide, box):
     x, y, w, h = box
     tf = slide.shapes.add_textbox(Emu(x), Emu(y), Emu(w), Emu(h)).text_frame
     tf.word_wrap = True
     tf.auto_size = MSO_AUTO_SIZE.NONE
+    return tf
+
+
+def _bullets(slide, box, items: list[str], style: TextStyle, heading: str | None = None,
+             numbered: bool = False) -> None:
+    """Тезисы надписью в зоне: маркер (или номер) цвета style.bullet, шрифт — из темы мастера.
+    Порядок в a:pPr — по схеме: spcBef, buClr, затем buAutoNum или buChar."""
+    tf = _textbox(slide, box)
     paras = ([(heading, False)] if heading else []) + [(i, True) for i in items]
+    indent = Mm(10 if numbered else 8)
     for k, (text, bullet) in enumerate(paras):
-        p = tf.paragraphs[0] if k == 0 else tf.add_paragraph()
-        p.text = clean(text).replace("\n", "\v")
+        p = _paragraph(tf, k, text, style.size, bold=not bullet)
         if k:
             p.space_before = Pt(style.size * 0.5)
         if bullet:
             ppr = p._p.get_or_add_pPr()
-            ppr.set("marL", str(Mm(8)))
-            ppr.set("indent", str(-Mm(8)))
+            ppr.set("marL", str(indent))
+            ppr.set("indent", str(-indent))
             clr = etree.SubElement(ppr, qn("a:buClr"))
             etree.SubElement(clr, qn("a:srgbClr"), val=style.bullet.upper())
-            etree.SubElement(ppr, qn("a:buChar"), char="•")
-        for r in p.runs:
-            r.font.size = Pt(style.size)
-            if not bullet:
-                r.font.bold = True
+            if numbered:
+                etree.SubElement(ppr, qn("a:buAutoNum"), type="arabicPeriod")
+            else:
+                etree.SubElement(ppr, qn("a:buChar"), char="•")
+
+
+def _split(box, n: int, gap_mm: float) -> list[tuple[int, int, int, int]]:
+    """n равных колонок зоны с зазором gap_mm между ними."""
+    x, y, w, h = box
+    g = int(gap_mm * MM)
+    cw = (w - g * (n - 1)) // n
+    return [(x + i * (cw + g), y, cw, h) for i in range(n)]
 
 
 def _mm_box(zone) -> tuple[int, int, int, int]:
@@ -553,7 +584,64 @@ def _chart_body(c: Ctx) -> set[int]:
     return set()
 
 
-BODIES: dict[str, Callable[[Ctx], set[int]]] = {"image": _image_body, "chart": _chart_body}
+def _agenda_body(c: Ctx) -> set[int]:
+    _bullets(c.slide, _mm_box(c.sm.body), c.s.items, c.m.text, numbered=True)
+    return set()
+
+
+def _text_body(c: Ctx) -> set[int]:
+    _bullets(c.slide, _mm_box(c.sm.body), c.s.bullets, c.m.text)
+    return set()
+
+
+def _block_text(tf, block, style: TextStyle) -> None:
+    """Блок columns: жирный заголовок (если есть), затем текст."""
+    k = 0
+    if clean(block.heading).strip():
+        _paragraph(tf, k, block.heading, style.size, bold=True)
+        k += 1
+    p = _paragraph(tf, k, block.text, style.size)
+    if k:
+        p.space_before = Pt(style.size * 0.5)
+
+
+def _columns_body(c: Ctx) -> set[int]:
+    idxs = c.sm.ph.get("blocks")
+    if idxs:  # блоки в заполнителях мастера; лишние удалит _fill — их нет в keep
+        by_idx = {ph.placeholder_format.idx: ph for ph in c.slide.placeholders}
+        used = set()
+        for block, idx in zip(c.s.blocks, idxs):
+            tf = by_idx[idx].text_frame
+            tf.clear()
+            _block_text(tf, block, c.m.text)
+            used.add(idx)
+        return used
+    for block, box in zip(c.s.blocks, _split(_mm_box(c.sm.body), len(c.s.blocks), c.sm.gap)):
+        _block_text(_textbox(c.slide, box), block, c.m.text)
+    return set()
+
+
+def _comparison_body(c: Ctx) -> set[int]:
+    left, right = _split(_mm_box(c.sm.body), 2, c.sm.gap)
+    for side, box in ((c.s.left, left), (c.s.right, right)):
+        _bullets(c.slide, box, side.bullets, c.m.text, heading=clean(side.heading).strip() or None)
+    return set()
+
+
+def _quote_body(c: Ctx) -> set[int]:
+    tf = _textbox(c.slide, _mm_box(c.sm.body))
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    _paragraph(tf, 0, c.s.text, c.m.text.quote, align=PP_ALIGN.CENTER)
+    if clean(c.s.author).strip():
+        p = _paragraph(tf, 1, c.s.author, c.m.text.size, color=c.m.text.caption, align=PP_ALIGN.CENTER)
+        p.space_before = Pt(c.m.text.size)
+    return set()
+
+
+BODIES: dict[str, Callable[[Ctx], set[int]]] = {
+    "agenda": _agenda_body, "text": _text_body, "image": _image_body, "columns": _columns_body,
+    "comparison": _comparison_body, "quote": _quote_body, "chart": _chart_body,
+}
 
 
 def export_pptx(deck: Deck, template_dir: Path, mapping_rel: object, assets_dir: Path,
