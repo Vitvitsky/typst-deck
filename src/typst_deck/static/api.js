@@ -75,14 +75,25 @@ export function armConfirm(btn, label, onConfirm) {
   btn.addEventListener("click", () => { clearTimeout(timer); reset(); onConfirm(); }, { once: true });
 }
 
-export const TYPE_RU = { title: "Заглавный", section: "Раздел", image: "Текст и картинка", "bar-chart": "Диаграмма", chart: "График", final: "Финальный" };
+export const TYPE_RU = {
+  title: "Заглавный", agenda: "Повестка", section: "Раздел", text: "Тезисы", image: "Текст и картинка",
+  columns: "Блоки текста", comparison: "Сравнение", quote: "Цитата", chart: "График", "dual-chart": "Два графика",
+  metrics: "Метрики", table: "Таблица", gallery: "Галерея", video: "Видео", final: "Финальный",
+};
+// Те же слова, что в slots.FIELD_RU (src/typst_deck/slots.py) — человек видит одно
+// и то же название везде: на кнопке зоны, в подписи поля, в тексте правки.
 export const FIELD_RU = {
   title: "Заголовок", subtitle: "Подзаголовок", bullets: "Тезисы", caption: "Подпись к картинке", contact: "Контакты",
   author: "Автор", department: "Подразделение",
-  unit: "Единица измерения", notes: "Заметки докладчика", data: "Данные диаграммы", labels: "Подписи по оси",
+  unit: "Единица измерения", notes: "Заметки докладчика", labels: "Подписи по оси",
   series: "Ряды данных", image: "Картинка", image_size: "Размер картинки",
+  items: "Пункты", blocks: "Блоки текста", left: "Левая колонка", right: "Правая колонка",
+  text: "Текст", header: "Шапка таблицы", rows: "Строки таблицы", images: "Картинки",
+  url: "Ссылка на видео", poster: "Обложка", kind: "Вид графика",
 };
 export const SIZE_RU = { small: "маленькая", medium: "средняя", large: "крупная" };
+// Вид графика — закрытый список (Literal в модели): всё, кроме bar и line, вернулось бы 422
+export const KIND_RU = { bar: "Столбцы", line: "Линии" };
 export const fileKind = (name) => /\.(png|jpe?g|svg)$/i.test(name) ? "image" : /\.(xlsx|csv)$/i.test(name) ? "table" : /\.(txt|md|docx)$/i.test(name) ? "text" : "bad";
 export const KIND_ICON = { image: "▨", table: "▦", text: "Т", bad: "?" };
 export const fmtSize = (b) => b < 1024 * 1024 ? `${Math.max(1, Math.round(b / 1024))} КБ` : `${(b / 1024 / 1024).toFixed(1)} МБ`;

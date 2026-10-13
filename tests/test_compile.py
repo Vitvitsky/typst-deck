@@ -1,23 +1,73 @@
 import json
+import re
+from pathlib import Path
 
 import pytest
 
-from tests.conftest import TEMPLATE_DIR, requires_typst
+from tests.conftest import ROOT, TEMPLATE_DIR, requires_typst
 from tests.test_render import full_deck
-from typst_deck.model import Deck
+from typst_deck.model import Deck, LARGE_IMAGE_BULLETS
+from typst_deck.slots import DEFS, SCHEMA
 from typst_deck.render import CompileError, compile_deck
 
 pytestmark = requires_typst
 
 
+@requires_typst
+@pytest.mark.parametrize("tid", ["default", "dark"])
+def test_every_template_draws_all_types(deck_dir, png_bytes, tid):
+    """Каждый тип — ровно одна страница, и у каждого текстового поля есть маркер."""
+    from tests.test_render import rich_deck
+    from typst_deck.model import Deck
+
+    for name in ("a1.png", "a2.png"):
+        (deck_dir / "assets" / name).write_bytes(png_bytes)
+    deck = rich_deck()
+    deck.slides += Deck(slides=[
+        {"type": "text", "title": "Тезисы", "bullets": ["раз", "два"]},
+        {"type": "image", "title": "Картинка", "bullets": ["раз"], "image": "a1.png", "caption": "подпись"},
+        {"type": "chart", "title": "Столбцы", "kind": "bar", "labels": ["A", "B"],
+         "series": [{"name": "млн", "values": [4, -2]}], "unit": "млн", "bullets": ["в"]},
+        {"type": "dual-chart", "title": "Два графика",
+         "left": {"caption": "Слева", "labels": ["Q1", "Q2"], "series": [{"name": "с", "values": [1, 2]}]},
+         "right": {"caption": "Справа", "kind": "bar", "labels": ["A"], "series": [{"name": "с", "values": [3]}]}},
+        {"type": "title", "title": "Титул", "subtitle": "Под", "author": "А", "department": "Д"},
+        {"type": "section", "title": "Раздел", "subtitle": "Про"},
+        {"type": "final", "contact": "team@corp"},
+    ]).slides
+    r = compile_deck(deck, deck_dir, TEMPLATE_DIR if tid == "default" else ROOT / "templates" / tid)
+    assert len(r.svgs) == len(deck.slides), "одна функция — одна страница"
+    fields = {(p["slide"], p["field"]) for p in r.positions}
+    for slide_id, field in [("s1", "items"), ("s2", "blocks"), ("s3", "left"), ("s3", "right"),
+                            ("s4", "text"), ("s5", "items"), ("s6", "header"), ("s6", "rows"),
+                            ("s7", "images"), ("s8", "poster")]:
+        assert (slide_id, field) in fields, f"{slide_id}.{field} без маркера"
+
+
+@requires_typst
+@pytest.mark.parametrize("tid", ["default", "dark"])
+def test_grouped_bars_keep_every_series(deck_dir, tid):
+    """Столбчатый график с несколькими сериями не должен терять ни одной из них."""
+    from typst_deck.model import Deck
+
+    deck = Deck(slides=[
+        {"type": "chart", "title": "Сравнение", "kind": "bar", "labels": ["A", "B", "C"],
+         "series": [{"name": "план", "values": [4, -2, 3]}, {"name": "факт", "values": [-1, 5, 2]}]},
+    ])
+    r = compile_deck(deck, deck_dir, TEMPLATE_DIR if tid == "default" else ROOT / "templates" / tid)
+    assert len(r.svgs) == 1
+    fields = {(p["slide"], p["field"]) for p in r.positions}
+    assert (deck.slides[0].id, "title") in fields
+
+
 def test_compile_full_deck(deck_dir, png_bytes):
     (deck_dir / "assets" / "a000001.png").write_bytes(png_bytes)
     r = compile_deck(full_deck(), deck_dir, TEMPLATE_DIR)
-    assert len(r.svgs) == 6  # PDF теперь ленивый, см. test_compile_does_not_build_pdf
+    assert len(r.svgs) == 5  # PDF теперь ленивый, см. test_compile_does_not_build_pdf
     assert r.warnings == []
     fields = {(p["slide"], p["field"]) for p in r.positions}
     assert ("s000001", "title") in fields and ("s000003", "bullets") in fields
-    assert ("s000003", "image") in fields and ("s000006", "contact") in fields
+    assert ("s000003", "image") in fields and ("s000005", "contact") in fields
     p = next(p for p in r.positions if p["slide"] == "s000003" and p["field"] == "title")
     assert p["page"] == 3 and p["w"] > 0 and p["h"] > 0
     assert json.loads((deck_dir / "build" / "positions.json").read_text()) == r.positions
@@ -26,7 +76,7 @@ def test_compile_full_deck(deck_dir, png_bytes):
 
 def test_compile_missing_image_is_warning(deck_dir):
     r = compile_deck(full_deck(), deck_dir, TEMPLATE_DIR)
-    assert len(r.svgs) == 6 and r.warnings
+    assert len(r.svgs) == 5 and r.warnings
 
 
 def test_compile_replaces_previous_build(deck_dir):
@@ -47,16 +97,16 @@ def test_compile_error_surfaces_stderr(deck_dir, tmp_path):
 
 
 @pytest.mark.parametrize("tid", sorted(p.name for p in (TEMPLATE_DIR.parent / "templates").iterdir() if (p / "deck.typ").exists()))
-def test_every_template_honours_contract(deck_dir, png_bytes, tid):
-    """Каждый шаблон в templates/ собирает образец: 6 страниц и позиции полей."""
+def test_every_template_honours_contract(deck_dir, tid):
+    """Каждый шаблон в templates/ собирает образец: 15 страниц и позиции полей."""
+    from typst_deck.contract import write_sample_assets
     from typst_deck.templates import SAMPLE_DECK
-    (deck_dir / "assets" / "a000001.png").write_bytes(png_bytes)
-    deck = SAMPLE_DECK.model_copy(deep=True)
-    deck.slides[2].image = "a000001.png"
-    r = compile_deck(deck, deck_dir, TEMPLATE_DIR.parent / "templates" / tid)
-    assert len(r.svgs) == 6
+
+    write_sample_assets(deck_dir)
+    r = compile_deck(SAMPLE_DECK, deck_dir, TEMPLATE_DIR.parent / "templates" / tid)
+    assert len(r.svgs) == 15
     fields = {(p["slide"], p["field"]) for p in r.positions}
-    assert ("s000001", "title") in fields and ("s000003", "bullets") in fields and ("s000006", "title") in fields
+    assert ("s000001", "title") in fields and ("s000004", "bullets") in fields and ("s000015", "title") in fields
 
 
 def test_compile_reports_per_command_timings(deck_dir):
@@ -67,12 +117,14 @@ def test_compile_reports_per_command_timings(deck_dir):
 
 
 def test_compile_logs_render_done(deck_dir, caplog):
+    from typst_deck.contract import SAMPLE_DECK, write_sample_assets
+
     caplog.set_level("INFO", logger="typst_deck.render")
-    deck = full_deck()
-    compile_deck(deck, deck_dir, TEMPLATE_DIR)
+    write_sample_assets(deck_dir)
+    compile_deck(SAMPLE_DECK, deck_dir, TEMPLATE_DIR)
     rec = next(r for r in caplog.records if r.msg == "render.done")
-    assert rec.fields["deck"] == deck.id
-    assert rec.fields["slides"] == 6
+    assert rec.fields["deck"] == SAMPLE_DECK.id
+    assert rec.fields["slides"] == 15
     assert rec.fields["svg_kb"] > 0
     assert rec.fields["ms"] >= 0
 
@@ -80,10 +132,13 @@ def test_compile_logs_render_done(deck_dir, caplog):
 def test_compile_hashes_each_page(deck_dir):
     import json as _json
 
-    r = compile_deck(full_deck(), deck_dir, TEMPLATE_DIR)
-    assert len(r.pages) == 6
+    from typst_deck.contract import SAMPLE_DECK, write_sample_assets
+
+    write_sample_assets(deck_dir)
+    r = compile_deck(SAMPLE_DECK, deck_dir, TEMPLATE_DIR)
+    assert len(r.pages) == 15
     assert all(isinstance(h, str) and h for h in r.pages)
-    assert len(set(r.pages)) == 6, "разные слайды — разные хеши"
+    assert len(set(r.pages)) == 15, "разные слайды — разные хеши"
     assert _json.loads((deck_dir / "build" / "pages.json").read_text()) == r.pages
 
 
@@ -93,7 +148,7 @@ def test_page_hash_changes_only_for_edited_slide(deck_dir):
     deck.slides[2].title = "Совсем другой заголовок"
     after = compile_deck(deck, deck_dir, TEMPLATE_DIR).pages
     assert after[2] != before[2], "правленый слайд обязан сменить хеш"
-    assert [after[i] for i in (0, 1, 3, 4, 5)] == [before[i] for i in (0, 1, 3, 4, 5)], \
+    assert [after[i] for i in (0, 1, 3, 4)] == [before[i] for i in (0, 1, 3, 4)], \
         "остальные слайды должны остаться под теми же URL"
 
 
@@ -101,7 +156,7 @@ def test_compile_does_not_build_pdf(deck_dir):
     """PDF нужен раз в конце, а собирался на каждую правку — 161 мс из 341."""
     r = compile_deck(full_deck(), deck_dir, TEMPLATE_DIR)
     assert not (deck_dir / "build" / "deck.pdf").exists()
-    assert len(r.svgs) == 6
+    assert len(r.svgs) == 5
     assert (deck_dir / "build" / "deck.typ").exists(), "исходник нужен, чтобы собрать PDF потом"
     assert (deck_dir / "build" / "template").is_symlink()
     assert "pdf_ms" not in r.timings
@@ -280,3 +335,433 @@ def test_long_section_title_shrinks_into_its_zone(deck_dir, tdir):
     assert h <= 24 * MM        # но в зону 2.4cm укладывается
     assert len([p for p in long_.positions if p["field"] == "title"]) == 1  # measure не задвоил маркер
     assert len(long_.svgs) == 1
+
+
+# ============ геометрия по верхнему пределу модели ============
+#
+# Слепая зона набора: правило 3 контракта ловит только разрыв на вторую страницу.
+# Текст, который укладывается в пределы модели, но вылезает за низ страницы,
+# не видит никто — slide() обрезает его молча (box(clip: true)), число страниц
+# сходится, и compile_deck молчит. Этот тест закрывает зону: слайд каждого типа
+# набивается ровно по верхнему пределу model.py, и низ каждого маркера поля
+# (y + h из query(<edit>)) обязан остаться выше границы содержимого страницы.
+#
+# Границу не зашиваем числом: её считает content_bottom() из самого шаблона —
+# высота страницы минус нижнее поле, оба из его же set page().
+
+UNIT_PT = {"pt": 1.0, "mm": 72 / 25.4, "cm": 72 / 2.54, "in": 72.0}
+
+
+def _len_pt(raw: str) -> float:
+    m = re.fullmatch(r"\s*([\d.]+)\s*(pt|mm|cm|in)\s*", raw)
+    return float(m[1]) * UNIT_PT[m[2]]
+
+
+def content_bottom(template_dir) -> float:
+    """Низ зоны содержимого шаблона: высота страницы минус нижнее поле.
+
+    Оба числа — из set page() самого шаблона, поэтому проверка одинаково годится
+    и для эталона 16×9 см, и для корпоративного шаблона другого размера.
+    """
+    line = next(x for x in (Path(template_dir) / "deck.typ").read_text().splitlines()
+                if "set page(" in x)
+    height = _len_pt(re.search(r"height:\s*([\d.]+\s*(?:pt|mm|cm|in))", line)[1])
+    bottom = _len_pt(re.search(r"bottom:\s*([\d.]+\s*(?:pt|mm|cm|in))", line)[1])
+    return height - bottom
+
+
+FILL = "Итоги квартала по направлению данных и аналитики "
+
+
+def _chars(n: int) -> str:
+    return (FILL * (n // len(FILL) + 2))[:n]
+
+
+def _deref(prop: dict) -> dict:
+    """Определение поля без обёрток: $ref разыменован, Optional развёрнут."""
+    ref = prop.get("$ref")
+    if ref:
+        return _deref(SCHEMA["$defs"][ref.rsplit("/", 1)[1]])
+    for alt in prop.get("anyOf", []):  # str | None приходит как anyOf
+        if alt.get("type") != "null":
+            return _deref(alt)
+    return prop
+
+
+def _prop(stype: str, *path: str) -> dict:
+    """Поле по пути внутри типа: _prop("columns", "blocks", "text")."""
+    node = _deref(DEFS[stype])
+    for name in path:
+        if "properties" not in node and node.get("type") == "array":
+            node = _deref(node["items"])  # путь сквозь список объектов
+        node = _deref(node["properties"][name])
+    return node
+
+
+def _n(stype: str, *path: str) -> int:
+    """Сколько элементов допускает список."""
+    return _prop(stype, *path)["maxItems"]
+
+
+def _len(stype: str, *path: str) -> int:
+    """Сколько знаков допускает строка; у списка строк — знаков в элементе."""
+    node = _prop(stype, *path)
+    while node.get("type") == "array":
+        node = _deref(node["items"])
+    return node["maxLength"]
+
+
+def maxed_slides() -> list[dict]:
+    """По слайду каждого из пятнадцати типов, набитому ровно по пределам модели.
+
+    И длины, и КОЛИЧЕСТВА читаются из порождённой JSON Schema (`maxLength`,
+    `maxItems`), а не зашиты числами. Пока количества были литералами, расширение
+    любого списка оставляло тест зелёным, а вёрстку ломало — та же тихая поломка,
+    что волна 3 нашла в длинах, а волна 4 — в `filled_slide`. Теперь синхронизировать
+    руками нечего: предел раздвинули — тест покраснел.
+
+    Из схемы берётся не всё, и это не недосмотр. Четыре вещи она не описывает:
+    ширина строки таблицы (её задаёт валидатор модели по длине шапки), длина
+    `values` у ряда (столько же, сколько подписей), имена ассетов и выбор
+    оформления (`image_size`, `kind`) — у них нет ёмкости, есть смысл, — и
+    перекрёстный предел LARGE_IMAGE_BULLETS, который живёт в валидаторе, а не
+    в поле. Эти четыре названы здесь явно.
+
+    По максимуму берётся и легенда, а не только содержимое: имена рядов, единица
+    и подписи категорий. Id слайда — имя типа: тогда сообщение об ошибке сразу
+    называет виноватый тип.
+    """
+    nlab, nser = _n("chart", "labels"), _n("chart", "series")
+    dlab, dser = _n("dual-chart", "left", "labels"), _n("dual-chart", "left", "series")
+    cols = _n("table", "header")  # ширина строки = ширине шапки (валидатор модели)
+
+    def side(kind: str) -> dict:
+        return {"caption": _chars(_len("dual-chart", "left", "caption")), "kind": kind,
+                "labels": [_chars(_len("dual-chart", "left", "labels"))] * dlab,
+                "unit": _chars(_len("dual-chart", "left", "unit")),
+                "series": [{"name": _chars(_len("dual-chart", "left", "series", "name")),
+                            "values": list(range(dlab))} for _ in range(dser)]}
+
+    return [
+        {"id": "title", "type": "title", "title": _chars(_len("title", "title")),
+         "subtitle": _chars(_len("title", "subtitle")),
+         "author": _chars(_len("title", "author")),
+         "department": _chars(_len("title", "department"))},
+        {"id": "agenda", "type": "agenda", "title": _chars(_len("agenda", "title")),
+         "items": [_chars(_len("agenda", "items"))] * _n("agenda", "items")},
+        {"id": "section", "type": "section", "title": _chars(_len("section", "title")),
+         "subtitle": _chars(_len("section", "subtitle"))},
+        {"id": "text", "type": "text", "title": _chars(_len("text", "title")),
+         "bullets": [_chars(_len("text", "bullets"))] * _n("text", "bullets")},
+        # image_size — выбор оформления, а не предел ёмкости: "large" отдаёт
+        # картинке 55 % ширины и нарочно морит колонку тезисов (ей остаётся
+        # 159 пт против 209 при "medium"). Берём значение по умолчанию, как и
+        # у прочих необязательных полей оформления.
+        {"id": "image", "type": "image", "title": _chars(_len("image", "title")),
+         "bullets": [_chars(_len("image", "bullets"))] * _n("image", "bullets"),
+         "image": "p1.png", "image_size": "medium", "caption": _chars(_len("image", "caption"))},
+        # То же поле в худшем оформлении. Сумма тезисов здесь ограничена
+        # перекрёстным пределом LARGE_IMAGE_BULLETS — он в валидаторе модели,
+        # а не в поле, поэтому из схемы его не вычитать.
+        {"id": "image-large", "type": "image", "title": _chars(_len("image", "title")),
+         "bullets": [_chars(LARGE_IMAGE_BULLETS // _n("image", "bullets"))] * _n("image", "bullets"),
+         "image": "p1.png", "image_size": "large", "caption": _chars(_len("image", "caption"))},
+        {"id": "columns", "type": "columns", "title": _chars(_len("columns", "title")),
+         "blocks": [{"heading": _chars(_len("columns", "blocks", "heading")),
+                     "text": _chars(_len("columns", "blocks", "text"))}] * _n("columns", "blocks")},
+        {"id": "comparison", "type": "comparison", "title": _chars(_len("comparison", "title")),
+         "left": {"heading": _chars(_len("comparison", "left", "heading")),
+                  "bullets": [_chars(_len("comparison", "left", "bullets"))]
+                             * _n("comparison", "left", "bullets")},
+         "right": {"heading": _chars(_len("comparison", "right", "heading")),
+                   "bullets": [_chars(_len("comparison", "right", "bullets"))]
+                              * _n("comparison", "right", "bullets")}},
+        {"id": "quote", "type": "quote", "text": _chars(_len("quote", "text")),
+         "author": _chars(_len("quote", "author"))},
+        # Худшая легенда, а не только худшее содержимое: имена рядов, единица и
+        # подписи категорий — все по потолку. values у ряда — столько же, сколько
+        # подписей: это валидатор модели, в схеме длины у них нет.
+        {"id": "chart", "type": "chart", "title": _chars(_len("chart", "title")), "kind": "bar",
+         "labels": [_chars(_len("chart", "labels"))] * nlab,
+         "unit": _chars(_len("chart", "unit")),
+         "series": [{"name": _chars(_len("chart", "series", "name")),
+                     "values": list(range(nlab))} for _ in range(nser)],
+         "bullets": [_chars(_len("chart", "bullets"))] * _n("chart", "bullets")},
+        # Сторона dual-chart — самый тесный носитель легенды и подписей: колонка
+        # вдвое уже, чем у одиночного графика.
+        {"id": "dual-chart", "type": "dual-chart", "title": _chars(_len("dual-chart", "title")),
+         "left": side("line"), "right": side("bar")},
+        {"id": "metrics", "type": "metrics", "title": _chars(_len("metrics", "title")),
+         "items": [{"value": _chars(_len("metrics", "items", "value")),
+                    "label": _chars(_len("metrics", "items", "label")),
+                    "delta": _chars(_len("metrics", "items", "delta"))}] * _n("metrics", "items")},
+        {"id": "table", "type": "table", "title": _chars(_len("table", "title")),
+         "header": [_chars(_len("table", "header"))] * cols,
+         "rows": [[_chars(_len("table", "rows"))] * cols] * _n("table", "rows")},
+        {"id": "gallery", "type": "gallery", "title": _chars(_len("gallery", "title")),
+         "images": [{"image": f"p{i + 1}.png", "caption": _chars(_len("gallery", "images", "caption"))}
+                    for i in range(_n("gallery", "images"))]},
+        {"id": "video", "type": "video", "title": _chars(_len("video", "title")), "url": "https://example.com/v",
+         "poster": "p1.png", "caption": _chars(_len("video", "caption"))},
+        {"id": "final", "type": "final", "title": _chars(_len("final", "title")),
+         "contact": _chars(_len("final", "contact"))},
+    ]
+
+
+# Замер 2026-09-14, оба шаблона сошлись до сотой доли пункта.
+#
+# Волна 1 — подгонка там, где её не было:
+#   text  +245.97 → −28.21   image  +990.33 → −0.00   columns +221.60 → −2.71
+#
+# Волна 1b — точный бюджет (body-bottom − here().position().y) вместо измерения
+# шапки, которое занижало её примерно на 26 пт, плюс подгонка у оставшихся:
+#   comparison +36.26 → +0.04   final   +87.89 → −53.88
+#   table     +100.65 → +15.52   gallery +90.00 → +0.00
+#   video      +32.05 → −0.00    metrics −16.24 → −44.66
+#
+# Волна 2 — три предела, которые обещали объём, не помещающийся ни при каком
+# читаемом кегле (общий пол лесенки — 4pt, мельче это уже не текст, а серый шум).
+# Подгонкой они не чинились: врала не вёрстка, а модель. Замер 2026-09-14, оба
+# шаблона сошлись до сотой доли пункта, граница страницы 232.44 пт:
+#
+#   chart       +26.36 → −18.76  вывод 200 → 120 знаков (4×150 вылезают на 3.80,
+#                                4×140 — последняя длина, что ещё влезает)
+#   table       +15.52 → −4.05   ячейка 60 → 40 знаков (44 вылезают на 15.52)
+#   image-large +18.38 → ±0.00   при image_size "large" сумма тезисов ≤ 900 знаков
+#                                (6×200 вылезали на 18.38, 6×150 влезают; при
+#                                medium и small прежние 6×200 помещаются, поэтому
+#                                предел перекрёстный, а не в самом поле)
+#
+# Множество ниже — не индульгенция, а замок: тип, который переполнился, не будучи
+# здесь названным, валит тест.
+#
+# Волна 3 — худшая ЛЕГЕНДА, которой тут раньше не было вовсе (имена рядов брались
+# как «Ряд 1»). Вёрстка забрала почти всё: единица печатается один раз на легенду,
+# а не у каждого ряда; кегль легенды подбирается лесенкой; имена рядов вынесены
+# из box (box не переносит содержимое, и имя в 120 знаков занимало целую строку);
+# строка подписей категорий у bars() тоже подбирает кегль. Замер по дороге:
+#   chart      +38.33 → +21.82 (перенос имён) → +9.38 (ступень 4pt в легенде)
+#   dual-chart легенда стороны 141.10 → 67.06 пт, rest 262.92 → 188.88
+#
+# Два типа закрыть не удалось, и обоих не чинит ни кегль, ни предел на имя ряда:
+#
+#   chart       +9.38  Кривая ёмкости рваная: при имени ряда 80 знаков слайд
+#                      влезает (−1.77), при 60, 40, 30, 24 и 20 — нет (+0.98…+2.30),
+#                      при 16 снова влезает (−9.41). Это не ёмкость, а скачки
+#                      ступеней: короче имя → лесенка берёт ступень крупнее и
+#                      съедает выигрыш. Предел, выбранный по такой кривой, держался
+#                      бы на 1.77 пт запаса между двумя переполнениями — то есть
+#                      на удаче, а не на запасе. Ставить его нельзя.
+#   dual-chart +43.83  Не зависит от имени ряда вовсе: +43.83 и при 120 знаках,
+#                      и при 16, дно около +19.84 при 12. Сторона шириной 185.67 пт
+#                      несёт при бюджете 102.55 «обстановку» примерно на 190 пт:
+#                      легенда 67.06 (уже на нижней ступени 4pt), строка подписей
+#                      ~25 (уже ужата до 5pt), подпись стороны 28.63, полосы
+#                      подписей значений ~24, отбивки ~31. Графику при этом
+#                      остаётся отрицательная высота (chart-h ≈ −110), он
+#                      схлопывается, и высота перестаёт зависеть от входа.
+#
+# Волна 4 закрыла оба — каждый своим способом, и способы эти разные по смыслу:
+#
+#   chart      +9.38 → −5.85  Устройством, а не пределом. Легенде отведена
+#                             ПОСТОЯННАЯ высота (0.75 см): пока она зависела от
+#                             длины имён, от них же зависел бюджет колонки
+#                             выводов, и кривая ёмкости шла зубцами (80 знаков
+#                             влезали, 60 — нет). Теперь вся кривая от 16 до 120
+#                             знаков ровная: −5.85 на каждой длине.
+#   dual-chart +9.63 → −1.65  Пределом, а не устройством: сторона обещала больше,
+#                             чем помещается на половине слайда. Связывает только
+#                             подпись стороны (обрыв 78; 75 влезает), число
+#                             подписей и рядов — нет: при подписи в 80 знаков не
+#                             спасают и 2 подписи. SIDE_CAPTION_MAX = 68.
+#
+# Множество пусто — значит, у всех пятнадцати типов содержимое по верхнему пределу
+# модели укладывается в страницу. Тип, который переполнится, не будучи здесь
+# названным, валит тест.
+OUT_OF_SCOPE_OVERFLOW: set[str] = set()
+
+# department титульного слайда прижат к низу ровно на границе (низ 232.44 при
+# границе 232.44) — на точном равенстве тест не должен разваливаться
+BOTTOM_TOL = 0.5
+
+
+def _min_n(stype: str, *path: str) -> int:
+    """Сколько элементов список требует как минимум (minItems, иначе 1)."""
+    return _prop(stype, *path).get("minItems") or 1
+
+
+def _dual_side(nlab: int, nser: int, kind: str) -> dict:
+    return {"caption": _chars(_len("dual-chart", "left", "caption")), "kind": kind,
+            "labels": [_chars(_len("dual-chart", "left", "labels"))] * nlab,
+            "unit": _chars(_len("dual-chart", "left", "unit")),
+            "series": [{"name": _chars(16), "values": list(range(nlab))} for _ in range(nser)]}
+
+
+def cornered_slides() -> list[dict]:
+    """Другой конец каждого диапазона количеств — и сетка там, где она дешёвая.
+
+    `maxed_slides()` строит только потолки, и поэтому целый угол был невидим.
+    Но связывают тут не количества: переполнение, которое одно время приписывали
+    «ровно одной подписи», давали ВЫРОЖДЕННЫЕ ДАННЫЕ — все значения нулевые.
+    Замер на коммите до правки (заголовок 120, подпись стороны 40): нули при 1,
+    2 и 3 подписях дают +3.30, при 12 подписях +14.58, а те же количества
+    с ненулевыми значениями идут с запасом. Коробка столбцов при нулевом размахе
+    становится 2*lab независимо от запрошенной высоты — см. bars() и волну 6.
+
+    Сетку всё равно держим целиком: она дешёвая и стережёт оба конца на будущее
+    (здесь `dual-2x2` идёт с запасом −9.23). Вырожденный размах вынесен ниже
+    отдельным именованным случаем, чтобы он не зависел от того, как записано
+    выражение для values.
+
+    Заголовок берётся по потолку: он входит в спусковой крючок (при 60 знаках
+    угол не воспроизводится). Линейному графику модель требует две точки,
+    поэтому при одной подписи обе стороны столбчатые.
+    """
+    out: list[dict] = []
+    t = _chars(_len("dual-chart", "title"))
+
+    # полная сетка стороны dual-chart: подписи × ряды
+    for nlab in range(1, _n("dual-chart", "left", "labels") + 1):
+        for nser in range(1, _n("dual-chart", "left", "series") + 1):
+            kind = "bar" if nlab < 2 else "line"
+            out.append({"id": f"dual-{nlab}x{nser}", "type": "dual-chart", "title": t,
+                        "left": _dual_side(nlab, nser, kind),
+                        "right": _dual_side(nlab, nser, "bar")})
+
+    # chart: оба конца по подписям и рядам
+    for nlab in (1, 2, _n("chart", "labels")):
+        for nser in (1, _n("chart", "series")):
+            out.append({"id": f"chart-{nlab}x{nser}", "type": "chart",
+                        "title": _chars(_len("chart", "title")), "kind": "bar",
+                        "labels": [_chars(_len("chart", "labels"))] * nlab,
+                        "unit": _chars(_len("chart", "unit")),
+                        "series": [{"name": _chars(16), "values": list(range(nlab))}
+                                   for _ in range(nser)],
+                        "bullets": [_chars(_len("chart", "bullets"))] * _n("chart", "bullets")})
+
+    # минимум количеств у остальных типов со списками (длины — по потолку)
+    out += [
+        {"id": "min-agenda", "type": "agenda", "title": t,
+         "items": [_chars(_len("agenda", "items"))] * _min_n("agenda", "items")},
+        {"id": "min-text", "type": "text", "title": t,
+         "bullets": [_chars(_len("text", "bullets"))] * _min_n("text", "bullets")},
+        {"id": "min-image", "type": "image", "title": t, "image": "p1.png",
+         "image_size": "large", "caption": _chars(_len("image", "caption")),
+         "bullets": [_chars(_len("image", "bullets"))] * _min_n("image", "bullets")},
+        {"id": "min-columns", "type": "columns", "title": t,
+         "blocks": [{"heading": _chars(_len("columns", "blocks", "heading")),
+                     "text": _chars(_len("columns", "blocks", "text"))}]
+                   * _min_n("columns", "blocks")},
+        {"id": "min-comparison", "type": "comparison", "title": t,
+         "left": {"heading": _chars(_len("comparison", "left", "heading")),
+                  "bullets": [_chars(_len("comparison", "left", "bullets"))]
+                             * _min_n("comparison", "left", "bullets")},
+         "right": {"heading": _chars(_len("comparison", "right", "heading")),
+                   "bullets": [_chars(_len("comparison", "right", "bullets"))]
+                              * _min_n("comparison", "right", "bullets")}},
+        {"id": "min-metrics", "type": "metrics", "title": t,
+         "items": [{"value": _chars(_len("metrics", "items", "value")),
+                    "label": _chars(_len("metrics", "items", "label")),
+                    "delta": _chars(_len("metrics", "items", "delta"))}]
+                  * _min_n("metrics", "items")},
+        {"id": "min-table", "type": "table", "title": t,
+         "header": [_chars(_len("table", "header"))] * _min_n("table", "header"),
+         "rows": [[_chars(_len("table", "rows"))] * _min_n("table", "header")]
+                 * _min_n("table", "rows")},
+        {"id": "min-gallery", "type": "gallery", "title": t,
+         "images": [{"image": f"p{i + 1}.png",
+                     "caption": _chars(_len("gallery", "images", "caption"))}
+                    for i in range(_min_n("gallery", "images"))]},
+    ]
+
+    # Вырожденный размах — все значения нулевые. Это и есть настоящая причина
+    # переполнения, которое когда-то списали на «одну подпись»: в hi и lo всегда
+    # подмешан 0, поэтому при нулях hi == lo, размах схлопывается, и коробка
+    # столбцов становится 2*lab независимо от запрошенной высоты (bars(), волна 6).
+    #
+    # Случай назван явно и нарочно. Слайды сетки выше задевают этот путь лишь
+    # по случайности: values = range(nlab) даёт [0] ровно при одной подписи.
+    # Стоит кому-то привести это выражение к range(1, nlab + 1) — покрытие
+    # исчезнет молча, и ровно тем же способом дефект появился в первый раз.
+    # Здесь значения нулевые явно, поэтому защита переживёт переписывание
+    # генератора выше.
+    #
+    # Из этих двух кусается только dual, и это стоит знать: на шаблонах до
+    # правки (55fdd23~1) zero-span-dual даёт +22.28, сейчас −1.54. А
+    # zero-span-chart и там, и там идёт с −5.85 — slide-chart берёт высоту
+    # графика константой (2.9/3.4 см), а не из бюджета, поэтому схлопнутая
+    # коробка просто рисует график ниже и со страницы не выходит. Он оставлен
+    # дымовой проверкой: нулевые данные обязаны рисоваться и укладываться
+    # в одну страницу, — но регрессию геометрии стережёт не он.
+    zero_labels = 3
+    zero_series = 2
+    out += [
+        {"id": "zero-span-chart", "type": "chart", "title": _chars(_len("chart", "title")),
+         "kind": "bar", "labels": [_chars(_len("chart", "labels"))] * zero_labels,
+         "unit": _chars(_len("chart", "unit")),
+         "series": [{"name": _chars(16), "values": [0] * zero_labels}
+                    for _ in range(zero_series)],
+         "bullets": [_chars(_len("chart", "bullets"))] * _n("chart", "bullets")},
+        {"id": "zero-span-dual", "type": "dual-chart", "title": t,
+         "left": {"caption": _chars(_len("dual-chart", "left", "caption")), "kind": "bar",
+                  "labels": [_chars(_len("dual-chart", "left", "labels"))] * zero_labels,
+                  "unit": _chars(_len("dual-chart", "left", "unit")),
+                  "series": [{"name": _chars(16), "values": [0] * zero_labels}
+                             for _ in range(zero_series)]},
+         "right": {"caption": _chars(_len("dual-chart", "left", "caption")), "kind": "bar",
+                   "labels": [_chars(_len("dual-chart", "left", "labels"))] * zero_labels,
+                   "unit": _chars(_len("dual-chart", "left", "unit")),
+                   "series": [{"name": _chars(16), "values": [0] * zero_labels}
+                              for _ in range(zero_series)]}},
+    ]
+    return out
+
+
+def _overflowing(r, bound: float) -> dict[str, tuple[float, str]]:
+    worst: dict[str, tuple[float, str]] = {}
+    for p in r.positions:
+        bottom = p["y"] + p["h"]
+        if bottom > bound + BOTTOM_TOL and bottom > worst.get(p["slide"], (0.0, ""))[0]:
+            worst[p["slide"]] = (bottom, p["field"])
+    return worst
+
+
+@requires_typst
+@pytest.mark.parametrize("tid", ["default", "dark"])
+def test_minimum_counts_do_not_overflow_the_page(deck_dir, png_bytes, tid):
+    """Другой конец диапазона количеств — там же, где нашёлся угол на одной подписи."""
+    for n in range(1, 5):
+        (deck_dir / "assets" / f"p{n}.png").write_bytes(png_bytes)
+    tdir = TEMPLATE_DIR if tid == "default" else ROOT / "templates" / tid
+    deck = Deck(id="cornerdeck", slides=cornered_slides())
+    r = compile_deck(deck, deck_dir, tdir)
+    assert len(r.svgs) == len(deck.slides), "одна функция — одна страница"
+    bound = content_bottom(tdir)
+    extra = _overflowing(r, bound)
+    assert not extra, (
+        f"содержимое уходит под обрез страницы (граница {bound:.2f} пт): "
+        + ", ".join(f"{t}.{f} низ {b:.2f} (+{b - bound:.2f})"
+                    for t, (b, f) in sorted(extra.items())))
+
+
+@requires_typst
+@pytest.mark.parametrize("tid", ["default", "dark"])
+def test_model_maximum_does_not_overflow_the_page(deck_dir, png_bytes, tid):
+    """Слайд по верхнему пределу модели не уходит содержимым под обрез страницы."""
+    for n in range(1, 5):
+        (deck_dir / "assets" / f"p{n}.png").write_bytes(png_bytes)
+    tdir = TEMPLATE_DIR if tid == "default" else ROOT / "templates" / tid
+    deck = Deck(id="maxdeck", slides=maxed_slides())
+    r = compile_deck(deck, deck_dir, tdir)
+    assert len(r.svgs) == len(deck.slides), "одна функция — одна страница"
+    bound = content_bottom(tdir)
+    worst: dict[str, tuple[float, str]] = {}
+    for p in r.positions:
+        bottom = p["y"] + p["h"]
+        if bottom > bound + BOTTOM_TOL and bottom > worst.get(p["slide"], (0.0, ""))[0]:
+            worst[p["slide"]] = (bottom, p["field"])
+    extra = {k: v for k, v in worst.items() if k not in OUT_OF_SCOPE_OVERFLOW}
+    assert not extra, (
+        f"содержимое уходит под обрез страницы (граница {bound:.2f} пт): "
+        + ", ".join(f"{t}.{f} низ {b:.2f} (+{b - bound:.2f})"
+                    for t, (b, f) in sorted(extra.items())))

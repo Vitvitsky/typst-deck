@@ -10,6 +10,8 @@
 """
 from __future__ import annotations
 
+import base64
+import copy
 import io
 import json
 import logging
@@ -20,24 +22,65 @@ from pathlib import Path
 
 from pptx import Presentation
 
-from .model import Deck
-from .pptx import MappingError, export_pptx
+from .model import CELL_MAX, SIDE_CAPTION_MAX, Deck
+from .pptx import MappingError, export_pptx, load_mapping
 from .render import CompileError, CompileResult, compile_deck, resolve_fonts
-from .slots import clamp
+from .slots import clamp, field_kind
 
-# Образец: по слайду каждого типа. Им же рисуются превью шаблонов в интерфейсе.
+# Образец: по слайду каждого типа в порядке SLIDE_TYPES. Им же рисуются превью
+# шаблонов в интерфейсе, поэтому картинки кладутся рядом (write_sample_assets).
+PNG_1PX = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+SAMPLE_ASSETS = {"sample-1.png": PNG_1PX, "sample-2.png": PNG_1PX, "sample-3.png": PNG_1PX}
+SAMPLE_IMAGES = tuple(SAMPLE_ASSETS)
+
 SAMPLE_DECK = Deck(id="templatepreview", title="Образец шаблона", slides=[
     {"id": "s000001", "type": "title", "title": "Название презентации", "subtitle": "Подзаголовок и дата",
      "author": "Имя Фамилия", "department": "Подразделение"},
-    {"id": "s000002", "type": "section", "title": "Раздел", "subtitle": "Промежуточный слайд"},
-    {"id": "s000003", "type": "image", "title": "Текст и картинка", "bullets": ["Первый тезис", "Второй тезис", "Третий тезис"], "caption": "Подпись"},
-    {"id": "s000004", "type": "bar-chart", "title": "Диаграмма", "unit": "млн", "data": [{"label": "Центр", "value": 42}, {"label": "Север", "value": 17}, {"label": "Юг", "value": 28}]},
-    {"id": "s000005", "type": "chart", "title": "График", "labels": ["Q1", "Q2", "Q3", "Q4"], "series": [{"name": "Выручка", "values": [10, 14, 13, 18]}, {"name": "Расходы", "values": [8, 9, 11, 12]}]},
-    {"id": "s000006", "type": "final", "contact": "team@corp"},
+    {"id": "s000002", "type": "agenda", "items": ["Первый раздел", "Второй раздел", "Третий раздел"]},
+    {"id": "s000003", "type": "section", "title": "Раздел", "subtitle": "Промежуточный слайд"},
+    {"id": "s000004", "type": "text", "title": "Тезисы", "bullets": ["Первый тезис", "Второй тезис", "Третий тезис"]},
+    {"id": "s000005", "type": "image", "title": "Текст и картинка", "bullets": ["Первый тезис", "Второй тезис"],
+     "image": "sample-1.png", "caption": "Подпись"},
+    {"id": "s000006", "type": "columns", "title": "Блоки текста",
+     "blocks": [{"heading": "Первый", "text": "Короткий текст блока"},
+                {"heading": "Второй", "text": "Короткий текст блока"},
+                {"heading": "Третий", "text": "Короткий текст блока"}]},
+    {"id": "s000007", "type": "comparison", "title": "Было и стало",
+     "left": {"heading": "Было", "bullets": ["Первый пункт", "Второй пункт"]},
+     "right": {"heading": "Стало", "bullets": ["Первый пункт", "Второй пункт"]}},
+    {"id": "s000008", "type": "quote", "text": "Одна мысль, ради которой стоит остановиться", "author": "Имя Фамилия"},
+    {"id": "s000009", "type": "chart", "title": "Диаграмма", "kind": "bar", "unit": "млн",
+     "labels": ["Центр", "Север", "Юг"], "series": [{"name": "млн", "values": [42, -17, 28]}],
+     "bullets": ["Рост в центре"]},
+    {"id": "s000010", "type": "dual-chart", "title": "Два графика",
+     "left": {"caption": "Динамика", "labels": ["Q1", "Q2", "Q3"], "series": [{"name": "Выручка", "values": [10, 14, 13]}]},
+     "right": {"caption": "Сравнение", "kind": "bar", "labels": ["Центр", "Юг"],
+               "series": [{"name": "млн", "values": [42, 28]}]}},
+    {"id": "s000011", "type": "metrics", "title": "Ключевые числа",
+     "items": [{"value": "12,5 млн", "label": "выручка", "delta": "+12 %"},
+               {"value": "3,4 %", "label": "доля", "delta": "-1 п. п."},
+               {"value": "17", "label": "проектов"}]},
+    {"id": "s000012", "type": "table", "title": "Таблица", "header": ["Регион", "Выручка", "Доля"],
+     "rows": [["Центр", "42", "51 %"], ["Север", "17", "21 %"], ["Юг", "28", "28 %"]]},
+    {"id": "s000013", "type": "gallery", "title": "Галерея",
+     "images": [{"image": "sample-1.png", "caption": "Первая"}, {"image": "sample-2.png", "caption": "Вторая"}]},
+    {"id": "s000014", "type": "video", "title": "Видео", "url": "https://example.com/video",
+     "poster": "sample-1.png", "caption": "Подпись к ролику"},
+    {"id": "s000015", "type": "final", "contact": "team@corp"},
 ])
+TEXT_FIELDS = ("title", "subtitle", "author", "department", "caption", "contact", "bullets",
+               "items", "blocks", "left", "right", "text", "header", "rows", "images", "poster")
 
-TEXT_FIELDS = ("title", "subtitle", "author", "department", "caption", "contact", "bullets")
-STRING_LISTS = ("bullets", "labels")
+
+def write_sample_assets(deck_dir: Path) -> None:
+    """Картинки образца: без них image, gallery и обложке video нечего рисовать."""
+    assets = Path(deck_dir) / "assets"
+    assets.mkdir(parents=True, exist_ok=True)
+    for name, data in SAMPLE_ASSETS.items():
+        (assets / name).write_bytes(data)
+
+
 FONT_WARNING = re.compile(r"unknown font family: ([^\n]+)")
 OVERSIZED = "Очень длинный текст, который заведомо не помещается в отведённое место " * 6
 FILL = "Итоги квартала по направлению данных и аналитики "
@@ -89,26 +132,117 @@ def _text(sample: str, n: int, lines: int = 1) -> str:
     return "\n".join(parts)
 
 
+def _skeleton(stype: str, sample: str) -> dict:
+    """Слайд типа stype на коротких значениях по умолчанию — до наложения объявления.
+
+    Обязательные поля получают минимум, при котором слайд собирается; тяжёлые
+    необязательные (текст блока, тезис колонки, ячейка) — глобальный предел
+    model.py: именно он и действует, пока шаблон ничего не сузил.
+    """
+    slide: dict = {"type": stype}
+    # agenda и final несут собственный короткий title по умолчанию, а у quote его вовсе нет
+    if stype not in ("agenda", "quote", "final"):
+        slide["title"] = "Итоги"
+    if stype == "agenda":
+        slide["items"] = [_text(sample, 80)] * 3
+    elif stype == "text":
+        slide["bullets"] = [_text(sample, 80)] * 3
+    elif stype == "image":
+        slide["image"] = "sample-1.png"
+    elif stype == "columns":
+        slide["blocks"] = [{"heading": _text(sample, 40), "text": _text(sample, 300)}] * 3
+    elif stype == "comparison":
+        side = {"heading": _text(sample, 60), "bullets": [_text(sample, 120)] * 3}
+        slide["left"], slide["right"] = dict(side), dict(side)
+    elif stype == "quote":
+        slide["text"] = _text(sample, 300)
+    elif stype == "chart":
+        slide["kind"] = "line"
+        slide["labels"] = ["Q1", "Q2"]
+        slide["series"] = [{"name": "Ряд 1", "values": [0, 1]}]
+    elif stype == "dual-chart":
+        # длина — из константы модели, а не литералом: подпись стороны уже́ общего
+        # Short (80), и зашитое число разъезжается с пределом при первой же правке
+        side = {"caption": _text(sample, SIDE_CAPTION_MAX), "labels": ["Q1", "Q2"],
+                "series": [{"name": "Ряд 1", "values": [0, 1]}]}
+        slide["left"], slide["right"] = dict(side), dict(side)
+    elif stype == "metrics":
+        slide["items"] = [{"value": "12,5 млн", "label": _text(sample, 60), "delta": "+12 %"}] * 3
+    elif stype == "table":
+        slide["header"] = [_text(sample, 40)] * 3
+        slide["rows"] = [[_text(sample, CELL_MAX)] * 3] * 3
+    elif stype == "gallery":
+        slide["images"] = [{"image": SAMPLE_IMAGES[0], "caption": _text(sample, 80)}] * 2
+    elif stype == "video":
+        slide["url"], slide["poster"] = "https://example.com/video", "sample-1.png"
+    return slide
+
+
+def _fill(kind: str | None, current: object, lim: dict[str, int], sample: str):
+    """Значение поля ровно по его объявленным пределам.
+
+    Форму берём у схемы (field_kind), а не у имени поля: «items» — строки у
+    повестки и объекты у метрик, и угадывание по имени однажды уже превращало
+    пункты повестки в строку.
+    """
+    if kind == "strings":
+        n = lim.get("count", len(current) if isinstance(current, list) and current else 3)
+        item = (_text(sample, lim["max"]) if "max" in lim
+                else current[0] if isinstance(current, list) and current else _text(sample, 40))
+        return [item] * n
+    if kind == "list":  # список объектов или строк-ячеек: длину элементов задаёт не max, а его поля
+        items = current if isinstance(current, list) and current else [{}]
+        return [copy.deepcopy(items[0]) for _ in range(lim.get("count", len(items)))]
+    return _text(sample, lim.get("max", 40), lim.get("lines", 1))
+
+
+def _consistent(slide: dict, stype: str, sample: str) -> None:
+    """Поля, которые обязаны сойтись между собой после наложения пределов."""
+    if stype == "chart":
+        slide["series"] = [{"name": f"Ряд {j + 1}", "values": list(range(len(slide["labels"])))}
+                           for j in range(len(slide["series"]))]
+    if stype == "dual-chart":
+        for name in ("left", "right"):
+            side = slide[name]
+            side["series"] = [{"name": f"Ряд {j + 1}", "values": list(range(len(side["labels"])))}
+                              for j in range(len(side["series"]))]
+    if stype == "table":
+        width = len(slide["header"])
+        cell = slide["rows"][0][0] if slide["rows"] and slide["rows"][0] else _text(sample, CELL_MAX)
+        slide["rows"] = [[cell] * width for _ in slide["rows"]]
+    if stype == "gallery":
+        # Картинок образца три, а gallery допускает четыре: пускаем по кругу, иначе
+        # при count=4 собиралось три и самый тугой случай шаблона не проверялся.
+        slide["images"] = [dict(p, image=SAMPLE_IMAGES[i % len(SAMPLE_IMAGES)])
+                           for i, p in enumerate(slide["images"])]
+
+
 def filled_slide(stype: str, limits: dict[str, dict[str, int]], sample: str = FILL) -> dict:
     """Слайд типа stype, где каждое объявленное поле заполнено ровно по его пределам.
-    Обязательные поля без объявления получают короткие значения."""
-    slide: dict = {"type": stype}
-    for fld, lim in limits.items():
-        if fld in STRING_LISTS:
-            slide[fld] = [_text(sample, lim.get("max", 40))] * lim.get("count", 3)
-        elif fld == "data":
-            slide["data"] = [{"label": f"Пункт {i + 1}", "value": i + 1} for i in range(lim.get("count", 3))]
-        elif fld != "series":  # ряды собираются ниже, под число подписей
-            slide[fld] = _text(sample, lim.get("max", 40), lim.get("lines", 1))
-    if stype in ("title", "section", "image", "bar-chart", "chart"):
-        slide.setdefault("title", "Итоги")
-    if stype == "bar-chart":
-        slide.setdefault("data", [{"label": "Центр", "value": 42}])
-    if stype == "chart":
-        slide.setdefault("labels", ["Q1", "Q2"])
-        k = limits.get("series", {}).get("count", 1)
-        slide["series"] = [{"name": f"Ряд {j + 1}", "values": list(range(len(slide["labels"])))}
-                           for j in range(k)]
+    Обязательные поля без объявления получают короткие значения.
+
+    Ключ с точкой («blocks.text», «left.bullets») — тот же путь во вложенное поле,
+    что понимают clamp и check_slide: он кладётся в подполе, а не в поле с точкой
+    в имени, которое модель с extra="forbid" не приняла бы вовсе. И объём берётся
+    объявленный: шаблон, честно сузивший blocks.text до 180, проверяется на 180,
+    а не на глобальные 300, которых он не обещал.
+    """
+    slide = _skeleton(stype, sample)
+    # Сначала поля верхнего уровня, потом вложенные: число блоков задаёт «blocks»,
+    # а «blocks.text» обязан лечь в каждый из них.
+    for path in sorted(limits, key=lambda p: "." in p):
+        head, _, tail = path.partition(".")
+        lim = limits[path]
+        if not tail:
+            slide[head] = _fill(field_kind(stype, head), slide.get(head), lim, sample)
+            continue
+        kind, target = field_kind(stype, path), slide.get(head)
+        if isinstance(target, list):  # массив объектов: подполе у каждого элемента
+            slide[head] = [dict(x) | {tail: _fill(kind, x.get(tail), lim, sample)}
+                           for x in target if isinstance(x, dict)]
+        elif isinstance(target, dict):
+            slide[head] = dict(target) | {tail: _fill(kind, target.get(tail), lim, sample)}
+    _consistent(slide, stype, sample)
     return slide
 
 
@@ -143,6 +277,8 @@ def _rule_fonts_used(path: Path, typst_bin: str, work_dir: Path, fonts: Path | N
         return []
     empty = work_dir / "no-fonts"
     empty.mkdir(parents=True, exist_ok=True)
+    write_sample_assets(work_dir / "fonts-with")
+    write_sample_assets(work_dir / "fonts-without")
     try:
         a = compile_deck(SAMPLE_DECK, work_dir / "fonts-with", path, typst_bin, fonts_dir=fonts, system_fonts=False)
         b = compile_deck(SAMPLE_DECK, work_dir / "fonts-without", path, typst_bin, fonts_dir=empty, system_fonts=False)
@@ -158,9 +294,17 @@ def _rule_oversized(path: Path, typst_bin: str, work_dir: Path, fonts: Path | No
     """Правило 3: переросший вход не выносит слайд на вторую страницу."""
     big = OVERSIZED[:120]
     breaks = big[:60] + "\n" * 8 + big[:40]  # переводы строки — механизм инцидента 2026-09-09
+    # heading (Block, Metric.label) ограничены моделью 60 знаками, ячейка таблицы —
+    # CELL_MAX: переросший текст даём им по максимуму допустимого, а не общий big,
+    # иначе Deck() не соберётся
     deck = Deck(slides=[
         {"type": "title", "title": big, "subtitle": breaks, "author": big, "department": big},
         {"type": "section", "title": big, "subtitle": breaks},
+        {"type": "quote", "text": big + breaks, "author": big},
+        {"type": "columns", "title": big, "blocks": [{"heading": big[:60], "text": big + breaks}] * 2},
+        {"type": "metrics", "title": big, "items": [{"value": big[:16], "label": big[:60], "delta": big[:12]}] * 2},
+        {"type": "table", "title": big, "header": [big[:40], big[:40]],
+         "rows": [[big[:CELL_MAX], big[:CELL_MAX]]] * 2},
         {"type": "final", "title": big, "contact": breaks},
     ])
     try:
@@ -191,6 +335,7 @@ def _rule_declared_fit(path: Path, typst_bin: str, work_dir: Path, fonts: Path |
     """Правило 5: слайды, заполненные ровно по объявленным пределам, — по одной странице."""
     if not declared:
         return []
+    write_sample_assets(work_dir / "declared")  # filled_slide тоже ссылается на картинки образца
     try:
         deck = Deck(slides=[filled_slide(t, lim) for t, lim in declared.items()])
         compile_deck(deck, work_dir / "declared", path, typst_bin, fonts_dir=fonts)
@@ -202,11 +347,19 @@ def _rule_declared_fit(path: Path, typst_bin: str, work_dir: Path, fonts: Path |
 
 
 def _rule_pptx(path: Path, meta: dict, typst_bin: str, work_dir: Path) -> list[str]:
-    """Правило 7: сопоставление читается, мастер с ним сходится, образец экспортируется."""
+    """Правило 7: сопоставление читается, мастер с ним сходится, образец из 15 типов
+    экспортируется — с картинками образца, чтобы обложка видео и сетка галереи
+    тоже проходили через python-pptx."""
     if "pptx" not in meta:
         return []
     try:
-        data = export_pptx(SAMPLE_DECK, path, meta["pptx"], work_dir / "no-assets", typst_bin)
+        load_mapping(path, meta["pptx"])
+    except MappingError as e:
+        return [f"pptx: {e}"]
+    deck_dir = work_dir / "pptx-sample"
+    write_sample_assets(deck_dir)
+    try:
+        data = export_pptx(SAMPLE_DECK, path, meta["pptx"], deck_dir / "assets", typst_bin)
         n = len(Presentation(io.BytesIO(data)).slides)
     except MappingError as e:
         return [f"pptx: {e}"]
@@ -239,6 +392,7 @@ def check_template(path: Path, typst_bin: str, work_dir: Path, full: bool = True
         if full:
             return report
         fonts = resolve_fonts(path)
+    write_sample_assets(work_dir / "sample")
     try:  # правило 2: образец собирается, одна функция — одна страница
         sample = compile_deck(SAMPLE_DECK, work_dir / "sample", path, typst_bin, fonts_dir=fonts)
     except CompileError as e:

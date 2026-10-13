@@ -181,6 +181,19 @@ label.f:first-child { margin-top: 0; }
 .grid-table { display: grid; gap: 4px; }
 .grid-table .r { display: grid; grid-template-columns: 1fr 90px 26px; gap: 4px; align-items: center; }
 .grid-table .r.series { grid-template-columns: 1fr 26px; }
+.grid-table.rows-edit .r { grid-template-columns: 1fr 26px; align-items: start; }
+.grid-table .cells { display: grid; gap: 4px; }
+fieldset.group { border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px 10px; margin: 10px 0 0; display: grid; gap: 6px; }
+fieldset.group legend { font-size: 12px; color: var(--ink-2); padding: 0 4px; }
+.table-edit .scroll { overflow-x: auto; }
+.table-edit table { border-collapse: collapse; }
+.table-edit th, .table-edit td { padding: 2px; }
+.table-edit input { min-width: 90px; }
+.table-edit thead input { font-weight: 600; }
+.table-edit .row { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.f-group.flash { animation: flash 1.2s ease-out; border-radius: var(--r); }
+@keyframes flash { from { background: var(--accent-soft); } to { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .f-group.flash { animation: none; outline: 2px solid var(--accent-soft); } }
 .grid-table input { min-height: 28px; padding: 3px 7px; font-size: 13px; }
 .grid-table .r button { height: 26px; }
 .image-box { border: 1px solid var(--line); border-radius: var(--r); padding: 8px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
@@ -263,3 +276,12 @@ html.sb-collapsed .sb-status { border-top: 0; padding: 0; margin-top: auto; }
   .topbar #tplname, .topbar #copylink, .topbar .back .txt { display: none; }
   .topbar h1 { min-width: 120px; }
 }
+.page .play { position: absolute; right: 12px; bottom: 12px; z-index: 3; background: var(--surface); box-shadow: var(--shadow); line-height: normal; }
+dialog.player { border: none; border-radius: var(--r-lg); padding: 12px; background: var(--surface); box-shadow: var(--shadow); width: min(960px, 92vw); }
+dialog.player::backdrop { background: rgb(0 0 0 / 0.55); }
+dialog.player iframe { display: block; width: 100%; aspect-ratio: 16 / 9; border: 0; background: #000; border-radius: var(--r); }
+dialog.player form { display: flex; justify-content: flex-end; margin-top: 8px; }
+.gallery-edit { display: grid; gap: 6px; }
+.gallery-edit .r { display: grid; grid-template-columns: 56px 1fr 26px; gap: 6px; align-items: center; }
+.props .thumb { width: 56px; height: 40px; object-fit: cover; border-radius: 4px; border: 1px solid var(--line); display: block; margin-bottom: 4px; }
+label.radio { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; margin-right: 12px; }

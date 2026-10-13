@@ -39,7 +39,7 @@ TWO_PAGES = ("#let slide-final(title: none, contact: none) = slide(fill: accent)
              "#let slide-final(title: none, contact: none) = page[] + slide(fill: accent)[")
 NO_CLIP_FINAL = ("#let slide-final(title: none, contact: none) = slide(fill: accent)[",
                  "#let slide-final(title: none, contact: none) = page(fill: accent)[")
-NO_CONTACT = ("#if contact != none { v(0.4cm); text(size: 12pt, contact) }", "")
+NO_CONTACT = ("#if contact != none { v(0.4cm); fit-text(1.0cm, (12pt, 11pt, 10pt), contact) }", "")
 FALLBACK_FONT = ('set text(font: "DejaVu Sans",', 'set text(font: ("DejaVu Sans", "Нет Такого Шрифта"),')
 
 
@@ -66,20 +66,32 @@ def make_template(parent: Path, name: str, deck_edit: tuple[str, str] | None = N
 
 # Сопоставление синтетического мастера: макеты стандартного мастера python-pptx.
 # «Title and Content» у image — нарочно: его idx 1 не сопоставлен, на нём
-# проверяется удаление лишнего заполнителя.
+# проверяется удаление лишнего заполнителя. columns — вариант с зоной; вариант
+# с заполнителями ph.blocks проверяется отдельно на макете «Comparison».
+ZONE = [20, 80, 600, 260]
 PPTX_MAPPING = {
     "master": "master.pptx",
-    "text": {"size": 24, "bullet": "FFDE00", "caption": "666666"},
+    "text": {"size": 24, "bullet": "FFDE00", "caption": "666666", "quote": 40, "metric": 60},
     "chart": {"palette": ["FFDE00", "1E1E1E", "00FFE0"], "negative": "FF2E00"},
+    "trend": {"up": "1E1E1E", "down": "FF2E00"},
+    "table": {"size": 18, "header_fill": "DDDDDD", "stripe_fill": "F8F8F8", "rule": "BBBBBB"},
     "slides": {
         "title": {"layout": "Title Slide", "ph": {"title": 0, "subtitle": 1, "author": 21, "department": 21}},
+        "agenda": {"layout": "Title Only", "ph": {"title": 0}, "body": ZONE},
         "section": {"layout": "Section Header", "ph": {"title": 0, "subtitle": 1}},
-        "image": {"layout": "Title and Content", "ph": {"title": 0}, "body": [20, 80, 600, 260],
+        "text": {"layout": "Title Only", "ph": {"title": 0}, "body": ZONE},
+        "image": {"layout": "Title and Content", "ph": {"title": 0}, "body": ZONE,
                   "image_width": {"small": 30, "medium": 42, "large": 55}, "gap": 15},
-        "bar-chart": {"layout": "Title Only", "ph": {"title": 0}, "body": [20, 80, 600, 260],
-                      "text_width": 38, "gap": 12, "heading": "Выводы"},
-        "chart": {"layout": "Title Only", "ph": {"title": 0}, "body": [20, 80, 600, 260],
-                  "text_width": 38, "gap": 12},
+        "columns": {"layout": "Title Only", "ph": {"title": 0}, "body": ZONE, "gap": 10},
+        "comparison": {"layout": "Title Only", "ph": {"title": 0}, "body": ZONE, "gap": 20},
+        "quote": {"layout": "Blank", "ph": {}, "body": ZONE},
+        "chart": {"layout": "Title Only", "ph": {"title": 0}, "body": ZONE,
+                  "text_width": 38, "gap": 12, "heading": "Выводы"},
+        "dual-chart": {"layout": "Title Only", "ph": {"title": 0}, "body": ZONE, "gap": 20},
+        "metrics": {"layout": "Title Only", "ph": {"title": 0}, "body": ZONE, "gap": 15},
+        "table": {"layout": "Title Only", "ph": {"title": 0}, "body": ZONE},
+        "gallery": {"layout": "Title Only", "ph": {"title": 0}, "body": ZONE, "gap": 12},
+        "video": {"layout": "Title Only", "ph": {"title": 0}, "body": ZONE},
         "final": {"layout": "Title Slide", "ph": {"title": 0, "contact": 1}},
     },
 }

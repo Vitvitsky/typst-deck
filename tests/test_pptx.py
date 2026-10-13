@@ -6,11 +6,12 @@ import pytest
 from lxml import etree
 from PIL import Image
 from pptx import Presentation
-from pptx.enum.chart import XL_LEGEND_POSITION
+from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.oxml.ns import qn
-from pptx.util import Mm
+from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+from pptx.util import Mm, Pt
 
 from tests.conftest import make_pptx_template, requires_typst
 from typst_deck.contract import SAMPLE_DECK, filled_slide
@@ -69,9 +70,12 @@ def image_deck(size="medium", **kw) -> Deck:
 
 
 def test_every_type_lands_on_its_layout_at_the_masters_size(tdir):
+    from tests.conftest import PPTX_MAPPING
+
     prs = export(tdir, SAMPLE_DECK)
     assert [s.slide_layout.name for s in prs.slides] == [
-        "Title Slide", "Section Header", "Title and Content", "Title Only", "Title Only", "Title Slide"]
+        PPTX_MAPPING["slides"][s.type]["layout"] for s in SAMPLE_DECK.slides]
+    assert len(prs.slides) == 15
     assert (prs.slide_width, prs.slide_height) == (Mm(677), Mm(381))
     # слайд-образец мастера не пережил экспорт: первый слайд — титул колоды
     assert by_idx(prs.slides[0])[0] == ["Название презентации"]
@@ -83,9 +87,12 @@ def test_fields_fill_placeholders_and_share_one_in_model_order(tdir):
     assert title[21] == ["Имя Фамилия", "Подразделение"]
 
 
-def test_empty_and_unmapped_placeholders_are_removed(tdir):
-    deck = Deck(slides=[{"type": "title", "title": "Итоги"}, {"type": "image", "title": "Рост"}])
-    prs = export(tdir, deck)
+def test_empty_and_unmapped_placeholders_are_removed(tdir, tmp_path):
+    (tmp_path / "a").mkdir()
+    png(tmp_path / "a" / "pic.png")
+    deck = Deck(slides=[{"type": "title", "title": "Итоги"},
+                        {"type": "image", "title": "Рост", "image": "pic.png"}])
+    prs = export(tdir, deck, assets=tmp_path / "a")
     # ни подзаголовка, ни подписи, ни idx 1 «Title and Content»; дату и колонтитул python-pptx не переносит
     assert set(by_idx(prs.slides[0])) == {0, 12}
     assert set(by_idx(prs.slides[1])) == {0, 12}
@@ -93,14 +100,16 @@ def test_empty_and_unmapped_placeholders_are_removed(tdir):
 
 def test_slide_number_is_a_field(tdir):
     for n, slide in enumerate(export(tdir, SAMPLE_DECK).slides, 1):
-        num = next(sh for sh in slide.placeholders if sh.placeholder_format.idx == 12)
-        assert num._element.xpath(".//a:fld[@type='slidenum']"), n
-        assert num.text_frame.text == str(n)
+        nums = [sh for sh in slide.placeholders if sh.placeholder_format.idx == 12]
+        assert len(nums) == 1, n  # у «Blank» номер тоже есть
+        assert nums[0]._element.xpath(".//a:fld[@type='slidenum']"), n
+        assert nums[0].text_frame.text == str(n)
 
 
 def test_titles_shrink_on_edit(tdir):
     for slide in export(tdir, SAMPLE_DECK).slides:
-        assert slide.shapes.title._element.xpath(".//a:bodyPr/a:normAutofit")
+        if slide.shapes.title is not None:  # у цитаты заголовка нет
+            assert slide.shapes.title._element.xpath(".//a:bodyPr/a:normAutofit")
 
 
 def test_image_keeps_proportions_inside_the_zone(tdir, tmp_path):
@@ -167,11 +176,13 @@ def test_svg_goes_in_as_png(tdir, tmp_path):
     assert pic.image.content_type == "image/png" and abs(pic.width / pic.height - 3) < 0.05
 
 
+def bar(**kw) -> dict:
+    return {"type": "chart", "kind": "bar", "title": "Итоги", "unit": "млн",
+            "labels": ["Центр", "Север", "Юг"], "series": [{"name": "млн", "values": [42, -17, 28]}]} | kw
+
+
 def test_bar_colors_follow_the_sign(tdir):
-    deck = Deck(slides=[{"type": "bar-chart", "title": "Итоги", "unit": "млн",
-                         "data": [{"label": "Центр", "value": 42}, {"label": "Север", "value": -17},
-                                  {"label": "Юг", "value": 28}]}])
-    chart = chart_of(export(tdir, deck).slides[0])
+    chart = chart_of(export(tdir, Deck(slides=[bar()])).slides[0])
     assert colors(chart, ".//c:dPt//a:srgbClr") == ["FFDE00", "FF2E00", "FFDE00"]
     assert chart._chartSpace.xpath(".//c:invertIfNegative[@val='0']")
     assert chart.plots[0].data_labels.number_format == 'General" млн"'
@@ -179,10 +190,52 @@ def test_bar_colors_follow_the_sign(tdir):
 
 
 def test_bar_chart_survives_special_characters_in_unit(tdir):
-    deck = Deck(slides=[{"type": "bar-chart", "title": "Итоги", "unit": "R&D <x>\x01",
-                         "data": [{"label": "Центр", "value": 42}]}])
+    deck = Deck(slides=[bar(unit="R&D <x>\x01", labels=["Центр"], series=[{"name": "R&D", "values": [42]}])])
     chart = chart_of(export(tdir, deck).slides[0])
     assert chart.plots[0].data_labels.number_format == 'General" R&D <x>"'
+
+
+def test_bar_with_several_series_takes_the_palette_and_a_legend(tdir):
+    deck = Deck(slides=[bar(series=[{"name": "2025 & <план>", "values": [1, -2, 3]},
+                                    {"name": "2026", "values": [2, 3, 4]}])])
+    chart = chart_of(export(tdir, deck).slides[0])
+    assert colors(chart, ".//c:ser/c:spPr/a:solidFill/a:srgbClr") == ["FFDE00", "1E1E1E"]
+    assert not chart._chartSpace.xpath(".//c:dPt")  # по знаку красится только одна серия
+    assert chart.has_legend and chart.legend.position == XL_LEGEND_POSITION.TOP
+    assert [s.name for s in chart.plots[0].series] == ["2025 & <план>", "2026"]
+
+
+def test_bar_with_several_series_keeps_the_unit_on_the_axis(tdir):
+    deck = Deck(slides=[bar(unit="A&B<", series=[{"name": "2025", "values": [1, 2, 3]},
+                                                 {"name": "2026", "values": [2, 3, 4]}])])
+    chart = chart_of(export(tdir, deck).slides[0])
+    assert chart.value_axis.has_title and chart.value_axis.axis_title.text_frame.text == "A&B<"
+
+
+def test_line_kind_draws_lines(tdir):
+    chart = chart_of(export(tdir, Deck(slides=[bar(kind="line")])).slides[0])
+    assert chart.chart_type == XL_CHART_TYPE.LINE_MARKERS
+
+
+def test_dual_chart_two_charts_with_captions(tdir):
+    side = {"labels": ["Q1", "Q2"], "series": [{"name": "Ряд", "values": [1, 2]}]}
+    deck = Deck(slides=[{"type": "dual-chart", "title": "Т",
+                         "left": side | {"caption": "Динамика & <рост>"},
+                         "right": side | {"caption": "", "kind": "bar", "unit": "%"}}])
+    slide = export(tdir, deck).slides[0]
+    frames = sorted((sh for sh in slide.shapes if sh.has_chart), key=lambda sh: sh.left)
+    assert len(frames) == 2 and all(inside(f) for f in frames)
+    assert frames[0].chart.chart_type == XL_CHART_TYPE.LINE_MARKERS
+    assert frames[1].chart.chart_type == XL_CHART_TYPE.COLUMN_CLUSTERED
+    assert frames[1].left - (frames[0].left + frames[0].width) == 20 * MM
+    [cap] = boxes(slide)  # у правой подписи нет — полосы под неё тоже
+    assert cap.text_frame.text == "Динамика & <рост>" and cap.top < frames[0].top
+    assert frames[1].top == int(ZONE[1] * MM)  # без подписи график начинается с верха зоны
+
+
+def test_chart_with_zero_values_exports(tdir):
+    deck = Deck(slides=[bar(labels=["A"], series=[{"name": "x", "values": [0]}])])
+    assert len(export(tdir, deck).slides) == 1
 
 
 def test_line_series_cycle_the_palette(tdir):
@@ -195,8 +248,7 @@ def test_line_series_cycle_the_palette(tdir):
 
 
 def test_chart_takes_the_zone_or_shares_it_with_bullets(tdir):
-    base = {"type": "bar-chart", "title": "Итоги", "data": [{"label": "A", "value": 1}]}
-    alone, shared = export(tdir, Deck(slides=[base, base | {"bullets": ["Рост"]}])).slides
+    alone, shared = export(tdir, Deck(slides=[bar(), bar(bullets=["Рост"])])).slides
     frame = next(sh for sh in alone.shapes if sh.has_chart)
     assert (frame.left, frame.top, frame.width, frame.height) == tuple(int(v * MM) for v in ZONE)
     [text] = boxes(shared)
@@ -208,6 +260,204 @@ def test_chart_takes_the_zone_or_shares_it_with_bullets(tdir):
     assert bullet._p.xpath("./a:pPr/a:buChar[@char='•']")
 
 
+def test_agenda_is_a_numbered_list_in_the_zone(tdir):
+    deck = Deck(slides=[{"type": "agenda", "items": ["Итоги", "Планы", "Риски"]}])
+    slide = export(tdir, deck).slides[0]
+    assert by_idx(slide)[0] == ["Повестка"]
+    [box] = boxes(slide)
+    assert inside(box) and [p.text for p in box.text_frame.paragraphs] == ["Итоги", "Планы", "Риски"]
+    for p in box.text_frame.paragraphs:
+        assert p._p.xpath("./a:pPr/a:buAutoNum[@type='arabicPeriod']")
+        assert p._p.xpath("./a:pPr/a:buClr/a:srgbClr[@val='FFDE00']")
+
+
+def test_text_bullets_take_the_whole_zone(tdir):
+    slide = export(tdir, Deck(slides=[{"type": "text", "title": "Т", "bullets": ["раз", "два"]}])).slides[0]
+    [box] = boxes(slide)
+    assert (box.left, box.top, box.width, box.height) == tuple(int(v * MM) for v in ZONE)
+    assert [p.text for p in box.text_frame.paragraphs] == ["раз", "два"]
+
+
+def test_columns_split_the_zone(tdir):
+    deck = Deck(slides=[{"type": "columns", "title": "Т", "blocks": [
+        {"heading": "Первый", "text": "раз"}, {"heading": "", "text": "два"}, {"heading": "Третий", "text": "три"}]}])
+    cols = sorted(boxes(export(tdir, deck).slides[0]), key=lambda b: b.left)
+    assert len(cols) == 3 and all(inside(b) for b in cols)
+    assert cols[1].left - (cols[0].left + cols[0].width) == 10 * MM  # gap
+    first = cols[0].text_frame.paragraphs
+    assert [p.text for p in first] == ["Первый", "раз"] and first[0].runs[0].font.bold
+    assert [p.text for p in cols[1].text_frame.paragraphs] == ["два"]  # пустой заголовок не печатается
+
+
+def test_columns_on_placeholders_drop_the_spare_one(tmp_path):
+    tdir = make_pptx_template(tmp_path, mapping_edit=lambda m: m["slides"]["columns"].update(
+        layout="Comparison", ph={"title": 0, "blocks": [1, 2, 3]}, body=None, gap=None))
+    deck = Deck(slides=[{"type": "columns", "title": "Т", "blocks": [
+        {"heading": "Первый", "text": "раз"}, {"heading": "Второй", "text": "два"}]}])
+    slide = export(tdir, deck).slides[0]
+    got = by_idx(slide)
+    assert got[1] == ["Первый", "раз"] and got[2] == ["Второй", "два"]
+    assert 3 not in got and 4 not in got  # третьего блока нет, idx 4 не сопоставлен
+    assert boxes(slide) == []
+
+
+def test_comparison_two_columns_with_headings(tdir):
+    deck = Deck(slides=[{"type": "comparison", "title": "Т",
+                         "left": {"heading": "Было", "bullets": ["а"]},
+                         "right": {"heading": "Стало", "bullets": ["б", "в"]}}])
+    left, right = sorted(boxes(export(tdir, deck).slides[0]), key=lambda b: b.left)
+    assert [p.text for p in left.text_frame.paragraphs] == ["Было", "а"]
+    assert [p.text for p in right.text_frame.paragraphs] == ["Стало", "б", "в"]
+    assert left.width == right.width and right.left - (left.left + left.width) == 20 * MM
+
+
+def test_quote_is_centered_on_a_layout_without_title(tdir):
+    deck = Deck(slides=[{"type": "quote", "text": "Мысль", "author": "Автор"}])
+    slide = export(tdir, deck).slides[0]
+    [box] = boxes(slide)
+    assert inside(box) and box.text_frame.vertical_anchor == MSO_ANCHOR.MIDDLE
+    quote, author = box.text_frame.paragraphs
+    assert quote.alignment == PP_ALIGN.CENTER and quote.runs[0].font.size == Pt(40)
+    assert author.text == "Автор" and str(author.runs[0].font.color.rgb) == "666666"
+    assert set(by_idx(slide)) <= {12}  # кроме номера слайда заполнителей нет
+
+
+def test_text_fields_drop_control_characters(tdir):
+    deck = Deck(slides=[
+        {"type": "columns", "title": "Т", "blocks": [{"text": "раз\x1f\nдва"}, {"text": "три"}]},
+        {"type": "quote", "text": "мысль\x0b"},
+    ])
+    prs = export(tdir, deck)
+    xml = b"".join(etree.tostring(s._element) for s in prs.slides)
+    assert b"_x001F_" not in xml and b"_x000B_" not in xml
+    first = sorted(boxes(prs.slides[0]), key=lambda b: b.left)[0]
+    assert first._element.xpath(".//a:br")  # \n — разрыв строки внутри абзаца
+
+
+def test_metrics_columns_with_trend_colors(tdir):
+    deck = Deck(slides=[{"type": "metrics", "title": "Т", "items": [
+        {"value": "12,5 млн", "label": "выручка", "delta": "+12 %"},
+        {"value": "3,4 %", "label": "доля", "delta": "–1 п. п."},
+        {"value": "17", "label": "проектов\x1f"}]}])
+    cols = sorted(boxes(export(tdir, deck).slides[0]), key=lambda b: b.left)
+    assert len(cols) == 3 and all(inside(b) for b in cols)
+    value, label, delta = cols[0].text_frame.paragraphs
+    assert value.text == "12,5 млн" and value.runs[0].font.size == Pt(60) and value.runs[0].font.bold
+    assert label.text == "выручка" and str(label.runs[0].font.color.rgb) == "666666"
+    assert str(delta.runs[0].font.color.rgb) == "1E1E1E"  # рост — trend.up
+    assert str(cols[1].text_frame.paragraphs[2].runs[0].font.color.rgb) == "FF2E00"  # «–» — падение
+    assert [p.text for p in cols[2].text_frame.paragraphs] == ["17", "проектов"]  # без delta — два абзаца
+
+
+def table_of(slide):
+    return next(sh for sh in slide.shapes if sh.has_table)
+
+
+def test_table_is_native_with_header_stripes_and_numeric_alignment(tdir):
+    deck = Deck(slides=[{"type": "table", "title": "Т", "header": ["Регион", "Выручка"],
+                         "rows": [["Центр", "42"], ["Север\nи запад", "17,5"], ["Юг", "28 %"]]}])
+    frame = table_of(export(tdir, deck).slides[0])
+    tbl = frame.table
+    assert (len(tbl.rows), len(tbl.columns)) == (4, 2) and inside(frame)
+    head = tbl.cell(0, 0)
+    assert head.text == "Регион" and head.text_frame.paragraphs[0].runs[0].font.bold
+    assert head._tc.xpath("./a:tcPr/a:solidFill/a:srgbClr[@val='DDDDDD']")
+    assert tbl.cell(2, 0)._tc.xpath("./a:tcPr/a:solidFill/a:srgbClr[@val='F8F8F8']")  # вторая строка данных
+    assert tbl.cell(1, 0)._tc.xpath("./a:tcPr/a:noFill")
+    assert tbl.cell(1, 1).text_frame.paragraphs[0].alignment == PP_ALIGN.RIGHT  # числа вправо
+    assert tbl.cell(1, 0).text_frame.paragraphs[0].alignment != PP_ALIGN.RIGHT
+    assert tbl.cell(2, 0)._tc.xpath(".//a:br")
+    # линии раньше заливки — иначе PowerPoint предложит восстановить файл
+    tags = [etree.QName(e).localname for e in tbl.cell(0, 0)._tc.tcPr]
+    assert tags[:4] == ["lnL", "lnR", "lnT", "lnB"] and tags[4] == "solidFill"
+    assert not frame._element.xpath(".//a:tblPr[@bandRow='1' or @firstRow='1']")
+
+
+def test_table_at_model_limits_lays_its_grid_inside_the_zone(tdir):
+    """Номинальная сетка — в зоне. Перенос текста PowerPoint считает сам и может
+    нарастить строки; это проверяется ручной приёмкой таблицы на пределах."""
+    from typst_deck.model import CELL_MAX
+
+    cell = "x" * CELL_MAX
+    deck = Deck(slides=[{"type": "table", "title": "Т", "header": ["h" * 40] * 6, "rows": [[cell] * 6] * 8}])
+    frame = table_of(export(tdir, deck).slides[0])
+    assert inside(frame) and frame.height <= int(ZONE[3] * MM)
+
+
+def test_short_table_rows_are_capped(tdir):
+    deck = Deck(slides=[{"type": "table", "title": "Т", "header": ["a", "b"], "rows": [["1", "2"]]}])
+    frame = table_of(export(tdir, deck).slides[0])
+    assert frame.table.rows[0].height == 15 * MM and frame.height == 30 * MM
+
+
+def gallery(n, caption="Подпись"):
+    return Deck(slides=[{"type": "gallery", "title": "Г",
+                         "images": [{"image": f"p{i}.png", "caption": caption} for i in range(n)]}])
+
+
+@pytest.mark.parametrize("n,rows,cols", [(2, 1, 2), (3, 1, 3), (4, 2, 2)])
+def test_gallery_grid(tdir, tmp_path, n, rows, cols):
+    (tmp_path / "a").mkdir()
+    for i in range(n):
+        png(tmp_path / "a" / f"p{i}.png")
+    slide = export(tdir, gallery(n), assets=tmp_path / "a").slides[0]
+    pics = pictures(slide)
+    assert len(pics) == n and all(inside(p) for p in pics)
+    assert len({p.left for p in pics}) == cols and len({p.top for p in pics}) == rows
+    assert all(abs(p.width / p.height - 2) < 0.01 for p in pics)
+    caps = boxes(slide)
+    assert len(caps) == n and all(inside(b) for b in caps)
+
+
+def test_gallery_missing_picture_keeps_the_grid(tdir, tmp_path):
+    (tmp_path / "a").mkdir()
+    png(tmp_path / "a" / "p0.png")
+    warnings: list[str] = []
+    slide = export(tdir, gallery(2), assets=tmp_path / "a", warnings=warnings).slides[0]
+    [pic] = pictures(slide)
+    assert pic.left < int((ZONE[0] + ZONE[2] / 2) * MM)  # осталась левая, правая клетка пустая
+    assert any("p1.png не найдена" in w for w in warnings)
+
+
+def video_deck(**kw):
+    return Deck(slides=[{"type": "video", "title": "В", "caption": "Ролик", "url": "https://example.com/v"} | kw])
+
+
+def test_video_poster_carries_the_link(tdir, tmp_path):
+    (tmp_path / "a").mkdir()
+    png(tmp_path / "a" / "cover.png", 320, 240)
+    url = "https://vk.com/video-1_2?list=a&t=3"
+    slide = export(tdir, video_deck(url=url, poster="cover.png"), assets=tmp_path / "a").slides[0]
+    [pic] = pictures(slide)
+    assert pic.click_action.hyperlink.address == url and abs(pic.width / pic.height - 4 / 3) < 0.01
+    [cap] = boxes(slide)
+    assert cap.text_frame.text == "Ролик" and cap.top >= pic.top + pic.height
+
+
+def test_missing_poster_falls_back_to_the_placeholder(tdir, tmp_path):
+    warnings: list[str] = []
+    slide = export(tdir, video_deck(poster="gone.png"), assets=tmp_path, warnings=warnings).slides[0]
+    [pic] = pictures(slide)
+    assert abs(pic.width / pic.height - 16 / 9) < 0.01 and any("gone.png не найдена" in w for w in warnings)
+
+
+def test_link_video_is_a_poster_with_a_hyperlink(tdir):
+    url = "https://example.com/watch?v=1&t=2"
+    slide = export(tdir, video_deck(url=url)).slides[0]
+    [pic] = pictures(slide)
+    assert pic.click_action.hyperlink.address == url
+    assert abs(pic.width / pic.height - 16 / 9) < 0.01  # заглушка 16:9
+    assert not [sh for sh in slide.shapes if sh.shape_type == MSO_SHAPE_TYPE.MEDIA]
+
+
+def test_placeholder_poster_takes_the_mapping_colors(tdir):
+    slide = export(tdir, video_deck(url="https://example.com")).slides[0]
+    [pic] = pictures(slide)
+    with Image.open(io.BytesIO(pic.image.blob)) as im:
+        assert im.getpixel((5, 5)) == (0xDD, 0xDD, 0xDD)  # table.header_fill
+        assert im.getpixel((im.width // 2, im.height // 2)) == (0xFF, 0xDE, 0x00)  # «▶» — text.bullet
+
+
 def test_notes_go_to_speaker_notes(tdir):
     deck = Deck(slides=[{"type": "final", "notes": "Сказать спасибо"}])
     assert export(tdir, deck).slides[0].notes_slide.notes_text_frame.text == "Сказать спасибо"
@@ -215,7 +465,7 @@ def test_notes_go_to_speaker_notes(tdir):
 
 def test_control_characters_dropped_and_newline_breaks_the_line(tdir):
     deck = Deck(slides=[{"type": "title", "title": "\x0bИтоги\x1f", "subtitle": "первая\nвторая"},
-                        {"type": "image", "title": "T", "bullets": ["тезис\nпродолжение"]}])
+                        {"type": "text", "title": "T", "bullets": ["тезис\nпродолжение"]}])
     prs = export(tdir, deck)
     assert by_idx(prs.slides[0])[0] == ["Итоги"]
     sub = next(sh for sh in prs.slides[0].placeholders if sh.placeholder_format.idx == 1)
@@ -225,11 +475,12 @@ def test_control_characters_dropped_and_newline_breaks_the_line(tdir):
 
 
 def test_text_at_global_limits_exports(tdir):
-    title = {"title": {"max": 120, "lines": 2}}
-    bullets = {"image": 6, "bar-chart": 4, "chart": 4}
-    deck = Deck(slides=[filled_slide(t, title | ({"bullets": {"count": bullets[t], "max": 200}}
-                                                 if t in bullets else {})) for t in SLIDE_TYPES])
-    assert len(export(tdir, deck).slides) == len(SLIDE_TYPES)
+    """Каждый тип на глобальных пределах модели собирается и открывается заново."""
+    from typst_deck.model import SLIDE_TYPES as ALL
+
+    deck = Deck(slides=[filled_slide(t, {"title": {"max": 120, "lines": 2}} if t != "quote" else {})
+                        for t in ALL])
+    assert len(export(tdir, deck).slides) == len(ALL)
 
 
 def latin_faces(element) -> list[str]:
@@ -307,7 +558,51 @@ BROKEN = {
     "image-body-too-short": (lambda m: m["slides"]["image"].update(body=[20, 80, 600, 10]),
         "высота 10 мм не больше полосы подписи 15 мм"),
     "zone-outside": (lambda m: m["slides"]["chart"].update(body=[600, 80, 200, 260]), "выходит за слайд"),
+    "missing-new-type": (lambda m: m["slides"].pop("metrics"), "нет типа metrics"),
+    "old-type": (lambda m: m["slides"].update({"bar-chart": m["slides"]["chart"]}), "bar-chart"),
+    "no-trend": (lambda m: m.pop("trend"), "trend"),
+    "no-table-style": (lambda m: m.pop("table"), "table"),
+    "no-quote-size": (lambda m: m["text"].pop("quote"), "text.quote"),
+    "quote-title-ph": (lambda m: m["slides"]["quote"]["ph"].update(title=0), "title не кладётся"),
+    "no-gap": (lambda m: m["slides"]["metrics"].pop("gap"), "slides.metrics: нет gap"),
+    "blocks-not-columns": (lambda m: m["slides"]["text"]["ph"].update(blocks=[1, 2, 3]), "blocks не кладётся"),
+    "blocks-too-few": (lambda m: m["slides"]["columns"].update(
+        layout="Comparison", ph={"title": 0, "blocks": [1, 2]}, body=None, gap=None),
+        "нужно не меньше 3 заполнителей"),
+    "blocks-and-zone": (lambda m: m["slides"]["columns"].update(
+        layout="Comparison", ph={"title": 0, "blocks": [1, 2, 3]}),
+        "slides.columns: body у этого типа не бывает"),
+    "blocks-idx-missing": (lambda m: m["slides"]["columns"].update(
+        layout="Comparison", ph={"title": 0, "blocks": [1, 2, 9]}, body=None, gap=None),
+        "нет заполнителя idx 9"),
+    "title-as-list": (lambda m: m["slides"]["text"]["ph"].update(title=[0]), "ожидается один idx"),
+    "blocks-over-title": (lambda m: m["slides"]["columns"].update(
+        layout="Comparison", ph={"title": 0, "blocks": [0, 1, 2]}, body=None, gap=None),
+        "blocks: idx 0 занят другим полем"),
+    "blocks-duplicate": (lambda m: m["slides"]["columns"].update(
+        layout="Comparison", ph={"title": 0, "blocks": [1, 1, 2]}, body=None, gap=None),
+        "blocks: idx 1 повторяется"),
+    "gallery-no-room-across": (lambda m: m["slides"]["gallery"].update(gap=400),
+        "slides.gallery: при gap 400 мм на колонку не остаётся места"),
+    "metrics-no-room-across": (lambda m: m["slides"]["metrics"].update(gap=400),
+        "slides.metrics: при gap 400 мм на колонку не остаётся места"),
+    "columns-no-room-across": (lambda m: m["slides"]["columns"].update(gap=400), "slides.columns: при gap 400"),
+    "comparison-no-room-across": (lambda m: m["slides"]["comparison"].update(gap=700),
+        "slides.comparison: при gap 700"),
+    "dual-chart-no-room-across": (lambda m: m["slides"]["dual-chart"].update(gap=700),
+        "slides.dual-chart: при gap 700"),
+    "gallery-too-short": (lambda m: m["slides"]["gallery"].update(body=[20, 80, 600, 30]),
+        "slides.gallery.body: высота 30 мм мала для двух рядов с подписями"),
+    "video-too-short": (lambda m: m["slides"]["video"].update(body=[20, 80, 600, 15]),
+        "slides.video.body: высота 15 мм не больше полосы подписи 15 мм"),
+    "dual-chart-too-short": (lambda m: m["slides"]["dual-chart"].update(body=[20, 80, 600, 12]),
+        "slides.dual-chart.body: высота 12 мм не больше полосы подписи 15 мм"),
 }
+
+
+def test_columns_on_placeholders_is_a_good_mapping(tmp_path):
+    check(make_pptx_template(tmp_path, mapping_edit=lambda m: m["slides"]["columns"].update(
+        layout="Comparison", ph={"title": 0, "blocks": [1, 2, 3]}, body=None, gap=None)))
 
 
 @pytest.mark.parametrize("case", BROKEN)

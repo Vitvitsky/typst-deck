@@ -1,5 +1,6 @@
 """Колоды: создание, чтение сборки, ручные правки, версии, чат."""
 import json
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request, UploadFile
@@ -161,6 +162,24 @@ async def asset(deck_id: str, file: UploadFile, s: DeckService = Depends(svc)):
         return {"asset_id": s.store.add_asset(deck_id, file.filename or "", data)}
     except ValueError as e:
         raise ApiError(422, "validation", str(e))
+
+
+ASSET_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".svg": "image/svg+xml"}
+# Картинки колоды открываются с того же адреса, что интерфейс: загруженный SVG со
+# скриптом не должен в нём выполниться. sandbox запрещает скрипты и формы, nosniff —
+# угадывание типа браузером. Имя ассета случайное и не переиспользуется — кэш вечный.
+ASSET_HEADERS = {"Content-Security-Policy": "sandbox", "X-Content-Type-Options": "nosniff",
+                 "Cache-Control": "private, max-age=31536000, immutable"}
+
+
+@router.get("/{deck_id}/assets/{asset}")
+async def get_asset(deck_id: str, asset: str, s: DeckService = Depends(svc)):
+    s.load(deck_id)
+    p = s.store.asset_path(deck_id, asset)
+    if Path(asset).name != asset or asset.startswith(".") or not p.is_file():
+        raise not_found("файл")
+    return FileResponse(p, media_type=ASSET_MIME.get(p.suffix.lower(), "application/octet-stream"),
+                        headers=ASSET_HEADERS)
 
 
 @router.get("/{deck_id}/versions")

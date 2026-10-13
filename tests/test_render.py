@@ -10,17 +10,128 @@ from typst_deck.render import CompileError, inside_template, render_typ, rasteri
 GOLDEN = Path(__file__).parent / "golden" / "full.typ"
 
 
+def rich_deck():
+    from typst_deck.model import Deck
+
+    return Deck(id="d1", title="Т", slides=[
+        {"id": "s1", "type": "agenda", "items": ["Раз", "Два", "Три"]},
+        {"id": "s2", "type": "columns", "title": "Блоки",
+         "blocks": [{"heading": "Первый", "text": "текст"}, {"text": "второй"}]},
+        {"id": "s3", "type": "comparison", "title": "Было и стало",
+         "left": {"heading": "Было", "bullets": ["раз"]}, "right": {"heading": "Стало", "bullets": ["два"]}},
+        {"id": "s4", "type": "quote", "text": "Мысль", "author": "Автор"},
+        {"id": "s5", "type": "metrics", "title": "Числа",
+         "items": [{"value": "12,5 млн", "label": "выручка", "delta": "+12 %"},
+                   {"value": "3", "label": "провалы", "delta": "-2 п. п."},
+                   {"value": "7", "label": "ровно"}]},
+        {"id": "s6", "type": "table", "title": "Таблица",
+         "header": ["Регион", "Выручка"], "rows": [["Центр", "42"], ["Север", "17,5 %"]]},
+        {"id": "s7", "type": "gallery", "title": "Галерея",
+         "images": [{"image": "a1.png", "caption": "раз"}, {"image": "a2.png"}]},
+        {"id": "s8", "type": "video", "title": "Ролик", "url": "https://youtu.be/x", "poster": "a1.png"},
+        {"id": "s9", "type": "video", "title": "Ссылка", "url": "https://v/1"},
+        {"id": "s10", "type": "dual-chart", "title": "Два графика",
+         "left": {"caption": "Прибыль", "kind": "line", "labels": ["Q1", "Q2"], "series": [{"name": "Выручка", "values": [10, 20]}]},
+         "right": {"caption": "Затраты", "kind": "bar", "labels": ["Q1", "Q2"], "series": [{"name": "Расходы", "values": [5, 8]}]}},
+    ])
+
+
+def test_new_types_are_rendered_once_each():
+    typ, _ = render_typ(rich_deck(), assets={"a1.png", "a2.png"})
+    for name in ("agenda", "columns", "comparison", "quote", "metrics", "table", "gallery", "video", "dual-chart"):
+        assert f"\n#slide-{name}(" in typ
+    assert typ.count("\n#slide-") == 10
+
+
+def test_composite_fields_are_marked_by_top_level_name():
+    typ, _ = render_typ(rich_deck(), assets={"a1.png", "a2.png"})
+    assert 'field("s2", "blocks", "Первый")' in typ and 'field("s2", "blocks", "текст")' in typ
+    assert 'field("s3", "left", "Было")' in typ and 'field("s3", "right", "два")' in typ
+    assert 'field("s5", "items", "12,5 млн")' in typ
+    assert 'field("s6", "header", "Регион")' in typ and 'field("s6", "rows", "42")' in typ
+    assert 'field("s4", "text", "Мысль")' in typ and 'field("s4", "author", "Автор")' in typ
+    assert 'field("s10", "left", "Прибыль")' in typ and 'field("s10", "right", "Затраты")' in typ
+
+
+def test_dual_chart_has_both_sides_with_kinds():
+    """Двойной график содержит обе стороны с их видами и маркированными подписями."""
+    typ, _ = render_typ(rich_deck(), assets={"a1.png", "a2.png"})
+    assert "\n#slide-dual-chart(" in typ
+    assert 'kind: "line"' in typ and 'kind: "bar"' in typ
+    assert 'field("s10", "left", "Прибыль")' in typ and 'field("s10", "right", "Затраты")' in typ
+
+
+def test_product_computes_trend_and_numeric():
+    typ, _ = render_typ(rich_deck(), assets={"a1.png", "a2.png"})
+    assert 'trend: "up"' in typ and 'trend: "down"' in typ and "trend: none" in typ
+    assert "numeric: (false, true,)" in typ, "числовая колонка выравнивается вправо"
+
+
+def test_numeric_detects_only_true_numbers_not_dates():
+    """Числовая колонка не путается с датой: «2026-09-13» числом не считается."""
+    from typst_deck.render import numeric_columns as _numeric
+
+    # Столбцы (текст, число): текстовой не должно быть числовыми, числовой - должно
+    header = ["Регион", "Выручка"]
+
+    # Текстовые значения: некоторые выглядят как цифры, но не числа
+    text_rows = [["Центр", "Q1"], ["Север", "н/д"], ["Восток", "2026-09-13"]]
+    assert _numeric(header, text_rows) == [False, False]
+
+    # Числовые значения
+    numeric_rows = [["Центр", "17,5 %"], ["Север", "-2"], ["Восток", "1 200"], ["Запад", "42 млн"]]
+    assert _numeric(header, numeric_rows) == [False, True]
+
+
+def test_trend_sees_every_kind_of_dash():
+    """delta пишет модель, по-русски: тире перед числом бывает любым из четырёх."""
+    from typst_deck.render import _trend
+
+    assert _trend("+12 %") == '"up"'
+    for minus in ("-12 %", "−12 %", "–12 %", "—3"):
+        assert _trend(minus) == '"down"', minus
+    assert _trend("0") == "none" and _trend("") == "none"
+
+
+def test_numeric_is_symmetric_about_stray_whitespace():
+    """Случайный пробел слева тихо отнимал выключку вправо у всей колонки."""
+    from typst_deck.render import numeric_columns as _numeric
+
+    assert _numeric(["Регион", "Выручка"], [["Центр", "  42"], ["Север", "17,5 %\n"]]) == [False, True]
+    assert _numeric(["Регион", "Дата"], [["Центр", " 2026-09-13 "]]) == [False, False]
+    assert _numeric(["Регион", "Доля"], [["Центр", " -1 п. п. "]]) == [False, False]
+
+
+def test_video_link_goes_to_the_template_as_is():
+    deck = Deck(id="d1", slides=[{"type": "video", "title": "Ролик", "url": "https://rutube.ru/video/abc/?t=1&x=2"}])
+    typ, warnings = render_typ(deck, assets=set())
+    assert 'url: "https://rutube.ru/video/abc/?t=1&x=2"' in typ and warnings == []
+
+
+def test_video_link_and_poster():
+    typ, warnings = render_typ(rich_deck(), assets={"a1.png", "a2.png"})
+    assert 'url: "https://youtu.be/x"' in typ and 'url: "https://v/1"' in typ
+    assert 'field("s8", "poster", image("/assets/a1.png"' in typ
+    assert warnings == []
+    typ, warnings = render_typ(rich_deck(), assets={"a2.png"})
+    assert any("обложка a1.png не найдена" in w for w in warnings)
+
+
+def test_gallery_skips_missing_pictures_with_a_warning():
+    typ, warnings = render_typ(rich_deck(), assets={"a1.png"})
+    assert typ.count('field("s7", "images"') >= 1
+    assert any("a2.png" in w for w in warnings)
+
+
 def full_deck():
     return Deck(id="deck00000001", title="Полная", slides=[
         {"id": "s000001", "type": "title", "title": "Итоги", "subtitle": "Q3 2026"},
         {"id": "s000002", "type": "section", "title": "Финансы"},
         {"id": "s000003", "type": "image", "title": "Рост", "bullets": ["Первый", "Второй"],
          "image": "a000001.png", "image_size": "large", "caption": "Рис. 1"},
-        {"id": "s000004", "type": "bar-chart", "title": "Регионы", "unit": "млн",
-         "data": [{"label": "Центр", "value": 42}, {"label": "Север", "value": 17.5}]},
-        {"id": "s000005", "type": "chart", "title": "Динамика", "labels": ["Q1", "Q2"],
+        {"id": "s000004", "type": "chart", "title": "Динамика", "kind": "line", "labels": ["Q1", "Q2"],
          "series": [{"name": "Выручка", "values": [1, 2]}], "bullets": ["Рост"]},
-        {"id": "s000006", "type": "final", "contact": "team@corp"},
+        {"id": "s000005", "type": "final", "contact": "team@corp"},
     ])
 
 
@@ -59,7 +170,7 @@ def test_empty_fields_are_none():
 
 def test_one_call_per_slide():
     typ, _ = render_typ(full_deck(), assets={"a000001.png"})
-    assert typ.count("\n#slide-") == 6
+    assert typ.count("\n#slide-") == 5
 
 
 def test_page_size_reads_viewbox(tmp_path):
@@ -261,3 +372,11 @@ def test_rasterize_broken_svg_is_a_compile_error(tmp_path):
     svg.write_text("<svg")
     with pytest.raises(CompileError):
         rasterize_svg(svg, tmp_path / "bad.png")
+
+
+def test_trend_and_numeric_are_shared_with_pptx():
+    from typst_deck.render import numeric_columns, trend_of
+
+    assert [trend_of(d) for d in ("+12 %", "-3", "−1", "–2", "—4", "17", "")] == [
+        "up", "down", "down", "down", "down", None, None]
+    assert numeric_columns(["Регион", "Выручка"], [["Центр", "1 200,5"], ["Юг", "28 %"]]) == [False, True]

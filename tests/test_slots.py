@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from typst_deck.model import Deck
@@ -88,10 +90,10 @@ def test_lines_reaches_the_model_as_description():
 
 
 def test_count_on_list_of_objects():
-    """У data и series ограничивается только число элементов: их элементы не строки."""
-    s = apply_to_schema(clamp({"bar-chart": {"data": {"count": 6, "max": 30}}}))
-    assert _props(s, "bar-chart")["data"]["maxItems"] == 6
-    assert "maxLength" not in _props(s, "bar-chart")["data"].get("items", {})
+    """У series ограничивается только число элементов: его элементы — объекты, не строки."""
+    s = apply_to_schema(clamp({"chart": {"series": {"count": 3, "max": 30}}}))
+    assert _props(s, "chart")["series"]["maxItems"] == 3
+    assert "maxLength" not in _props(s, "chart")["series"].get("items", {})
 
 
 TIGHT = clamp({"title": {"title": {"max": 60}, "subtitle": {"lines": 2, "max": 90}},
@@ -119,7 +121,7 @@ def test_check_counts_explicit_line_breaks():
 
 
 def test_check_counts_list_items_and_longest_item():
-    s = _slide(type="image", title="A", bullets=["раз", "два", "три", "Э" * 50])
+    s = _slide(type="image", title="A", image="a.png", bullets=["раз", "два", "три", "Э" * 50])
     msgs = check_slide(s, TIGHT, n=2, template_name="Тесный")
     assert msgs == [
         "слайд 2, поле «Тезисы»: 4 элемента при пределе 3 в шаблоне «Тесный»",
@@ -177,13 +179,12 @@ def test_plural_of_measures(n, word):
 
 def test_clamp_drops_keys_that_do_not_apply_to_the_field(caplog):
     """Таблица §3: lines — только строковым полям, count — только спискам, max —
-    строковым полям и спискам строк. image — str | None (anyOf), это не строковое поле."""
+    строковым полям и спискам строк. kind — enum (bar/line), выбор, а не текст."""
     with caplog.at_level("WARNING", logger="typst_deck.slots"):
-        out = clamp({"image": {"bullets": {"lines": 1, "max": 90}, "image": {"max": 5},
-                               "title": {"count": 2, "max": 70}},
-                     "bar-chart": {"data": {"max": 30, "count": 6}}}, "tight")
+        out = clamp({"image": {"bullets": {"lines": 1, "max": 90}, "title": {"count": 2, "max": 70}},
+                     "chart": {"kind": {"max": 5}, "series": {"max": 30, "count": 3}}}, "tight")
     assert out == {"image": {"bullets": {"max": 90}, "title": {"max": 70}},
-                   "bar-chart": {"data": {"count": 6}}}
+                   "chart": {"series": {"count": 3}}}
     messages = [r.getMessage() for r in caplog.records]
     assert len(messages) == 4
     assert all("не применим" in m for m in messages), messages
@@ -191,19 +192,31 @@ def test_clamp_drops_keys_that_do_not_apply_to_the_field(caplog):
     assert any("image.title.count" in m and "спискам" in m for m in messages)
 
 
-# Минимальный правильный слайд каждого типа; в списках по два элемента, чтобы
-# count: 1 нарушался уже ими, а подписи chart держали длину рядов.
+# Минимальный правильный слайд каждого типа (все 15 из DEFS); в списках объектов
+# и строк — минимум по два элемента, чтобы count: 1 нарушался уже ими, а не
+# приходилось искажать форму значения в _violating (у списка списков — table.rows —
+# ещё и потому, что заглушка ["а", "б"] там была бы списком строк, а не строк-ячеек).
 BASE = {
     "title": {"type": "title", "title": "А"},
+    "agenda": {"type": "agenda", "items": ["а", "б", "в"]},
     "section": {"type": "section", "title": "А"},
-    "image": {"type": "image", "title": "А"},
-    "bar-chart": {"type": "bar-chart", "title": "А",
-                  "data": [{"label": "а", "value": 1}, {"label": "б", "value": 2}]},
+    "text": {"type": "text", "title": "А", "bullets": ["а"]},
+    "image": {"type": "image", "title": "А", "image": "a.png"},
+    "columns": {"type": "columns", "title": "А", "blocks": [{"text": "а"}, {"text": "б"}]},
+    "comparison": {"type": "comparison", "title": "А",
+                   "left": {"bullets": ["а"]}, "right": {"bullets": ["б"]}},
+    "quote": {"type": "quote", "text": "А"},
     "chart": {"type": "chart", "title": "А", "labels": ["а", "б"],
               "series": [{"name": "р", "values": [1, 2]}, {"name": "с", "values": [3, 4]}]},
+    "dual-chart": {"type": "dual-chart", "title": "А",
+                   "left": {"labels": ["а", "б"], "series": [{"name": "р", "values": [1, 2]}]},
+                   "right": {"labels": ["а", "б"], "series": [{"name": "с", "values": [3, 4]}]}},
+    "metrics": {"type": "metrics", "title": "А", "items": [{"value": "1"}, {"value": "2"}]},
+    "table": {"type": "table", "title": "А", "header": ["а", "б"], "rows": [["1", "2"], ["3", "4"]]},
+    "gallery": {"type": "gallery", "title": "А", "images": [{"image": "a.png"}, {"image": "b.png"}]},
+    "video": {"type": "video", "title": "А", "url": "https://a"},
     "final": {"type": "final"},
 }
-
 
 def _violating(prop: dict, key: str, base: object) -> object:
     """Значение поля, нарушающее предел 1 по этому ключу."""
@@ -214,6 +227,19 @@ def _violating(prop: dict, key: str, base: object) -> object:
     if prop.get("type") == "array":  # max у списка строк — длина элемента
         return ["аб"] * max(len(base or []), 1)
     return "аб"
+
+
+def _shaped(stype: str, field: str, value: object) -> object:
+    """Нарушающее значение, оставшееся тем, чем поле назвалось.
+
+    У video модель требует не только длину: картинку в poster и ссылку
+    http(s) в url — значение уходит в PDF живой ссылкой. Предел здесь
+    нарушает содержимое, а форма остаётся правильной, иначе слайд не собрать
+    вовсе и проверять будет нечего.
+    """
+    if stype != "video" or not isinstance(value, str):
+        return value
+    return {"poster": value + ".png", "url": "http://" + value}.get(field, value)
 
 
 def test_every_key_clamp_keeps_reaches_the_schema_and_is_enforced():
@@ -227,8 +253,7 @@ def test_every_key_clamp_keeps_reaches_the_schema_and_is_enforced():
     # сверка с таблицей §3 на известных полях, чтобы тест не прошёл на пустом объявлении
     assert ("image", "bullets", "max") in combos and ("image", "bullets", "count") in combos
     assert ("title", "subtitle", "lines") in combos and ("chart", "series", "count") in combos
-    for gone in [("image", "bullets", "lines"), ("image", "image", "max"),
-                 ("image", "title", "count"), ("bar-chart", "data", "max")]:
+    for gone in [("image", "bullets", "lines"), ("image", "title", "count"), ("chart", "series", "max")]:
         assert gone not in combos, gone
 
     schema_props = {t: _props(apply_to_schema(declared), t) for t in DEFS}
@@ -242,7 +267,12 @@ def test_every_key_clamp_keeps_reaches_the_schema_and_is_enforced():
         else:
             assert "одна строка" in prop.get("description", ""), (stype, field, key)
 
-        value = _violating(DEFS[stype]["properties"][field], key, BASE[stype].get(field))
+        if (stype, field, key) == ("video", "url", "lines"):
+            # перевод строки в ссылке отвергает сама модель (VIDEO_URL) раньше слотов:
+            # схема предел показывает, а нарушить его допустимым значением нельзя
+            continue
+        value = _shaped(stype, field,
+                        _violating(DEFS[stype]["properties"][field], key, BASE[stype].get(field)))
         slide = Deck(slides=[BASE[stype] | {field: value}]).slides[0]
         msgs = check_slide(slide, {stype: {field: {key: 1}}}, n=1, template_name="Т")
         assert len(msgs) == 1 and f"«{FIELD_RU.get(field, field)}»" in msgs[0], (stype, field, key, msgs)
@@ -250,15 +280,15 @@ def test_every_key_clamp_keeps_reaches_the_schema_and_is_enforced():
 
 def test_list_max_lets_an_untouched_old_long_bullet_through():
     """Старый длинный тезис, которого правка не касалась, не мешает править слайд."""
-    was = _slide(type="image", title="A", bullets=["Э" * 100])
-    now = _slide(type="image", title="Б", bullets=["Э" * 100, "короткий"])
+    was = _slide(type="image", title="A", image="a.png", bullets=["Э" * 100])
+    now = _slide(type="image", title="Б", image="a.png", bullets=["Э" * 100, "короткий"])
     assert check_slide(now, TIGHT, n=1, template_name="Тесный", before=was) == []
 
 
 def test_list_max_rejects_a_new_long_bullet_next_to_an_old_one():
     """Самый длинный элемент не вырос, но поле стало хуже: длинных тезисов стало два."""
-    was = _slide(type="image", title="A", bullets=["Э" * 100])
-    now = _slide(type="image", title="A", bullets=["Э" * 100, "Ю" * 90])
+    was = _slide(type="image", title="A", image="a.png", bullets=["Э" * 100])
+    now = _slide(type="image", title="A", image="a.png", bullets=["Э" * 100, "Ю" * 90])
     assert check_slide(now, TIGHT, n=1, template_name="Тесный", before=was) == [
         "слайд 1, поле «Тезисы»: 90 знаков при пределе 40 в шаблоне «Тесный»"
     ]
@@ -267,15 +297,15 @@ def test_list_max_rejects_a_new_long_bullet_next_to_an_old_one():
 def test_list_max_lets_a_shortened_old_bullet_through():
     """Спека §8: правка, уменьшающая нарушение, проходит и у элемента списка —
     старый тезис в 100 знаков, сокращённый до 60 при пределе 40, не отвергается."""
-    was = _slide(type="image", title="A", bullets=["Э" * 100])
-    now = _slide(type="image", title="A", bullets=["Э" * 60])
+    was = _slide(type="image", title="A", image="a.png", bullets=["Э" * 100])
+    now = _slide(type="image", title="A", image="a.png", bullets=["Э" * 60])
     assert check_slide(now, TIGHT, n=1, template_name="Тесный", before=was) == []
 
 
 def test_list_max_rejects_shortening_one_bullet_to_make_room_for_another():
     """Сокращённый старый тезис не даёт права добавить рядом ещё один длинный."""
-    was = _slide(type="image", title="A", bullets=["Э" * 100])
-    now = _slide(type="image", title="A", bullets=["Э" * 60, "Ю" * 50])
+    was = _slide(type="image", title="A", image="a.png", bullets=["Э" * 100])
+    now = _slide(type="image", title="A", image="a.png", bullets=["Э" * 60, "Ю" * 50])
     assert check_slide(now, TIGHT, n=1, template_name="Тесный", before=was) == [
         "слайд 1, поле «Тезисы»: 50 знаков при пределе 40 в шаблоне «Тесный»"
     ]
@@ -287,6 +317,161 @@ def test_first_few_keeps_five_and_counts_the_rest():
     assert first_few([]) == []
     assert first_few(list("абвгд")) == list("абвгд")
     assert first_few(list("абвгдеж")) == list("абвгд") + ["и ещё 2"]
+
+
+def test_dotted_path_is_clamped_and_applied():
+    """Путь «поле.подполе» спускается в items массива объектов (columns.blocks)
+    или прямо во вложенный объект (comparison.left)."""
+    declared = clamp({"columns": {"blocks": {"count": 3}, "blocks.text": {"max": 180}},
+                      "comparison": {"left.bullets": {"count": 3, "max": 100}}}, "t")
+    assert declared["columns"]["blocks.text"] == {"max": 180}
+    assert declared["comparison"]["left.bullets"] == {"count": 3, "max": 100}
+    schema = apply_to_schema(declared)
+    text = json.dumps(schema, ensure_ascii=False)
+    assert '"maxLength": 180' in text and '"maxItems": 3' in text
+
+
+def test_dotted_path_beyond_global_ceiling_is_clamped(caplog):
+    declared = clamp({"columns": {"blocks.text": {"max": 400}}}, "t")
+    assert declared["columns"]["blocks.text"] == {"max": 300}
+    assert "больше глобального предела" in caplog.text
+
+
+def test_unknown_dotted_path_is_dropped(caplog):
+    assert clamp({"columns": {"blocks.nope": {"max": 10}}}, "t") == {}
+    assert "нет поля" in caplog.text
+
+
+def test_check_slide_sees_nested_fields():
+    from typst_deck.model import SlideAdapter
+
+    declared = clamp({"columns": {"blocks.text": {"max": 10}}}, "t")
+    slide = SlideAdapter.validate_python({"type": "columns", "title": "x", "blocks": [
+        {"text": "коротко"}, {"text": "очень длинный текст блока"}]})
+    bad = check_slide(slide, declared, n=1, template_name="Т")
+    assert bad and "Блоки текста" in bad[0]
+
+
+def test_narrowing_one_side_does_not_leak_into_the_shared_ref_sibling():
+    """comparison.left и .right делят один и тот же $ref («#/$defs/Side»): узкий
+    предел слева не должен просочиться ни в схему справа, ни в общий $defs, ни
+    в проверку (check_slide не объявлял предел для right — и не должен его там
+    находить)."""
+    from typst_deck.model import SlideAdapter
+
+    declared = clamp({"comparison": {"left.bullets": {"max": 30, "count": 2}}}, "t")
+    schema = apply_to_schema(declared)
+    left = _props(schema, "comparison")["left"]
+    right = _props(schema, "comparison")["right"]
+    assert left["properties"]["bullets"]["items"]["maxLength"] == 30
+    assert left["properties"]["bullets"]["maxItems"] == 2
+    # right не сужался — его $ref остаётся нетронутым, а общий $defs.Side держит предел модели
+    assert right == {"$ref": "#/$defs/Side"}
+    assert schema["$defs"]["Side"]["properties"]["bullets"]["items"]["maxLength"] == 120
+    assert schema["$defs"]["Side"]["properties"]["bullets"]["maxItems"] == 5
+
+    slide = SlideAdapter.validate_python({"type": "comparison", "title": "x",
+        "left": {"bullets": ["а" * 40]}, "right": {"bullets": ["б" * 40]}})
+    msgs = check_slide(slide, declared, n=1, template_name="Т")
+    assert any("Левая колонка" in m for m in msgs)
+    assert not any("Правая колонка" in m for m in msgs)
+
+
+def test_narrowing_dual_chart_side_does_not_leak_into_the_other_side():
+    """dual-chart.left и .right делят один и тот же $ref («#/$defs/ChartSide»),
+    тот же риск, что и у comparison."""
+    from typst_deck.model import SlideAdapter
+
+    declared = clamp({"dual-chart": {"left.series": {"count": 1}}}, "t")
+    schema = apply_to_schema(declared)
+    left = _props(schema, "dual-chart")["left"]
+    right = _props(schema, "dual-chart")["right"]
+    assert left["properties"]["series"]["maxItems"] == 1
+    assert right == {"$ref": "#/$defs/ChartSide"}
+    assert schema["$defs"]["ChartSide"]["properties"]["series"]["maxItems"] == 3
+
+    slide = SlideAdapter.validate_python({"type": "dual-chart", "title": "x",
+        "left": {"labels": ["а", "б"],
+                 "series": [{"name": "р", "values": [1, 2]}, {"name": "с", "values": [3, 4]}]},
+        "right": {"labels": ["а", "б"],
+                  "series": [{"name": "т", "values": [5, 6]}, {"name": "у", "values": [7, 8]}]}})
+    msgs = check_slide(slide, declared, n=1, template_name="Т")
+    assert any("Левая колонка" in m for m in msgs)
+    assert not any("Правая колонка" in m for m in msgs)
+
+
+def test_lines_on_a_path_through_an_array_is_checked_for_every_item():
+    """measure_slots.py выдаёт lines для каждой пробы без ключа item, то есть проба
+    по точке порождала предел, который доходил до модели и не проверялся никогда."""
+    from typst_deck.model import SlideAdapter
+
+    declared = clamp({"columns": {"blocks.text": {"lines": 1}}}, "т")
+    assert declared == {"columns": {"blocks.text": {"lines": 1}}}
+    slide = SlideAdapter.validate_python({"type": "columns", "title": "x", "blocks": [
+        {"text": "одна строка"}, {"text": "a\nb\nc\nd"}]})
+    assert check_slide(slide, declared, n=1, template_name="Т") == [
+        "слайд 1, поле «Блоки текста → Текст», элемент 2: 4 строки при пределе 1 в шаблоне «Т»"
+    ]
+
+
+def test_lines_through_an_array_lets_an_unchanged_old_item_through():
+    """Та же скидка «не стало хуже», что и у прочих пределов (спека §8), — поэлементно."""
+    from typst_deck.model import SlideAdapter
+
+    declared = clamp({"columns": {"blocks.text": {"lines": 1}}}, "т")
+
+    def slide(text):
+        return SlideAdapter.validate_python({"type": "columns", "title": "x", "blocks": [
+            {"text": "ок"}, {"text": text}]})
+
+    was = slide("а\nб\nв")
+    assert check_slide(slide("а\nб\nв"), declared, n=1, template_name="Т", before=was) == []
+    assert check_slide(slide("а\nб\nв\nг"), declared, n=1, template_name="Т", before=was) == [
+        "слайд 1, поле «Блоки текста → Текст», элемент 2: 4 строки при пределе 1 в шаблоне «Т»"
+    ]
+
+
+def test_nested_violation_is_named_by_the_whole_path():
+    """«Блоки текста» подписывали и blocks, и blocks.text: пользователь не понимал,
+    какой из двух объявленных пределов он задел."""
+    from typst_deck.model import SlideAdapter
+
+    declared = clamp({"columns": {"blocks": {"count": 3}, "blocks.text": {"max": 180}}}, "т")
+    slide = SlideAdapter.validate_python({"type": "columns", "title": "x", "blocks": [
+        {"text": "коротко"}, {"text": "Э" * 200}]})
+    assert check_slide(slide, declared, n=1, template_name="Т") == [
+        "слайд 1, поле «Блоки текста → Текст»: 200 знаков при пределе 180 в шаблоне «Т»"
+    ]
+
+
+def test_field_names_have_no_dead_entries():
+    """«data» осталась от снятого bar-chart: имя поля, которого нет ни у одного типа."""
+    from typst_deck.slots import DEFS, FIELD_RU
+
+    known = {f for d in DEFS.values() for f in d.get("properties", {})}
+    assert set(FIELD_RU) <= known, sorted(set(FIELD_RU) - known)
+
+
+def test_slot_ceiling_follows_the_measured_model_limits():
+    """Пределы, суженные замером (chart.bullets, ячейка таблицы), обязаны стать
+    потолком и для объявления шаблона, и для схемы, которую читает модель."""
+    from typst_deck.slots import DEFS
+
+    assert DEFS["chart"]["properties"]["bullets"]["items"]["maxLength"] == 120
+    assert DEFS["table"]["properties"]["rows"]["items"]["items"]["maxLength"] == 38
+    assert clamp({"chart": {"bullets": {"max": 200}}}, "т") == {"chart": {"bullets": {"max": 120}}}
+
+
+def test_table_rows_cell_path_is_rejected():
+    """table.rows — список списков строк без $ref: у ячейки нет подполя «cell»."""
+    assert clamp({"table": {"rows.cell": {"max": 10}}}, "t") == {}
+
+
+def test_double_dotted_path_is_rejected():
+    """Путь режется только на первой точке: «поле.подполе.ещё» ищет свойство
+    с буквальным именем «подполе.ещё», которого не бывает, — не выдумывает
+    рекурсивный спуск на второй уровень."""
+    assert clamp({"columns": {"blocks.text.extra": {"max": 10}}}, "t") == {}
 
 
 def test_field_names_match_the_interface():

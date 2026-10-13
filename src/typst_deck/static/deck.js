@@ -1,17 +1,31 @@
-import { api, upload, waitJob, sleep, el, toast, armConfirm, TYPE_RU, FIELD_RU, SIZE_RU, fileKind, errorText, fmtDate, fmtElapsed, fmtTokens } from "./api.js";
+import { api, upload, waitJob, sleep, el, toast, armConfirm, TYPE_RU, FIELD_RU, SIZE_RU, KIND_RU, fileKind, errorText, fmtDate, fmtElapsed, fmtTokens } from "./api.js";
 import { mountShell } from "./shell.js";
+import { PANEL, compositeEditor, changed, embedUrl, linkError } from "./editors.js";
 
 const deckId = location.pathname.split("/").filter(Boolean).pop();
 mountShell({ active: "decks", deckId, defaultCollapsed: true });
 const $ = (id) => document.getElementById(id);
 const NEW_SLIDE = {
   title: { type: "title", title: "Заголовок", subtitle: "" },
+  agenda: { type: "agenda", title: "Повестка", items: ["Первый раздел", "Второй раздел", "Третий раздел"] },
   section: { type: "section", title: "Раздел" },
-  image: { type: "image", title: "Заголовок", bullets: ["Первый тезис"] },
-  "bar-chart": { type: "bar-chart", title: "Диаграмма", data: [{ label: "A", value: 1 }, { label: "B", value: 2 }] },
-  chart: { type: "chart", title: "График", labels: ["Q1", "Q2", "Q3"], series: [{ name: "Ряд", values: [1, 2, 3] }] },
+  text: { type: "text", title: "Заголовок", bullets: ["Первый тезис"] },
+  image: { type: "image", title: "Заголовок", bullets: ["Первый тезис"], image: null },
+  columns: { type: "columns", title: "Блоки", blocks: [{ heading: "Первый", text: "Текст" }, { heading: "Второй", text: "Текст" }] },
+  comparison: { type: "comparison", title: "Было и стало", left: { heading: "Было", bullets: ["Пункт"] }, right: { heading: "Стало", bullets: ["Пункт"] } },
+  quote: { type: "quote", text: "Одна мысль", author: "" },
+  chart: { type: "chart", title: "График", kind: "line", labels: ["Q1", "Q2", "Q3"], series: [{ name: "Ряд", values: [1, 2, 3] }] },
+  "dual-chart": { type: "dual-chart", title: "Два графика", left: { caption: "Слева", kind: "line", labels: ["Q1", "Q2"], series: [{ name: "Ряд", values: [1, 2] }] }, right: { caption: "Справа", kind: "bar", labels: ["A", "B"], series: [{ name: "Ряд", values: [2, 1] }] } },
+  metrics: { type: "metrics", title: "Числа", items: [{ value: "12,5 млн", label: "выручка", delta: "+12 %" }, { value: "17", label: "проектов", delta: "" }] },
+  table: { type: "table", title: "Таблица", header: ["Регион", "Выручка"], rows: [["Центр", "42"], ["Север", "17"]] },
+  gallery: { type: "gallery", title: "Галерея", images: [{ image: null, caption: "" }, { image: null, caption: "" }] },
+  video: { type: "video", title: "Видео", url: "", caption: "" },  // ссылку спрашивает askVideoLink
   final: { type: "final" },
 };
+// image и gallery не проходят валидацию без картинки (модель требует её), поэтому
+// «Добавить слайд» для них сперва открывает выбор файла и грузит его в assets —
+// иначе POST .../slides ответил бы 422; для остальных типов заготовка идёт как есть
+const NEEDS_PICTURE = { image: { multiple: false }, gallery: { multiple: true } };
 const CHIPS = ["Сократи текст на всех слайдах", "Добавь слайд с выводами в конце", "Разбей на разделы", "Сделай заголовки короче"];
 const PHASES = [["reading", "Читаю материалы"], ["model", "Собираю структуру"], ["render", "Верстаю слайды"]];
 
@@ -217,13 +231,26 @@ function renderStage() {
         onclick: (e) => { e.stopPropagation(); select(slide.id); openFieldEditor(slide, n, p.field, e.currentTarget, page); },
       }));
     }
-    const page = el("div", { class: "page" }, el("img", { src: `api/decks/${deckId}/slides/${n}.svg?v=${slideVer(i)}`, alt: `Слайд ${n}` }), overlay);
+    const play = slide.type === "video" && slide.url
+      ? el("button", { type: "button", class: "play", onclick: (e) => { e.stopPropagation(); playVideo(slide); } }, "▶ Смотреть")
+      : null;
+    const page = el("div", { class: "page" }, el("img", { src: `api/decks/${deckId}/slides/${n}.svg?v=${slideVer(i)}`, alt: `Слайд ${n}` }), overlay, play);
     parts.push(el("div", { class: `pagewrap${state.selected === slide.id ? " selected" : ""}`, id: `slide-${slide.id}` },
       el("div", { class: "pagebar" }, el("span", { class: "n num" }, n), el("span", {}, TYPE_RU[slide.type]),
         el("span", { class: "hint" }, "Нажмите на текст, чтобы изменить")),
       page));
   });
   inner.replaceChildren(...parts);
+}
+
+// YouTube, Rutube, VK Видео, Vimeo играют здесь же; остальное — в новой вкладке (ADR 0022)
+function playVideo(slide) {
+  const src = embedUrl(slide.url);
+  if (!src) { window.open(slide.url, "_blank", "noopener"); return; }
+  const dlg = $("player"), frame = $("player-frame");
+  frame.src = src;
+  dlg.showModal();
+  dlg.addEventListener("close", () => { frame.src = "about:blank"; }, { once: true });
 }
 
 // ============ лента миниатюр
@@ -257,12 +284,15 @@ function select(id) {
 
 // ============ правки
 async function applyResult(promise) {
+  // пока правка шла, человек мог перейти на другой слайд и начать печатать: его
+  // форму уже нарисовал select() — перерисовка стёрла бы ввод
+  const sel = state.selected;
   const info = await promise;
   state.info = info;
   state.page = info.page || state.page;
   if (info.has_build) state.positions = await api(`api/decks/${deckId}/positions`);
   renderTopbar(); renderStage(); renderRail();
-  if (state.tab === "slide") renderProps();
+  if (state.tab === "slide" && state.selected === sel) renderProps();
   return info;
 }
 const patchSlide = (id, patch) => api(`api/decks/${deckId}/slides/${id}`, { method: "PATCH", json: { patch } });
@@ -276,14 +306,87 @@ async function removeSlide(slide) {
   } catch (e) { toast(e.message, { error: true }); }
 }
 $("add").addEventListener("click", async () => {
-  const slide = JSON.parse(JSON.stringify(NEW_SLIDE[$("addtype").value]));
+  const type = $("addtype").value;
   try {
+    const slide = type in NEEDS_PICTURE ? await pickPictureSlide(type)
+      : type === "video" ? await videoSlide() : JSON.parse(JSON.stringify(NEW_SLIDE[type]));
+    if (!slide) return;  // выбор файла или ввод ссылки отменили
     const info = await applyResult(api(`api/decks/${deckId}/slides`, { json: { slide, after: state.selected } }));
     const idx = state.selected ? info.deck.slides.findIndex((s) => s.id === state.selected) + 1 : info.deck.slides.length - 1;
     const added = info.deck.slides[idx];
     if (added) { select(added.id); const t = $(`slide-${added.id}`); if (t) t.scrollIntoView({ behavior: "smooth", block: "start" }); switchTab("slide"); }
   } catch (e) { toast(e.message, { error: true }); }
 });
+
+// видео без ссылки модель не примет (ADR 0022): ссылка спрашивается до создания
+// слайда прямо под меню «Добавить», а не заготовкой-пустышкой
+function askVideoLink() {
+  return new Promise((resolve) => {
+    const box = document.querySelector(".rail-add");
+    const keep = [...box.childNodes];
+    const input = el("input", { type: "url", placeholder: "https://… — YouTube, Rutube, VK Видео, Яндекс Диск…", "aria-label": "Ссылка на видео" });
+    const err = el("div", { class: "error small" });
+    const done = (v) => { box.replaceChildren(...keep); resolve(v); };
+    const ok = () => { const e = linkError(input.value); if (e) { err.textContent = e; input.focus(); return; } done(input.value.trim()); };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); ok(); }
+      if (e.key === "Escape") done(null);
+    });
+    box.replaceChildren(input, err, el("div", { class: "row" },
+      el("button", { type: "button", class: "sm primary", onclick: ok }, "Добавить видео"),
+      el("button", { type: "button", class: "sm", onclick: () => done(null) }, "Отмена")));
+    input.focus();
+  });
+}
+
+async function videoSlide() {
+  const url = await askVideoLink();
+  return url ? { ...NEW_SLIDE.video, url } : null;
+}
+
+// GallerySlide.images ограничен 2–4 картинками (model.py) — проверяем ДО
+// загрузки: иначе пять файлов уйдут на сервер через /assets, а слайд всё равно
+// отклонится, оставив пять осиротевших ассетов без слайда
+function pickError(files, type) {
+  if (type !== "gallery") return null;
+  if (files.length < 2) return "Для галереи нужно минимум две картинки";
+  if (files.length > 4) return "Для галереи можно выбрать не больше четырёх картинок";
+  return null;
+}
+
+// картинка(и) для image/gallery: файловый диалог → загрузка в assets → заготовка
+// слайда с уже полученными asset_id; null — пользователь ничего не выбрал (отмена
+// диалога или неподходящее число файлов). Input временно вставляется в DOM
+// скрытым — детач в некоторых браузерах ненадёжно доставляет события input;
+// убирается в cleanup независимо от исхода.
+function pickPictureSlide(type) {
+  return new Promise((resolve, reject) => {
+    const input = el("input", { type: "file", accept: ".png,.jpg,.jpeg,.svg", multiple: NEEDS_PICTURE[type].multiple, hidden: true });
+    document.body.append(input);
+    const cleanup = () => { input.removeEventListener("change", onChange); input.removeEventListener("cancel", onCancel); input.remove(); };
+    // «Отмена» в диалоге выбора файла НЕ порождает change (это отдельное
+    // событие cancel) — без этого обработчика промис никогда бы не разрешился
+    const onCancel = () => { cleanup(); resolve(null); };
+    const onChange = async () => {
+      cleanup();
+      const files = [...input.files];
+      if (!files.length) { resolve(null); return; }
+      const err = pickError(files, type);
+      if (err) { toast(err, { error: true }); resolve(null); return; }
+      try {
+        const ids = [];
+        for (const f of files) ids.push((await upload(`api/decks/${deckId}/assets`, f)).asset_id);
+        const slide = JSON.parse(JSON.stringify(NEW_SLIDE[type]));
+        if (type === "image") slide.image = ids[0];
+        else slide.images = ids.map((id) => ({ image: id, caption: "" }));
+        resolve(slide);
+      } catch (e) { reject(e); }
+    };
+    input.addEventListener("change", onChange);
+    input.addEventListener("cancel", onCancel);
+    input.click();
+  });
+}
 
 // --- редактор поля на слайде
 function closeEditors() {
@@ -292,7 +395,15 @@ function closeEditors() {
 }
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeEditors(); });
 
+// редакторы составных полей (static/editors.js): загрузка картинок и адреса превью
+const editorCtx = {
+  uploadAsset: async (file) => (await upload(`api/decks/${deckId}/assets`, file)).asset_id,
+  assetUrl: (id) => `api/decks/${deckId}/assets/${encodeURIComponent(id)}`,
+};
+
 function openFieldEditor(slide, n, field, zone, page) {
+  // составные поля и поля, связанные с ними (подписи графика сверяются с рядами), — во вкладке «Слайд»
+  if ((PANEL[slide.type] || []).includes(field)) { switchTab("slide", field); return; }
   closeEditors();
   const patch = {};
   const form = el("form", { class: "editor" }, el("div", { class: "head" }, el("span", {}, `${FIELD_RU[field] || field} · слайд ${n}`), el("span", { class: "tiny" }, "Enter — сохранить, Esc — отмена")));
@@ -327,6 +438,8 @@ function fieldControl(slide, field) {
   if (field === "bullets" || field === "labels") return el("textarea", { name: field, placeholder: "По одному на строку" }, (v || []).join("\n"));
   if (field === "notes") return el("textarea", { name: field }, v || "");
   if (field === "image_size") return el("select", { name: field }, ...Object.entries(SIZE_RU).map(([k, l]) => el("option", { value: k, selected: v === k }, l)));
+  // вид графика — выбор, а не поле ввода: модель принимает только bar и line
+  if (field === "kind") return el("select", { name: field }, ...Object.entries(KIND_RU).map(([k, l]) => el("option", { value: k, selected: v === k }, l)));
   return el("input", { type: "text", name: field, value: v ?? "" });
 }
 function readControl(field, control) {
@@ -351,16 +464,16 @@ function imageControls(slide, patch) {
 }
 
 // ============ панель свойств выбранного слайда
-function switchTab(tab) {
+function switchTab(tab, focus) {
   state.tab = tab;
   document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   $("tab-chat").classList.toggle("hidden", tab !== "chat");
   $("tab-slide").classList.toggle("hidden", tab !== "slide");
-  if (tab === "slide") renderProps();
+  if (tab === "slide") renderProps(focus);
 }
 document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => switchTab(b.dataset.tab)));
 
-function renderProps() {
+function renderProps(focus) {
   const box = $("props");
   const slide = state.info && state.info.deck.slides.find((s) => s.id === state.selected);
   if (!slide) { box.replaceChildren(el("p", { class: "muted small" }, "Выберите слайд: нажмите на него в центре или в ленте слева.")); return; }
@@ -368,15 +481,26 @@ function renderProps() {
   const patch = {};
   const form = el("form", {}, el("h3", {}, `Слайд ${n} · ${TYPE_RU[slide.type]}`), el("div", { class: "sub" }, "Меняются только поля — оформление задаёт шаблон колоды (его можно сменить вверху)."));
   const readers = [];
-  const ORDER = ["title", "subtitle", "author", "department", "bullets", "caption", "contact", "unit", "labels", "series", "data", "notes"];
+  // text выше author: у цитаты нет заголовка, и панель читалась «Автор, потом Текст»
+  const ORDER = ["title", "subtitle", "text", "author", "department", "items", "bullets", "blocks",
+    "left", "right", "header", "rows", "images", "kind", "labels", "series", "unit",
+    "caption", "contact", "url", "poster", "video", "notes"];
   const keys = Object.keys(slide).filter((k) => !["id", "type", "image", "image_size"].includes(k))
     .sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
+  const group = PANEL[slide.type] || [];
+  let groupDone = false;
   for (const k of keys) {
-    if (k === "data") { const t = dataTable(slide.data); form.append(el("label", { class: "f" }, FIELD_RU.data), t); readers.push(() => { const v = t.read(); if (JSON.stringify(v) !== JSON.stringify(slide.data)) patch.data = v; }); continue; }
-    if (k === "series") { const t = seriesTable(slide.series, slide.labels.length); form.append(el("label", { class: "f" }, FIELD_RU.series), t); readers.push(() => { const v = t.read(); if (JSON.stringify(v) !== JSON.stringify(slide.series)) patch.series = v; }); continue; }
+    if (group.includes(k)) {
+      if (groupDone) continue;
+      groupDone = true;
+      const ed = compositeEditor(slide, editorCtx);
+      form.append(el("div", { class: "f-group", "data-fields": group.join(" ") }, ed.node));
+      readers.push(async () => Object.assign(patch, changed(await ed.read(), slide)));
+      continue;
+    }
     const c = fieldControl(slide, k);
     form.append(el("label", { class: "f" }, FIELD_RU[k] || k), c);
-    readers.push(() => { const v = readControl(k, c); if (JSON.stringify(v) !== JSON.stringify(slide[k])) patch[k] = v; });
+    readers.push(async () => { const v = readControl(k, c); if (JSON.stringify(v) !== JSON.stringify(slide[k])) patch[k] = v; });
   }
   let img = null;
   if ("image" in slide) { img = imageControls(slide, patch); form.append(el("label", { class: "f" }, FIELD_RU.image), img); }
@@ -386,44 +510,27 @@ function renderProps() {
   form.append(err, el("div", { class: "actions" }, del, el("span", { class: "sp" }), el("button", { class: "primary", type: "submit" }, "Сохранить")));
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
+    const save = form.querySelector("button[type=submit]");
+    save.disabled = true;  // двойной щелчок не шлёт правку дважды и не грузит файлы галереи повторно
     try {
-      readers.forEach((r) => r());
+      for (const r of readers) await r();
       if (img) await img.collect();
       if (!Object.keys(patch).length) { toast("Изменений нет"); return; }
       await applyResult(patchSlide(slide.id, patch));
       toast("Сохранено");
     } catch (ex) { err.textContent = ex.message; }
+    finally { save.disabled = false; }
   });
   box.replaceChildren(form);
-}
-
-function dataTable(rows) {
-  const box = el("div", { class: "grid-table" });
-  const render = (items) => {
-    box.replaceChildren(...items.map((r, i) => el("div", { class: "r" },
-      el("input", { type: "text", value: r.label, placeholder: "Подпись", "aria-label": "Подпись" }),
-      el("input", { type: "number", step: "any", value: r.value, "aria-label": "Значение" }),
-      el("button", { type: "button", class: "quiet icon sm", title: "Убрать строку", onclick: () => { const cur = box.read(); cur.splice(i, 1); render(cur); } }, "✕"))),
-      el("button", { type: "button", class: "sm", onclick: () => render([...box.read(), { label: "", value: 0 }]) }, "＋ Строка"));
-  };
-  box.read = () => [...box.querySelectorAll(".r")].map((r) => { const [l, v] = r.querySelectorAll("input"); return { label: l.value, value: Number(v.value) }; });
-  render(rows);
-  return box;
-}
-
-function seriesTable(series, nLabels) {
-  const box = el("div", { class: "grid-table" });
-  const render = (items) => {
-    box.replaceChildren(...items.map((s, i) => el("div", { class: "r series" },
-      el("div", {},
-        el("input", { type: "text", value: s.name, placeholder: "Название ряда", "aria-label": "Название ряда" }),
-        el("input", { type: "text", value: s.values.join(", "), placeholder: `${nLabels} значений через запятую`, "aria-label": "Значения", style: "margin-top:4px" })),
-      el("button", { type: "button", class: "quiet icon sm", title: "Убрать ряд", onclick: () => { const cur = box.read(); cur.splice(i, 1); render(cur); } }, "✕"))),
-      el("button", { type: "button", class: "sm", onclick: () => render([...box.read(), { name: "", values: Array(nLabels).fill(0) }]) }, "＋ Ряд"));
-  };
-  box.read = () => [...box.querySelectorAll(".r")].map((r) => { const [n, v] = r.querySelectorAll("input"); return { name: n.value, values: v.value.split(/[,;\s]+/).filter(Boolean).map(Number) }; });
-  render(series);
-  return box;
+  if (focus) {
+    const target = box.querySelector(`[data-fields~="${focus}"]`);
+    if (target) {
+      target.scrollIntoView({ block: "start" });
+      target.classList.add("flash");
+      const first = target.querySelector("input, textarea, select");
+      if (first) first.focus();
+    }
+  }
 }
 
 // ============ чат

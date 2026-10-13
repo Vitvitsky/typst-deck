@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from .api.common import ApiError, not_found
 from .config import Settings
+from .contract import write_sample_assets
 from .extract import UnsupportedFile, extract
 from .jobs import Job, JobConflict, JobRegistry
 from .llm.agent import run_agent
@@ -121,6 +122,7 @@ class DeckService:
         async with self._preview_locks.setdefault(t.id, asyncio.Lock()):
             if not stamp.exists() or stamp.read_text() != str(newest):
                 out.mkdir(parents=True, exist_ok=True)
+                write_sample_assets(out)  # образцу нужны его картинки рядом
                 try:
                     await asyncio.to_thread(
                         compile_deck, SAMPLE_DECK.model_copy(update={"template": t.id}), out, tdir,
