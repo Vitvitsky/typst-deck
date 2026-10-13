@@ -1,6 +1,6 @@
 import { api, upload, waitJob, sleep, el, toast, armConfirm, TYPE_RU, FIELD_RU, SIZE_RU, KIND_RU, fileKind, errorText, fmtDate, fmtElapsed, fmtTokens } from "./api.js";
 import { mountShell } from "./shell.js";
-import { PANEL, compositeEditor, changed } from "./editors.js";
+import { PANEL, compositeEditor, changed, embedUrl } from "./editors.js";
 
 const deckId = location.pathname.split("/").filter(Boolean).pop();
 mountShell({ active: "decks", deckId, defaultCollapsed: true });
@@ -231,13 +231,26 @@ function renderStage() {
         onclick: (e) => { e.stopPropagation(); select(slide.id); openFieldEditor(slide, n, p.field, e.currentTarget, page); },
       }));
     }
-    const page = el("div", { class: "page" }, el("img", { src: `api/decks/${deckId}/slides/${n}.svg?v=${slideVer(i)}`, alt: `Слайд ${n}` }), overlay);
+    const play = slide.type === "video" && slide.url
+      ? el("button", { type: "button", class: "play", onclick: (e) => { e.stopPropagation(); playVideo(slide); } }, "▶ Смотреть")
+      : null;
+    const page = el("div", { class: "page" }, el("img", { src: `api/decks/${deckId}/slides/${n}.svg?v=${slideVer(i)}`, alt: `Слайд ${n}` }), overlay, play);
     parts.push(el("div", { class: `pagewrap${state.selected === slide.id ? " selected" : ""}`, id: `slide-${slide.id}` },
       el("div", { class: "pagebar" }, el("span", { class: "n num" }, n), el("span", {}, TYPE_RU[slide.type]),
         el("span", { class: "hint" }, "Нажмите на текст, чтобы изменить")),
       page));
   });
   inner.replaceChildren(...parts);
+}
+
+// YouTube, Rutube, VK Видео, Vimeo играют здесь же; остальное — в новой вкладке (ADR 0022)
+function playVideo(slide) {
+  const src = embedUrl(slide.url);
+  if (!src) { window.open(slide.url, "_blank", "noopener"); return; }
+  const dlg = $("player"), frame = $("player-frame");
+  frame.src = src;
+  dlg.showModal();
+  dlg.addEventListener("close", () => { frame.src = "about:blank"; }, { once: true });
 }
 
 // ============ лента миниатюр

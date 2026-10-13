@@ -230,5 +230,47 @@ export function compositeEditor(slide, ctx) {
   }
 }
 
-export function galleryEditor() { return { node: el("p", { class: "muted small" }, "Картинки галереи меняются в следующем обновлении"), read: async () => ({}) }; }
-export function videoEditor() { return { node: el("p", { class: "muted small" }, "Видео меняется в следующем обновлении"), read: async () => ({}) }; }
+function filePick(accept, text, onFile) {
+  const input = el("input", { type: "file", accept, hidden: true });
+  input.addEventListener("change", () => { if (input.files[0]) onFile(input.files[0]); input.value = ""; });
+  return el("span", {}, input, el("button", { type: "button", class: "sm", onclick: () => input.click() }, text));
+}
+
+export function galleryEditor(slide, ctx) {
+  const box = el("div", { class: "gallery-edit" });
+  const items = slide.images.map((p) => ({ ...p }));
+  const draw = () => box.replaceChildren(
+    ...items.map((p, i) => el("div", { class: "r" },
+      el("img", { src: p.file ? URL.createObjectURL(p.file) : ctx.assetUrl(p.image), alt: "", class: "thumb" }),
+      el("input", { type: "text", value: p.caption, placeholder: "Подпись", "aria-label": `Подпись картинки ${i + 1}`,
+        oninput: (e) => { p.caption = e.target.value; } }),
+      el("button", { type: "button", class: "quiet icon sm", title: "Убрать картинку", onclick: () => { items.splice(i, 1); draw(); } }, "✕"))),
+    items.length < LIMITS.images[1] ? filePick(".png,.jpg,.jpeg,.svg", "＋ Картинка", (file) => { items.push({ file, caption: "" }); draw(); }) : null);
+  draw();
+  return { node: el("div", {}, label("Картинки галереи"), box), read: async () => {
+    // число — до загрузки: иначе файлы уйдут на сервер, а слайд всё равно отклонится
+    fail(countError(items.length, LIMITS.images, "Картинки галереи"));
+    const images = [];
+    for (const p of items) images.push({ image: p.file ? await ctx.uploadAsset(p.file) : p.image, caption: p.caption.trim() });
+    return { images };
+  } };
+}
+
+export function videoEditor(slide, ctx) {
+  const url = el("input", { type: "url", value: slide.url, placeholder: "https://youtu.be/… или ссылка на Яндекс Диск", "aria-label": "Ссылка на видео" });
+  const hint = el("div", { class: "muted tiny" }, "YouTube, Rutube, VK Видео, Vimeo смотрятся прямо здесь; другие ссылки откроются в новой вкладке");
+  const poster = el("input", { type: "file", accept: ".png,.jpg,.jpeg,.svg", "aria-label": "Обложка" });
+  const current = slide.poster ? el("img", { src: ctx.assetUrl(slide.poster), alt: "", class: "thumb" }) : null;
+  const dropPoster = el("input", { type: "checkbox" });
+  return {
+    node: el("div", {}, label("Ссылка на видео"), url, hint, label("Обложка"), current, poster,
+      slide.poster ? el("label", { class: "radio" }, dropPoster, "Убрать обложку — шаблон нарисует заглушку") : null),
+    read: async () => {
+      fail(linkError(url.value));
+      const out = { url: url.value.trim() };
+      if (dropPoster.checked) out.poster = "";
+      else if (poster.files[0]) out.poster = await ctx.uploadAsset(poster.files[0]);
+      return out;
+    },
+  };
+}

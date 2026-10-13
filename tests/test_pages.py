@@ -50,3 +50,13 @@ async def test_composite_fields_have_editors_not_raw_json(client):
     assert ed.status_code == 200
     for name in ("compositeEditor", "tableEditor", "comparisonEditor", "dualChartEditor", "metricsEditor", "blocksEditor"):
         assert f"function {name}" in ed.text, name
+
+
+async def test_video_player_is_wired(client):
+    html = (await client.get("/d/x")).text
+    assert 'id="player"' in html and 'id="player-frame"' in html
+    js = (await client.get("/static/deck.js")).text
+    assert "▶ Смотреть" in js and "embedUrl" in js
+    ed = (await client.get("/static/editors.js")).text
+    assert "function galleryEditor(slide" in ed and "function videoEditor(slide" in ed
+    assert "следующем обновлении" not in ed
