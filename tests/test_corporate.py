@@ -133,3 +133,28 @@ def test_corp_type_at_declared_limits_stays_on_the_page(t, stype, tmp_path):
     assert len(r.svgs) == 1
     worst = max((p["y"] + p["h"] for p in r.positions), default=0)
     assert worst <= PAGE_BOTTOM_MM * MM, f"{stype}: низ {worst / MM:.1f} мм при поле {PAGE_BOTTOM_MM} мм"
+
+
+DEGENERATE = {
+    "одна категория": {"labels": ["Центр"], "series": [{"name": "млн", "values": [42]}]},
+    "все нули": {"labels": ["A", "B", "C"], "series": [{"name": "x", "values": [0, 0, 0]}]},
+    "только минус": {"labels": ["A", "B"], "series": [{"name": "x", "values": [-3, -7]}]},
+    "три ряда": {"labels": ["A", "B", "C"],
+                 "series": [{"name": f"Ряд {k}", "values": [k, -k, 2 * k]} for k in range(1, 4)]},
+}
+
+
+@requires_typst
+@pytest.mark.parametrize("t", CORP_PARAMS)
+@pytest.mark.parametrize("kind", ["bar", "line"])
+@pytest.mark.parametrize("case", DEGENERATE)
+def test_corp_degenerate_charts_stay_on_one_page(t, kind, case, tmp_path):
+    data = DEGENERATE[case]
+    if kind == "line" and len(data["labels"]) < 2:
+        pytest.skip("линии нужны две точки — модель это не пропустит")
+    deck = Deck(slides=[{"type": "chart", "title": "Итоги", "kind": kind, "unit": "млн", **data},
+                        {"type": "dual-chart", "title": "Два", "left": {"kind": kind, **data},
+                         "right": {"kind": kind, **data}}])
+    r = compile_deck(deck, tmp_path, t.path, fonts_dir=t.fonts)
+    assert len(r.svgs) == 2
+    assert max(p["y"] + p["h"] for p in r.positions) <= PAGE_BOTTOM_MM * MM
