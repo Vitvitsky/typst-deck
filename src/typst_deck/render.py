@@ -80,6 +80,31 @@ def overflowing_slide(deck: Deck, positions: list[dict], pages: int | None = Non
     return None
 
 
+def link_url(url: str) -> str:
+    """Адрес ссылки для typst: «"», «<», «>» — процентами (RFC 3986: в адресе им
+    место только так). typst 0.15 пишет адрес в атрибут SVG без экранирования, и
+    кавычка оборвала бы атрибут; ссылка в PDF с %22 ведёт туда же. «&» так не
+    кодируется — это изменило бы адрес; его экранирует _fix_svg_links."""
+    return url.replace('"', "%22").replace("<", "%3C").replace(">", "%3E")
+
+
+# голый & в значении href: не начало сущности &amp; &lt; &#38; …
+_BARE_AMP = re.compile(r"&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)")
+_HREF = re.compile(r'((?:xlink:)?href=")([^"]*)(")')
+
+
+def _fix_svg_links(svg: Path) -> None:
+    """typst 0.15 не экранирует «&» в адресе ссылки SVG: «watch?v=…&t=260s» делал SVG
+    невалидным XML, и браузер не показывал слайд (2026-10-13). Чиним только значения
+    href — в остальном SVG typst текста нет (глифы — пути)."""
+    text = svg.read_text(encoding="utf-8")
+    if "href=" not in text or "&" not in text:
+        return
+    fixed = _HREF.sub(lambda m: m.group(1) + _BARE_AMP.sub("&amp;", m.group(2)) + m.group(3), text)
+    if fixed != text:
+        svg.write_text(fixed, encoding="utf-8")
+
+
 def typ_str(s: str) -> str:
     """Строковый литерал Typst: содержимое не трактуется как разметка."""
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
@@ -280,7 +305,7 @@ def render_typ(deck: Deck, assets: set[str]) -> tuple[str, list[str]]:
                 else:
                     warnings.append(f"слайд {n}: обложка {s.poster} не найдена")
             out.append(f"#slide-video(title: {_text(sid, 'title', s.title)}, poster: {poster}, "
-                       f"url: {_opt(s.url)}, caption: {_text(sid, 'caption', s.caption)})\n")
+                       f"url: {_opt(link_url(s.url))}, caption: {_text(sid, 'caption', s.caption)})\n")
         elif isinstance(s, FinalSlide):
             out.append(
                 f"#slide-final(title: {_text(sid, 'title', s.title)}, "
@@ -367,6 +392,8 @@ def compile_deck(
         raise CompileError("ошибка компиляции", r.stderr)
     svg_stderr = r.stderr
     svgs = sorted(tmp.glob("slide-*.svg"), key=lambda p: int(p.stem.split("-")[1]))
+    for p in svgs:
+        _fix_svg_links(p)
     # Позиции запрашиваются до проверки контракта: по ним видно, какой именно
     # слайд вылез за свою страницу, а без этого сообщение винит шаблон вслепую.
     r, timings["query_ms"] = _run(

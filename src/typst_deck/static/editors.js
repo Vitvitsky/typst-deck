@@ -96,27 +96,41 @@ export function linkError(url) {
 // попадает ничего, кроме адреса встраивания известной платформы (ADR 0022).
 // Хост сверяется целиком: youtube.com.evil.ru — не YouTube.
 const host = (u) => u.hostname.replace(/^(www\.|m\.)/, "");
+// Отметка времени ссылки в секундах: «260», «260s», «4m20s», «1h2m3s»; иначе null.
+// Без неё плеер начинал с нуля, хотя ссылка (и подпись слайда) — «с 4:20».
+export function startSeconds(t) {
+  const m = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/.exec(String(t || "").trim());
+  if (!m || !(m[1] || m[2] || m[3])) return null;
+  const sec = (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0);
+  return sec > 0 ? sec : null;
+}
+
 export function embedUrl(url) {
   let u;
   try { u = new URL(String(url).trim()); } catch { return null; }
   if (!/^https?:$/.test(u.protocol)) return null;
   const h = host(u), path = u.pathname;
+  const at = startSeconds(u.searchParams.get("t") || u.searchParams.get("start"));
+  const yt = (id) => `https://www.youtube-nocookie.com/embed/${id}${at ? `?start=${at}` : ""}`;
   let m;
   if (h === "youtube.com" || h === "youtube-nocookie.com") {
     const id = path === "/watch" ? u.searchParams.get("v") : (path.match(/^\/(?:shorts|embed|live)\/([^/]+)/) || [])[1];
-    return /^[\w-]{11}$/.test(id || "") ? `https://www.youtube-nocookie.com/embed/${id}` : null;
+    return /^[\w-]{11}$/.test(id || "") ? yt(id) : null;
   }
   if (h === "youtu.be") {
     const id = path.slice(1);
-    return /^[\w-]{11}$/.test(id) ? `https://www.youtube-nocookie.com/embed/${id}` : null;
+    return /^[\w-]{11}$/.test(id) ? yt(id) : null;
   }
   if (h === "rutube.ru" && (m = path.match(/^\/(?:video|play\/embed)\/([0-9a-f]{32})\/?$/))) {
-    return `https://rutube.ru/play/embed/${m[1]}`;
+    return `https://rutube.ru/play/embed/${m[1]}${at ? `?t=${at}` : ""}`;
   }
   if ((h === "vk.com" || h === "vkvideo.ru" || h === "vk.ru") && (m = path.match(/^\/video(-?\d+)_(\d+)\/?$/))) {
     return `https://vk.com/video_ext.php?oid=${m[1]}&id=${m[2]}`;
   }
-  if (h === "vimeo.com" && (m = path.match(/^\/(\d+)\/?$/))) return `https://player.vimeo.com/video/${m[1]}`;
+  if (h === "vimeo.com" && (m = path.match(/^\/(\d+)\/?$/))) {
+    const vt = startSeconds((u.hash.match(/^#t=(.+)$/) || [])[1]);
+    return `https://player.vimeo.com/video/${m[1]}${vt ? `#t=${vt}s` : ""}`;
+  }
   return null;
 }
 

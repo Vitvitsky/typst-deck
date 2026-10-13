@@ -808,3 +808,17 @@ def test_field_zone_follows_alignment(tmp_path):
         z = zones[name]
         assert z["x"] == pytest.approx(x0, abs=0.5), name
         assert z["x"] + z["w"] == pytest.approx(x1, abs=0.5), name
+
+
+def test_video_link_with_ampersand_keeps_the_svg_valid(deck_dir):
+    """typst 0.15 пишет адрес ссылки в SVG как есть: «&t=260s» давал голый & в атрибуте,
+    SVG переставал быть XML, и браузер не показывал слайд вовсе (2026-10-13, ссылка
+    YouTube с отметкой времени). Кавычка и угловые скобки ломали бы атрибут так же."""
+    from xml.etree import ElementTree
+
+    url = 'https://www.youtube.com/watch?v=gWotBPtsulo&t=260s&list=a"b<c>'
+    deck = Deck(slides=[{"type": "video", "title": "Видео", "url": url}])
+    r = compile_deck(deck, deck_dir, TEMPLATE_DIR)
+    root = ElementTree.parse(r.svgs[0]).getroot()       # падало: not well-formed
+    hrefs = [a.get("href") for a in root.iter("{http://www.w3.org/2000/svg}a")]
+    assert hrefs == ["https://www.youtube.com/watch?v=gWotBPtsulo&t=260s&list=a%22b%3Cc%3E"]

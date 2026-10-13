@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { LIMITS, lines, parseNumber, parseValues, formatValues, countError, seriesError, dropBlank,
-  tableFrom, columnEmpty, merge3, linkError, embedUrl, changed } from "../../src/typst_deck/static/editors.js";
+  tableFrom, columnEmpty, merge3, linkError, embedUrl, startSeconds, changed } from "../../src/typst_deck/static/editors.js";
 
 test("числа по-русски", () => {
   assert.equal(parseNumber("12,5"), 12.5);
@@ -64,7 +64,7 @@ test("ссылка видео — только http(s)", () => {
 
 test("плееры платформ собираются из распознанного id", () => {
   const yt = "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ";
-  assert.equal(embedUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42"), yt);
+  assert.equal(embedUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42"), `${yt}?start=42`);
   assert.equal(embedUrl("https://youtu.be/dQw4w9WgXcQ?si=x"), yt);
   assert.equal(embedUrl("https://youtube.com/shorts/dQw4w9WgXcQ"), yt);
   assert.equal(embedUrl("https://rutube.ru/video/0123456789abcdef0123456789abcdef/"),
@@ -111,4 +111,19 @@ test("слияние устаревшей формы: поверх свежег�
   assert.deepEqual(merge3(["а"], ["а", "б"], ["в"]), ["а", "б"]);
   // правили одно и то же — побеждает ввод человека
   assert.equal(merge3("Было", "Моё", "Модели"), "Моё");
+});
+
+test("отметка времени ссылки доходит до плеера", () => {
+  assert.equal(startSeconds("260s"), 260);
+  assert.equal(startSeconds("260"), 260);
+  assert.equal(startSeconds("4m20s"), 260);
+  assert.equal(startSeconds("1h2m3s"), 3723);
+  for (const bad of ["", "0", "abc", "4:20", null]) assert.equal(startSeconds(bad), null, String(bad));
+  // ссылка 2026-10-13: подпись «с отметки 4:20», а плеер начинал с нуля
+  assert.equal(embedUrl("https://www.youtube.com/watch?v=gWotBPtsulo&t=260s"), "https://www.youtube-nocookie.com/embed/gWotBPtsulo?start=260");
+  assert.equal(embedUrl("https://youtu.be/gWotBPtsulo?t=4m20s"), "https://www.youtube-nocookie.com/embed/gWotBPtsulo?start=260");
+  assert.equal(embedUrl("https://rutube.ru/video/0123456789abcdef0123456789abcdef/?t=90"),
+    "https://rutube.ru/play/embed/0123456789abcdef0123456789abcdef?t=90");
+  assert.equal(embedUrl("https://vimeo.com/76979871#t=1m30s"), "https://player.vimeo.com/video/76979871#t=90s");
+  assert.equal(embedUrl("https://www.youtube.com/watch?v=gWotBPtsulo"), "https://www.youtube-nocookie.com/embed/gWotBPtsulo");
 });
