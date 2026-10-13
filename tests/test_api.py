@@ -1034,3 +1034,63 @@ async def test_failed_lazy_build_does_not_break_the_deck_page(client, monkeypatc
     r = await client.get(f"/api/decks/{d.id}")
     assert r.status_code == 200 and r.json()["has_build"] is False
     assert any("build.lazy_failed" in rec.getMessage() for rec in caplog.records)
+
+
+def _count_render_boom(monkeypatch, exc):
+    from typst_deck.service import DeckService
+
+    calls = []
+
+    async def boom(self, deck):
+        calls.append(deck.version)
+        raise exc
+
+    monkeypatch.setattr(DeckService, "render", boom)
+    return calls
+
+
+async def test_failed_lazy_build_is_not_retried_on_every_view(client, monkeypatch):
+    """Неудачная ленивая сборка запоминается: опрос страницы не гоняет typst под
+    блокировкой колоды на каждый запрос. Правка колоды (новая версия) — повтор."""
+    from typst_deck.api.common import ApiError
+
+    calls = _count_render_boom(monkeypatch, ApiError(500, "render", "шаблон не собрался"))
+    store = client.app.state.store
+    d = store.create(Deck(title="Т", slides=[{"type": "final"}]))
+    for _ in range(3):
+        assert (await client.get(f"/api/decks/{d.id}")).status_code == 200
+    assert len(calls) == 1
+    store.save(store.load(d.id))
+    await client.get(f"/api/decks/{d.id}")
+    assert len(calls) == 2
+
+
+async def test_lazy_build_error_other_than_api_error_keeps_the_page(client, monkeypatch, caplog):
+    calls = _count_render_boom(monkeypatch, OSError("нет доступа к build.tmp"))
+    d = client.app.state.store.create(Deck(title="Т", slides=[{"type": "final"}]))
+    r = await client.get(f"/api/decks/{d.id}")
+    assert r.status_code == 200 and r.json()["has_build"] is False and calls
+    assert any("нет доступа" in str(getattr(rec, "fields", "")) for rec in caplog.records)
+
+
+async def test_pdf_reports_the_lazy_build_error_not_404(client, monkeypatch):
+    """PDF колоды без сборки: провал сборки отдаётся с причиной, а не «PDF не найден».
+    Запомненный провал страницы не мешает PDF попробовать заново."""
+    from typst_deck.api.common import ApiError
+
+    calls = _count_render_boom(monkeypatch, ApiError(422, "template", "шаблон сломан"))
+    d = client.app.state.store.create(Deck(title="Т", slides=[{"type": "final"}]))
+    await client.get(f"/api/decks/{d.id}")
+    r = await client.get(f"/api/decks/{d.id}/deck.pdf")
+    assert r.status_code == 422 and "шаблон сломан" in r.json()["error"]["message"]
+    assert len(calls) == 2
+
+
+async def test_deck_page_does_not_wait_for_a_locked_deck(client, monkeypatch):
+    """Колоду держит правка или модель — страница отвечает сразу, без ленивой сборки."""
+    calls = _count_render_boom(monkeypatch, AssertionError("не должна собираться"))
+    store = client.app.state.store
+    d = store.create(Deck(title="Т", slides=[{"type": "final"}]))
+    async with store.lock(d.id):
+        r = await asyncio.wait_for(client.get(f"/api/decks/{d.id}"), 5)
+    assert r.status_code == 200 and r.json()["has_build"] is False and not calls

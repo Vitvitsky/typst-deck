@@ -63,6 +63,8 @@ class DeckService:
                                           settings.template_alias_map)
         self.meter = TokenMeter()
         self._preview_locks: dict[str, asyncio.Lock] = {}
+        # колода -> (версия, time.monotonic()) последней неудачной ленивой сборки
+        self._lazy_failed: dict[str, tuple[int, float]] = {}
         # причина, если фоновая проверка шаблонов упала целиком; иначе checked=False
         # неотличимо от «ещё выполняется» (/api/health её и показывает)
         self.template_check_error: str | None = None
@@ -247,7 +249,7 @@ class DeckService:
         компиляции встаёт весь сервер, включая статику и превью чужих колод.
 
         Блокировку колоды не берёт и колоду не сохраняет: блокировку держит
-        вызывающий (manual, generate, pdf), а asyncio.Lock не реентерабелен."""
+        вызывающий (manual, generate, pdf, ensure_build), а asyncio.Lock не реентерабелен."""
         t = self.template(deck.template)
         try:
             return await asyncio.to_thread(
@@ -257,25 +259,47 @@ class DeckService:
         except CompileError as e:
             raise ApiError(500, "render", f"{e}: {e.stderr[:2000]}")
 
-    async def ensure_build(self, deck_id: str) -> None:
+    LAZY_RETRY_S = 300
+
+    async def ensure_build(self, deck_id: str, *, for_pdf: bool = False) -> None:
         """Сборки нет — собрать при первом обращении: перенос колод (migrate_slides)
         сносит устаревший build/, и без этого колода стояла бы без превью, а PDF
         отвечал бы 404 до первой правки. Пустая колода и колода, которую сейчас
-        собирает модель, не трогаются; провал сборки не роняет ответ — он виден
-        как отсутствие сборки, причина пишется в лог."""
+        собирает модель, не трогаются.
+
+        Страница колоды (for_pdf=False) не ждёт чужую блокировку и не падает:
+        провал виден как отсутствие сборки, причина пишется в лог и запоминается,
+        чтобы каждый опрос страницы не гонял typst заново под блокировкой. Повтор —
+        после правки колоды (новая версия) или через LAZY_RETRY_S: канон правят
+        вживую, без рестарта. PDF (for_pdf=True) ждёт блокировку и отдаёт ошибку
+        сборки как есть — с причиной, а не 404."""
         build = self.store.deck_dir(deck_id) / "build"
         if (build / "slide-1.svg").exists():
             return
-        deck = self.load(deck_id)
-        if not deck.slides or self.jobs.active_for(deck_id):
-            return
-        async with self.store.lock(deck_id):
+        lock = self.store.lock(deck_id)
+        if not for_pdf and lock.locked():
+            return  # колоду сейчас правят или собирают — не висеть на этом
+        async with lock:
             if (build / "slide-1.svg").exists():  # мог успеть параллельный запрос
                 return
+            # под блокировкой: колоду могли опустошить, а модель — начать сборку
+            deck = self.load(deck_id)
+            if not deck.slides or self.jobs.active_for(deck_id):
+                return
+            failed = self._lazy_failed.get(deck_id)
+            if (not for_pdf and failed and failed[0] == deck.version
+                    and time.monotonic() - failed[1] < self.LAZY_RETRY_S):
+                return
             try:
-                await self.render(self.load(deck_id))
-            except ApiError as e:
-                log_event(log, "build.lazy_failed", deck=deck_id, err=str(e)[:300], level=logging.WARNING)
+                await self.render(deck)
+            except Exception as e:
+                self._lazy_failed[deck_id] = (deck.version, time.monotonic())
+                log_event(log, "build.lazy_failed", deck=deck_id, err=f"{type(e).__name__}: {e}"[:300],
+                          level=logging.WARNING)
+                if for_pdf:
+                    raise
+            else:
+                self._lazy_failed.pop(deck_id, None)
 
     async def pdf(self, deck_id: str) -> Path:
         """PDF по требованию: собирается при первом скачивании и лежит в build/
@@ -286,7 +310,7 @@ class DeckService:
         if ready.exists():
             return ready
         if not (build / "deck.typ").exists():
-            await self.ensure_build(deck_id)
+            await self.ensure_build(deck_id, for_pdf=True)
         if not (build / "deck.typ").exists():
             raise not_found("PDF")
         async with self.store.lock(deck_id):
