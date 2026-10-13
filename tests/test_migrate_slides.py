@@ -155,3 +155,34 @@ def test_broken_deck_is_left_alone(tmp_path):
     (d / "versions" / "000002.json").write_text("{не json")
     assert migrate(tmp_path) == []
     assert json.loads((d / "deck.json").read_text())["slides"][1]["type"] == "image", "колода целиком не тронута"
+
+
+def test_migrate_drops_the_stale_build_of_rewritten_decks(tmp_path):
+    """Старый build/ вызывает функции старого контракта (slide-bar-chart) и хранит
+    старый PDF: после выкатки 2026-10-13 PDF колоды отвечал 500, превью были старыми."""
+    live = write_deck(tmp_path, "d0000000004", versions=1)
+    (live / "build").mkdir()
+    (live / "build" / "deck.typ").write_text("#slide-bar-chart()")
+    (live / "build" / "deck.pdf").write_bytes(b"%PDF old")
+    trash = tmp_path / "trash" / "d0000000005-20260901T000000"
+    trash.parent.mkdir()
+    write_deck(tmp_path, "d0000000005", versions=1).rename(trash)
+    (trash / "build").mkdir()
+    migrate(tmp_path)
+    assert not (live / "build").exists() and not (trash / "build").exists()
+
+
+def test_check_keeps_the_build(tmp_path):
+    d = write_deck(tmp_path, "d0000000006", versions=1)
+    (d / "build").mkdir()
+    migrate(tmp_path, check=True)
+    assert (d / "build").is_dir()
+
+
+def test_untouched_deck_keeps_its_build(tmp_path):
+    """Колода уже на новых типах — её сборка верна, сносить нечего."""
+    d = write_deck(tmp_path, "d0000000007", versions=1)
+    migrate(tmp_path)
+    (d / "build").mkdir()
+    (d / "build" / "deck.typ").write_text("свежая")
+    assert migrate(tmp_path) == [] and (d / "build" / "deck.typ").read_text() == "свежая"

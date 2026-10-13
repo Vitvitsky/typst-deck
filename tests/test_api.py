@@ -1011,3 +1011,26 @@ async def test_pptx_export_failure_is_500(pptx_client, monkeypatch):
     r = await pptx_client.get(f"/api/decks/{put_deck(pptx_client).id}/deck.pptx")
     assert r.status_code == 500 and r.json()["error"]["code"] == "render"
     assert "битый мастер" in r.json()["error"]["message"]
+
+
+@requires_typst
+async def test_deck_without_build_is_built_on_first_view_and_pdf(client):
+    """Перенос колод сносит устаревший build/: страница колоды и PDF собирают его
+    сами при первом обращении, а не показывают пустые превью и 404."""
+    store = client.app.state.store
+    d = store.create(Deck(title="Т", slides=[{"type": "title", "title": "Итоги"}, {"type": "final"}]))
+    info = (await client.get(f"/api/decks/{d.id}")).json()
+    assert info["has_build"] is True and len(info["pages"]) == 2
+    d2 = store.create(Deck(title="Т", slides=[{"type": "final"}]))
+    pdf = await client.get(f"/api/decks/{d2.id}/deck.pdf")
+    assert pdf.status_code == 200 and pdf.content[:4] == b"%PDF"
+
+
+async def test_failed_lazy_build_does_not_break_the_deck_page(client, monkeypatch, caplog):
+    """Сборка при первом обращении не удалась (сломанный шаблон) — страница колоды
+    отвечает, сборки просто нет, причина — в логе."""
+    _render_boom(monkeypatch)
+    d = client.app.state.store.create(Deck(title="Т", slides=[{"type": "final"}]))
+    r = await client.get(f"/api/decks/{d.id}")
+    assert r.status_code == 200 and r.json()["has_build"] is False
+    assert any("build.lazy_failed" in rec.getMessage() for rec in caplog.records)

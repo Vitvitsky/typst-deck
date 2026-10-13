@@ -257,6 +257,26 @@ class DeckService:
         except CompileError as e:
             raise ApiError(500, "render", f"{e}: {e.stderr[:2000]}")
 
+    async def ensure_build(self, deck_id: str) -> None:
+        """Сборки нет — собрать при первом обращении: перенос колод (migrate_slides)
+        сносит устаревший build/, и без этого колода стояла бы без превью, а PDF
+        отвечал бы 404 до первой правки. Пустая колода и колода, которую сейчас
+        собирает модель, не трогаются; провал сборки не роняет ответ — он виден
+        как отсутствие сборки, причина пишется в лог."""
+        build = self.store.deck_dir(deck_id) / "build"
+        if (build / "slide-1.svg").exists():
+            return
+        deck = self.load(deck_id)
+        if not deck.slides or self.jobs.active_for(deck_id):
+            return
+        async with self.store.lock(deck_id):
+            if (build / "slide-1.svg").exists():  # мог успеть параллельный запрос
+                return
+            try:
+                await self.render(self.load(deck_id))
+            except ApiError as e:
+                log_event(log, "build.lazy_failed", deck=deck_id, err=str(e)[:300], level=logging.WARNING)
+
     async def pdf(self, deck_id: str) -> Path:
         """PDF по требованию: собирается при первом скачивании и лежит в build/
         до следующей правки, которая заменяет build/ целиком и снимает его."""
@@ -265,6 +285,8 @@ class DeckService:
         ready = build / "deck.pdf"
         if ready.exists():
             return ready
+        if not (build / "deck.typ").exists():
+            await self.ensure_build(deck_id)
         if not (build / "deck.typ").exists():
             raise not_found("PDF")
         async with self.store.lock(deck_id):

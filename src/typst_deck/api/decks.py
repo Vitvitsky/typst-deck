@@ -67,6 +67,7 @@ async def list_decks(s: DeckService = Depends(svc)):
 
 @router.get("/{deck_id}")
 async def get(deck_id: str, s: DeckService = Depends(svc)):
+    await s.ensure_build(deck_id)
     return s.deck_response(deck_id)
 
 
