@@ -22,9 +22,35 @@ TYPE_PARAMS = ([pytest.param(t, s, id=f"{t.id}-{s}") for p in CORP_PARAMS for t 
                 for s in SLIDE_TYPES]
                or [pytest.param(None, None, id="no-corp", marks=pytest.mark.skip(reason=NO_CORP))])
 # Низ тела content-slide канона: поле 24 мм + зона заголовка 50 мм + отбивка 6 мм +
-# тело 250 мм. Тело обрезано clip — всё, что ниже, теряется молча; граница по полю
-# страницы (357 мм) это пропускала: тезисы image уходили на 336 мм.
-PAGE_BOTTOM_MM = 24 + 50 + 6 + 250
+# межабзацный отступ канона перед телом (1,2em при 28pt ≈ 11,9 мм) + тело 250 мм —
+# верх тела у всех полей на 91,9 мм (по positions). Тело обрезано clip — всё, что
+# ниже, теряется молча; граница по полю страницы (357 мм) это пропускала.
+PAGE_BOTTOM_MM = 91.9 + 250
+
+
+def _model_maxima(stype: str) -> dict:
+    """Глобальные пределы модели для каждого поля типа (и подполей массивов объектов):
+    слайд «на пределах» — это и необъявленные поля по максимуму, а не их короткие
+    значения по умолчанию из filled_slide."""
+    from typst_deck.slots import DEFS, SCHEMA, _ceiling, _resolve
+
+    props, defs = DEFS[stype]["properties"], SCHEMA["$defs"]
+    out: dict = {}
+    for f, prop in props.items():
+        if f in ("url", "poster", "image"):
+            continue  # ссылка и имена ассетов — форма, а не текст: образцом по длине их не заполнить
+        lim = {k: c for k in ("max", "count") if (c := _ceiling(prop, k)) is not None}
+        if lim:
+            out[f] = lim
+        sub = prop.get("items", prop) if prop.get("type") == "array" else prop
+        ref = sub.get("$ref")
+        target = defs.get(ref.rsplit("/", 1)[1], {}) if ref else sub
+        for g in target.get("properties", {}):
+            sp = _resolve(props, defs, f"{f}.{g}")
+            sl = {k: c for k in ("max", "count") if sp and (c := _ceiling(sp, k)) is not None}
+            if sl:
+                out[f"{f}.{g}"] = sl
+    return out
 
 
 @requires_typst
@@ -134,7 +160,8 @@ def test_corp_type_at_declared_limits_stays_on_the_page(t, stype, tmp_path):
     from typst_deck.contract import write_sample_assets
 
     write_sample_assets(tmp_path)
-    slide = filled_slide(stype, t.slots.get(stype, {}))
+    # объявленное шаблоном поверх глобальных пределов модели
+    slide = filled_slide(stype, _model_maxima(stype) | t.slots.get(stype, {}))
     r = compile_deck(Deck(slides=[slide]), tmp_path, t.path, fonts_dir=t.fonts)
     assert len(r.svgs) == 1
     worst = max((p["y"] + p["h"] for p in r.positions), default=0)
@@ -164,3 +191,44 @@ def test_corp_degenerate_charts_stay_on_one_page(t, kind, case, tmp_path):
     r = compile_deck(deck, tmp_path, t.path, fonts_dir=t.fonts)
     assert len(r.svgs) == 2
     assert max(p["y"] + p["h"] for p in r.positions) <= PAGE_BOTTOM_MM * MM
+
+
+def _yellow_runs(png_path, y_frac):
+    """Отрезки жёлтого (#FFDE00) в строке картинки на высоте y_frac — ширины столбцов."""
+    from PIL import Image
+
+    im = Image.open(png_path).convert("RGB")
+    w, h = im.size
+    y = int(h * y_frac)
+    runs, start = [], None
+    for x in range(w):
+        r, g, b = im.getpixel((x, y))
+        yellow = r > 230 and 200 < g < 240 and b < 60
+        if yellow and start is None:
+            start = x
+        if not yellow and start is not None:
+            runs.append(x - start)
+            start = None
+    if start is not None:
+        runs.append(w - start)
+    return runs
+
+
+@requires_typst
+@pytest.mark.parametrize("t", CORP_PARAMS)
+def test_corp_chart_with_bullets_keeps_the_last_bar_whole(t, tmp_path):
+    """Колонка выводов и график не шире тела: иначе clip срезает последний столбец справа
+    (было: 38 % + 62 % + зазор 12 мм — на 12 мм шире тела). У столбцов нет маркеров поля,
+    поэтому проверка — по картинке: при равных значениях все столбцы одной ширины."""
+    import subprocess
+
+    deck = Deck(slides=[{"type": "chart", "title": "Итоги", "kind": "bar", "labels": [f"М{i}" for i in range(1, 13)],
+                         "series": [{"name": "x", "values": [5] * 12}], "bullets": ["Вывод"]}])
+    compile_deck(deck, tmp_path, t.path, fonts_dir=t.fonts)
+    png = tmp_path / "p.png"
+    subprocess.run(["typst", "compile", "--root", str(tmp_path / "build"), "--font-path", str(t.fonts),
+                    "--format", "png", "--ppi", "40", str(tmp_path / "build" / "deck.typ"), str(png)], check=True,
+                   capture_output=True)
+    runs = [r for r in _yellow_runs(png, 0.6) if r > 3]
+    assert len(runs) == 12, runs
+    assert max(runs) - min(runs) <= 2, f"столбцы разной ширины — последний срезан: {runs}"
