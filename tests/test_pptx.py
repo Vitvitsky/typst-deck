@@ -205,6 +205,13 @@ def test_bar_with_several_series_takes_the_palette_and_a_legend(tdir):
     assert [s.name for s in chart.plots[0].series] == ["2025 & <план>", "2026"]
 
 
+def test_bar_with_several_series_keeps_the_unit_on_the_axis(tdir):
+    deck = Deck(slides=[bar(unit="A&B<", series=[{"name": "2025", "values": [1, 2, 3]},
+                                                 {"name": "2026", "values": [2, 3, 4]}])])
+    chart = chart_of(export(tdir, deck).slides[0])
+    assert chart.value_axis.has_title and chart.value_axis.axis_title.text_frame.text == "A&B<"
+
+
 def test_line_kind_draws_lines(tdir):
     chart = chart_of(export(tdir, Deck(slides=[bar(kind="line")])).slides[0])
     assert chart.chart_type == XL_CHART_TYPE.LINE_MARKERS
@@ -366,7 +373,9 @@ def test_table_is_native_with_header_stripes_and_numeric_alignment(tdir):
     assert not frame._element.xpath(".//a:tblPr[@bandRow='1' or @firstRow='1']")
 
 
-def test_table_at_model_limits_fits_the_zone(tdir):
+def test_table_at_model_limits_lays_its_grid_inside_the_zone(tdir):
+    """Номинальная сетка — в зоне. Перенос текста PowerPoint считает сам и может
+    нарастить строки; это проверяется ручной приёмкой таблицы на пределах."""
     from typst_deck.model import CELL_MAX
 
     cell = "x" * CELL_MAX
@@ -581,6 +590,27 @@ BROKEN = {
         layout="Comparison", ph={"title": 0, "blocks": [1, 2, 9]}, body=None, gap=None),
         "нет заполнителя idx 9"),
     "title-as-list": (lambda m: m["slides"]["text"]["ph"].update(title=[0]), "ожидается один idx"),
+    "blocks-over-title": (lambda m: m["slides"]["columns"].update(
+        layout="Comparison", ph={"title": 0, "blocks": [0, 1, 2]}, body=None, gap=None),
+        "blocks: idx 0 занят другим полем"),
+    "blocks-duplicate": (lambda m: m["slides"]["columns"].update(
+        layout="Comparison", ph={"title": 0, "blocks": [1, 1, 2]}, body=None, gap=None),
+        "blocks: idx 1 повторяется"),
+    "gallery-no-room-across": (lambda m: m["slides"]["gallery"].update(gap=400),
+        "slides.gallery: при gap 400 мм на колонку не остаётся места"),
+    "metrics-no-room-across": (lambda m: m["slides"]["metrics"].update(gap=400),
+        "slides.metrics: при gap 400 мм на колонку не остаётся места"),
+    "columns-no-room-across": (lambda m: m["slides"]["columns"].update(gap=400), "slides.columns: при gap 400"),
+    "comparison-no-room-across": (lambda m: m["slides"]["comparison"].update(gap=700),
+        "slides.comparison: при gap 700"),
+    "dual-chart-no-room-across": (lambda m: m["slides"]["dual-chart"].update(gap=700),
+        "slides.dual-chart: при gap 700"),
+    "gallery-too-short": (lambda m: m["slides"]["gallery"].update(body=[20, 80, 600, 30]),
+        "slides.gallery.body: высота 30 мм мала для двух рядов с подписями"),
+    "video-too-short": (lambda m: m["slides"]["video"].update(body=[20, 80, 600, 15]),
+        "slides.video.body: высота 15 мм не больше полосы подписи 15 мм"),
+    "dual-chart-too-short": (lambda m: m["slides"]["dual-chart"].update(body=[20, 80, 600, 12]),
+        "slides.dual-chart.body: высота 12 мм не больше полосы подписи 15 мм"),
 }
 
 

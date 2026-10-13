@@ -57,6 +57,10 @@ BODY_KEYS = {
 }
 OPTIONAL_KEYS = {"chart": ("heading",)}
 BLOCKS = 3  # столько блоков допускает ColumnsSlide.blocks (max_length в model.py)
+# Наибольшее число колонок в зоне у типов, которые делят её поровну (пределы model.py):
+# сопоставление обязано оставить каждой колонке место, иначе размеры уходят в минус
+# и PowerPoint предлагает восстановить файл.
+ACROSS = {"columns": BLOCKS, "comparison": 2, "dual-chart": 2, "metrics": 4, "gallery": 3}
 
 CAPTION_STRIP = 15   # мм под подпись к картинке
 CAPTION_SCALE = 0.7  # кегль подписи от кегля тезисов
@@ -156,6 +160,14 @@ def _completeness(m: Mapping) -> list[str]:
             elif f == "blocks":
                 if not isinstance(v, list) or len(v) < BLOCKS:
                     problems.append(f"slides.{stype}.ph.blocks: нужно не меньше {BLOCKS} заполнителей")
+                    continue
+                taken = {i for k, i in sm.ph.items() if k != "blocks" and isinstance(i, int)}
+                for i in sorted(set(v)):
+                    if v.count(i) > 1:
+                        problems.append(f"slides.{stype}.ph.blocks: idx {i} повторяется")
+                    if i in taken:
+                        # блок занял бы заполнитель заголовка, и заголовок слайда пропал бы молча
+                        problems.append(f"slides.{stype}.ph.blocks: idx {i} занят другим полем")
             elif isinstance(v, list):
                 problems.append(f"slides.{stype}.ph.{f}: ожидается один idx, а не список")
         body = _body_keys(stype, sm)
@@ -177,6 +189,17 @@ def _completeness(m: Mapping) -> list[str]:
             if not (body_h > CAPTION_STRIP):
                 problems.append(f"slides.image.body: высота {body_h:g} мм не больше "
                                  f"полосы подписи {CAPTION_STRIP} мм")
+        if stype in ACROSS and sm.body is not None and sm.gap is not None:
+            n = ACROSS[stype]
+            if not ((sm.body[2] - sm.gap * (n - 1)) / n > 0):
+                problems.append(f"slides.{stype}: при gap {sm.gap:g} мм на колонку не остаётся места "
+                                f"(колонок до {n}, ширина зоны {sm.body[2]:g} мм)")
+        if stype == "gallery" and sm.body is not None and sm.gap is not None:
+            if not ((sm.body[3] - sm.gap) / 2 > CAPTION_STRIP):
+                problems.append(f"slides.gallery.body: высота {sm.body[3]:g} мм мала для двух рядов с подписями")
+        if stype in ("video", "dual-chart") and sm.body is not None and not (sm.body[3] > CAPTION_STRIP):
+            problems.append(f"slides.{stype}.body: высота {sm.body[3]:g} мм не больше "
+                            f"полосы подписи {CAPTION_STRIP} мм")
         if stype == "chart" and sm.body is not None and sm.text_width is not None and sm.gap is not None:
             body_w = sm.body[2]
             if not (body_w * (100 - sm.text_width) / 100 - sm.gap > 0):
@@ -560,6 +583,9 @@ def _bar_chart(slide, src, box, cs: ChartStyle) -> None:
     chart.has_legend = True
     chart.legend.position = XL_LEGEND_POSITION.TOP
     chart.legend.include_in_layout = False
+    if src.unit:  # подписей значений нет — единица уходит в подпись оси, как у линии
+        chart.value_axis.has_title = True
+        chart.value_axis.axis_title.text_frame.text = clean(src.unit)
     for i, series in enumerate(plot.series):
         series.invert_if_negative = False
         series.format.fill.solid()
