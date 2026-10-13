@@ -10,7 +10,7 @@
 
 ## Решение
 
-15 типов: `title, agenda, section, text, image, columns, comparison, quote, chart, dual-chart, metrics, table, gallery, video, final`; `image` без картинки становится `text`, `bar-chart` и `chart` сливаются в `chart` с `kind`. Контракт — 16 функций; шаблон может импортировать эталон и переопределить часть. В слотах — пути с точкой (`blocks.text`). `python -m typst_deck.migrate_slides` переписывает `deck.json`, `versions/` и `trash/` без подъёма версии, идемпотентна, есть `--check`. В `main` промежуточные состояния не вливаются: выкатка одним окном после планов B (PPTX), C (интерфейс, видео), D (канон).
+15 типов: `title, agenda, section, text, image, columns, comparison, quote, chart, dual-chart, metrics, table, gallery, video, final`; `image` без картинки становится `text`, `bar-chart` и `chart` сливаются в `chart` с `kind`. Контракт — 16 функций; шаблон может импортировать эталон и переопределить часть. В слотах — пути с точкой (`blocks.text`). `python -m typst_deck.migrate_slides` переписывает `deck.json`, `versions/` и `trash/` без подъёма версии, идемпотентна, есть `--check`; `build/` переписанных колод сносится, сервис собирает его заново при первом обращении. В `main` промежуточные состояния не вливаются: выкатка одним окном после планов B (PPTX), C (интерфейс, видео), D (канон).
 
 ## Отвергнутые варианты
 
