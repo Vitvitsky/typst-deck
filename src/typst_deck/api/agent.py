@@ -23,6 +23,13 @@ class CreateIn(BaseModel):
     wait_seconds: int = Field(default=180, ge=0, le=600)
 
 
+class RenderIn(BaseModel):
+    deck: dict
+    template: str = "default"
+    files: list[FileIn] = []
+    deck_id: str | None = None
+
+
 class ReviseIn(BaseModel):
     deck_id: str
     request: str
@@ -41,6 +48,22 @@ async def create_deck(body: CreateIn, s: DeckService = Depends(svc)):
     deck, job = s.new_deck_from_brief(body.brief, files, body.template, via="agent.create")
     await s.jobs.wait(job.id, body.wait_seconds)
     return s.agent_response(deck.id)
+
+
+@router.post("/render_deck")
+async def render_deck(body: RenderIn, s: DeckService = Depends(svc)):
+    """Готовая колода — как есть, без нейросети; ошибки — по полям (error.fields)."""
+    files = {}
+    for f in body.files:
+        try:
+            data = base64.b64decode(f.content_base64, validate=True)
+        except (binascii.Error, ValueError):
+            raise ApiError(422, "validation", f"файл {f.name}: содержимое не в base64")
+        if len(data) > s.settings.max_upload_mb * 1024 * 1024:
+            raise ApiError(413, "too_large", f"файл {f.name} больше {s.settings.max_upload_mb} МБ")
+        files[f.name] = data
+    deck_id = await s.render_ready(body.deck, body.template, files, body.deck_id)
+    return s.agent_response(deck_id)
 
 
 @router.post("/revise_deck")

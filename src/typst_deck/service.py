@@ -23,12 +23,12 @@ from .llm.agent import run_agent
 from .llm.client import LLM
 from .llm.tools import format_validation
 from .logs import log_event
-from .model import Deck, utcnow
+from .model import SLIDE_TYPES, Deck, utcnow
 from .pptx import MappingError, export_pptx
 from . import render as render_mod
 from .render import CompileError, CompileResult, compile_deck, compile_pdf, page_size
-from .slots import apply_to_schema, check_deck, first_few
-from .store import DeckNotFound, DeckStore
+from .slots import apply_to_schema, check_deck, deck_violations, first_few
+from .store import ASSET_EXT, DeckNotFound, DeckStore
 from .templates import SAMPLE_DECK, TemplateBroken, TemplateInfo, TemplateNotFound, TemplateRegistry
 
 # (имя, байты, извлечённый текст или None для картинок)
@@ -62,6 +62,50 @@ def template_fingerprint(path: Path, ttl: float = 10.0) -> str:
     fp = f"{n}:{size}:{newest}"
     FINGERPRINTS[key] = (time.monotonic(), fp)
     return fp
+
+
+def _fields(e: ValidationError) -> list[dict]:
+    """Ошибки pydantic по путям колоды: slides.2.title, а не slides.2.text.title —
+    тег типа в loc дискриминированного союза агенту ничего не говорит."""
+    out = []
+    for err in e.errors():
+        loc = list(err["loc"])
+        if len(loc) > 2 and loc[0] == "slides" and loc[2] in SLIDE_TYPES:
+            del loc[2]
+        f = {"path": ".".join(str(x) for x in loc), "message": err["msg"]}
+        ctx = err.get("ctx") or {}
+        limit = ctx.get("max_length")
+        if limit is not None:
+            f["limit"] = limit
+            if isinstance(err.get("input"), (str, list)):
+                f["actual"] = len(err["input"])
+        out.append(f)
+    return out
+
+
+def _picture_refs(deck: Deck) -> list[tuple[str, str]]:
+    """(путь поля, имя картинки) по всем полям-картинкам колоды."""
+    out = []
+    for i, s in enumerate(deck.slides):
+        if s.type == "image" and s.image:
+            out.append((f"slides.{i}.image", s.image))
+        elif s.type == "gallery":
+            out += [(f"slides.{i}.images.{j}.image", p.image) for j, p in enumerate(s.images) if p.image]
+        elif s.type == "video" and s.poster:
+            out.append((f"slides.{i}.poster", s.poster))
+    return out
+
+
+def _set_pictures(deck: Deck, aids: dict[str, str]) -> None:
+    """Имена файлов агента → id картинок колоды (store.add_asset даёт свои имена)."""
+    for s in deck.slides:
+        if s.type == "image":
+            s.image = aids.get(s.image, s.image)
+        elif s.type == "gallery":
+            for p in s.images:
+                p.image = aids.get(p.image, p.image)
+        elif s.type == "video" and s.poster:
+            s.poster = aids.get(s.poster, s.poster)
 
 
 def _ms(started_ns: int) -> int:
@@ -505,6 +549,54 @@ class DeckService:
                 raise
         log_event(log, "manual.done", deck=deck_id, v=deck.version, slides=len(deck.slides), ms=_ms(t0))
         return self.deck_response(deck_id)
+
+    # --- готовая колода без модели
+    async def render_ready(self, raw: dict, template: str, files: dict[str, bytes],
+                           deck_id: str | None = None) -> str:
+        """Колода от агента — как есть, без нейросети: проверка модели, картинок и
+        пределов шаблона, затем рендер. Ошибки — 422 с fields по путям колоды,
+        и ничего не создаётся. С deck_id колода переписывается новой версией
+        (прежняя — в истории), иначе создаётся новая. Возвращает id колоды."""
+        t0 = time.perf_counter_ns()
+        if deck_id is not None:
+            self.load(deck_id)
+            if self.jobs.active_for(deck_id):
+                raise ApiError(409, "conflict", "колода сейчас собирается; дождитесь окончания")
+        template = self.resolve_template(template, "agent.render")
+        info = self.template(template)
+        body = {k: v for k, v in raw.items() if k not in ("id", "version", "created_at", "updated_at", "template")}
+        try:
+            deck = Deck.model_validate({**body, "template": template})
+        except ValidationError as e:
+            raise ApiError(422, "validation", format_validation(e), fields=_fields(e))
+        known = set(self.store.assets(deck_id)) if deck_id else set()
+        refs, errors = _picture_refs(deck), []
+        for path, name in refs:
+            if name not in files and name not in known:
+                errors.append({"path": path, "message": f"картинка «{name}» не передана в files"})
+            elif name in files and Path(name).suffix.lower() not in ASSET_EXT:
+                errors.append({"path": path, "message": f"картинка «{name}»: нужен PNG, JPG или SVG"})
+        errors += deck_violations(deck, info.slots, info.name)
+        if errors:
+            raise ApiError(422, "validation", "; ".join(f"{e['path']}: {e['message']}" for e in errors[:5]),
+                           fields=errors)
+        target = deck_id or deck.id
+        (self.store.deck_dir(target) / "assets").mkdir(parents=True, exist_ok=True)
+        aids = {name: self.store.add_asset(target, name, files[name]) for name in {n for _, n in refs} if name in files}
+        _set_pictures(deck, aids)
+        if deck_id is not None:
+            await self.manual(deck_id, lambda d: (setattr(d, "title", deck.title), setattr(d, "template", template),
+                                                  setattr(d, "slides", deck.slides)), check_slots=False)
+        else:
+            self.store.create(deck)
+            async with self.store.lock(target):
+                try:
+                    await self.render(deck)
+                except ApiError:
+                    self.store.delete(target)  # провал рендера новой колоды — колоды нет, как у ошибок выше
+                    raise
+        log_event(log, "agent.render", deck=target, slides=len(deck.slides), new=deck_id is None, ms=_ms(t0))
+        return target
 
     # --- файлы и генерация
     def require_llm(self) -> LLM:

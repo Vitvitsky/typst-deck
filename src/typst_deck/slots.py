@@ -301,8 +301,9 @@ def _value(slide, path: str):
     return getattr(value, tail, None)
 
 
-def check_slide(slide, declared: dict, *, n: int, template_name: str, before=None) -> list[str]:
-    """Нарушения объявленных пределов на одном слайде; пусто — всё в порядке.
+def slide_violations(slide, declared: dict, *, n: int, template_name: str, before=None) -> list[dict]:
+    """Нарушения объявленных пределов на одном слайде — по полям: path (от слайда,
+    с номером элемента списка, если он известен), message, limit, actual.
 
     before — тот же слайд до правки. Нарушение, которое не стало хуже прежнего,
     пропускается: текст, сохранённый до появления пределов, иначе нельзя было бы
@@ -312,7 +313,7 @@ def check_slide(slide, declared: dict, *, n: int, template_name: str, before=Non
     if not fields:
         return []
     same_type = before is not None and before.type == slide.type
-    out: list[str] = []
+    out: list[dict] = []
     for field, limits in fields.items():
         now = _value(slide, field)
         was = _value(before, field) if same_type else None
@@ -326,9 +327,17 @@ def check_slide(slide, declared: dict, *, n: int, template_name: str, before=Non
             # пределов он задел.
             label = " → ".join(FIELD_RU.get(part, part) for part in field.split("."))
             where = f", элемент {item}" if item else ""
-            out.append(f"слайд {n}, поле «{label}»{where}: "
-                       f"{_phrase(key, actual)} при пределе {limit} в шаблоне «{template_name}»")
+            head, _, tail = field.partition(".")
+            path = ".".join(p for p in (head, str(item - 1) if item else "", tail) if p)
+            out.append({"path": path, "limit": limit, "actual": actual,
+                        "message": f"слайд {n}, поле «{label}»{where}: "
+                                   f"{_phrase(key, actual)} при пределе {limit} в шаблоне «{template_name}»"})
     return out
+
+
+def check_slide(slide, declared: dict, *, n: int, template_name: str, before=None) -> list[str]:
+    """Нарушения объявленных пределов на одном слайде; пусто — всё в порядке."""
+    return [v["message"] for v in slide_violations(slide, declared, n=n, template_name=template_name, before=before)]
 
 
 def first_few(messages: list[str], limit: int = 5) -> list[str]:
@@ -354,4 +363,14 @@ def check_deck(deck, declared: dict, template_name: str, before=None) -> list[st
     out: list[str] = []
     for i, s in enumerate(deck.slides, 1):
         out += check_slide(s, declared, n=i, template_name=template_name, before=by_id.get(s.id))
+    return out
+
+
+def deck_violations(deck, declared: dict, template_name: str) -> list[dict]:
+    """Нарушения пределов по всей колоде без скидки «не хуже прежнего» — для
+    готовой колоды render_deck; path — от колоды: slides.<i>.<поле>."""
+    out: list[dict] = []
+    for i, s in enumerate(deck.slides):
+        for v in slide_violations(s, declared, n=i + 1, template_name=template_name):
+            out.append(v | {"path": f"slides.{i}.{v['path']}"})
     return out

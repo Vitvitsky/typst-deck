@@ -6,8 +6,9 @@ from fastapi import HTTPException, Request
 
 
 class ApiError(HTTPException):
-    def __init__(self, status: int, code: str, message: str):
-        super().__init__(status_code=status, detail={"code": code, "message": message})
+    def __init__(self, status: int, code: str, message: str, **extra):
+        # extra — дополнительные ключи ответа, например fields у render_deck
+        super().__init__(status_code=status, detail={"code": code, "message": message, **extra})
 
 
 def not_found(what: str) -> ApiError:
