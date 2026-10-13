@@ -82,6 +82,41 @@ def write_sample_assets(deck_dir: Path) -> None:
 
 
 FONT_WARNING = re.compile(r"unknown font family: ([^\n]+)")
+SOURCE_LINE = re.compile(r"^\s*\d+ │(.*)$", re.M)
+STRING_TUPLE = re.compile(r'\(\s*"[^"\\]+"(?:\s*,\s*"[^"\\]+")+\s*,?\s*\)')
+QUOTED = re.compile(r'"([^"\\]+)"')
+FRAME = str.maketrans("│╭╰─", "    ")
+
+
+def missing_fonts(stderr: str, sources: str = "") -> list[str]:
+    """Семейства, о которых стоит сказать. typst предупреждает о каждом ненайденном
+    семействе цепочки, даже если первое нашлось и запасные не понадобились: у Lemana
+    «TT Interphases Pro Trl» и «Liberation Sans» топили в /api/health настоящую беду.
+    Цепочки — кортежи строк из строк исходника под предупреждениями и из sources
+    (.typ шаблона: цепочку часто держат в переменной). Запасное семейство молчит, если
+    у его цепочки первое семейство найдено, то есть о нём предупреждения нет."""
+    blocks = [(m.group(1).strip(), b) for b in re.split(r"(?m)^(?=warning: )", stderr)
+              if (m := FONT_WARNING.match(b.removeprefix("warning: ")))]
+    warned = {fam for fam, _ in blocks}
+    # многострочная цепочка: у второй строки фрагмента свои рамки «│ ╭ ╰»
+    snippets = (" ".join(SOURCE_LINE.findall(b)).translate(FRAME) for _, b in blocks)
+    text = sources + "\n" + "\n".join(snippets)
+    chains = [[f.lower() for f in QUOTED.findall(t)] for t in STRING_TUPLE.findall(text)]
+    covered = {f for c in chains if c[0] not in warned for f in c[1:]}
+    return sorted(warned - covered)
+
+
+def template_sources(path: Path) -> str:
+    """Тексты .typ шаблона — для цепочек шрифтов в missing_fonts."""
+    out = []
+    for f in sorted(Path(path).rglob("*.typ")):
+        try:
+            out.append(f.read_text(errors="replace"))
+        except OSError:
+            pass
+    return "\n".join(out)
+
+
 OVERSIZED = "Очень длинный текст, который заведомо не помещается в отведённое место " * 6
 FILL = "Итоги квартала по направлению данных и аналитики "
 
@@ -399,7 +434,7 @@ def check_template(path: Path, typst_bin: str, work_dir: Path, full: bool = True
         report.errors.append(f"образец не собирается: {e} {e.stderr.strip()}".strip())
         return report
     report.warnings.extend(f"typst не нашёл семейство шрифта «{f}»"
-                           for f in sorted(set(FONT_WARNING.findall(sample.stderr))))
+                           for f in missing_fonts(sample.stderr, template_sources(path)))
     strict.extend(_rule_fonts_used(path, typst_bin, work_dir, fonts))
     if full:
         report.errors.extend(_rule_oversized(path, typst_bin, work_dir, fonts))

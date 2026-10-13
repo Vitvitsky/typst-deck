@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from tests.conftest import (FALLBACK_FONT, TEMPLATE_DIR, TWO_PAGES, make_pptx_template, make_template,
+from tests.conftest import (MISSING_FONT, TEMPLATE_DIR, TWO_PAGES, make_pptx_template, make_template,
                             requires_typst)
 from typst_deck.templates import TemplateBroken, TemplateNotFound, TemplateRegistry, check
 
@@ -156,7 +156,7 @@ def test_registry_refuses_fonts_outside_the_template(tmp_path, caplog):
 def test_start_check_hides_broken_and_keeps_warned_templates(tmp_path):
     root = tmp_path / "templates"
     make_template(root, "broken", deck_edit=TWO_PAGES)
-    make_template(root, "odd-font", deck_edit=FALLBACK_FONT)
+    make_template(root, "odd-font", deck_edit=MISSING_FONT)
     reg = TemplateRegistry(TEMPLATE_DIR, root)
     assert not reg.checked
     reg.check_all("typst", tmp_path / "work")

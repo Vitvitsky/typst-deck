@@ -41,6 +41,8 @@ NO_CLIP_FINAL = ("#let slide-final(title: none, contact: none) = slide(fill: acc
                  "#let slide-final(title: none, contact: none) = page(fill: accent)[")
 NO_CONTACT = ("#if contact != none { v(0.4cm); fit-text(1.0cm, (12pt, 11pt, 10pt), contact) }", "")
 FALLBACK_FONT = ('set text(font: "DejaVu Sans",', 'set text(font: ("DejaVu Sans", "Нет Такого Шрифта"),')
+# первое семейство цепочки не найдено — typst берёт запасное, и это стоит показать
+MISSING_FONT = ('set text(font: "DejaVu Sans",', 'set text(font: ("Нет Такого Шрифта", "DejaVu Sans"),')
 
 
 def make_template(parent: Path, name: str, deck_edit: tuple[str, str] | None = None,

@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import (FALLBACK_FONT, NO_CLIP_FINAL, NO_CONTACT, ROOT, TEMPLATE_DIR, TWO_PAGES,
+from tests.conftest import (FALLBACK_FONT, MISSING_FONT, NO_CLIP_FINAL, NO_CONTACT, ROOT, TEMPLATE_DIR, TWO_PAGES,
                             make_pptx_template, make_template, requires_typst)
-from typst_deck.contract import check_template, filled_slide
+from typst_deck.contract import check_template, filled_slide, missing_fonts
 from typst_deck.model import Deck
 
 DEJAVU = Path("/usr/share/fonts/truetype/dejavu")
@@ -133,12 +133,81 @@ def test_used_fonts_dir_passes(tmp_path):
 
 
 @requires_typst
-def test_fallback_font_family_is_only_a_warning(tmp_path):
-    """typst предупреждает о каждом запасном семействе; это сведения, не ошибка."""
+def test_fallback_family_is_silent_when_the_first_is_found(tmp_path):
+    """typst предупреждает о каждом ненайденном запасном семействе, даже когда первое
+    нашлось: такой шум топил в /api/health настоящую беду со шрифтом."""
     d = make_template(tmp_path, "fallback", deck_edit=FALLBACK_FONT)
     rep = check_template(d, "typst", tmp_path / "w")
     assert rep.errors == []
+    assert not any("нет такого шрифта" in w.lower() for w in rep.warnings), rep.warnings
+
+
+@requires_typst
+def test_missing_first_family_is_only_a_warning(tmp_path):
+    d = make_template(tmp_path, "missing", deck_edit=MISSING_FONT)
+    rep = check_template(d, "typst", tmp_path / "w")
+    assert rep.errors == []
     assert any("нет такого шрифта" in w.lower() for w in rep.warnings), rep.warnings
+
+
+STDERR = """warning: unknown font family: nope font
+  ┌─ a.typ:1:16
+  │
+1 │   #set text(font: ("DejaVu Sans", "Nope Font",
+  │ ╭─────────────────^
+2 │ │   "Liberation Sans"))
+  │ ╰────────────────────^
+
+warning: unknown font family: liberation sans
+  ┌─ a.typ:1:16
+  │
+1 │   #set text(font: ("DejaVu Sans", "Nope Font",
+  │ ╭─────────────────^
+2 │ │   "Liberation Sans"))
+  │ ╰────────────────────^
+
+warning: unknown font family: absent one
+  ┌─ a.typ:4:12
+  │
+4 │ #text(font: "Absent One")[x]
+  │             ^^^^^^^^^^^^
+
+warning: unknown font family: tt interphases pro
+  ┌─ deck.typ:3:16
+  │
+3 │ #set text(font: ("TT Interphases Pro", "Liberation Sans"))
+  │                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unknown font family: liberation sans
+  ┌─ deck.typ:3:16
+  │
+3 │ #set text(font: ("TT Interphases Pro", "Liberation Sans"))
+  │                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+"""
+
+
+def test_missing_fonts_drops_fallbacks_of_a_found_family():
+    # DejaVu найден — его запасные молчат; беду второй цепочки показывает её первое
+    # семейство, а Liberation Sans там же — запасное и у найденного DejaVu
+    assert missing_fonts(STDERR) == ["absent one", "tt interphases pro"]
+
+
+def test_missing_fonts_reads_chains_kept_in_variables():
+    # у Lemana цепочка в переменной: под предупреждением typst видно лишь «font: body-font»
+    stderr = "".join(f"""warning: unknown font family: {f}
+    ┌─ template/slides_template.typ:127:18
+    │
+127 │             font: body-font
+    │                   ^^^^^^^^^
+
+""" for f in ("tt interphases pro trl", "liberation sans"))
+    src = '#let body-font = ("TT Interphases Pro", "TT Interphases Pro Trl", "Liberation Sans")'
+    assert missing_fonts(stderr, src) == []
+    assert missing_fonts(stderr) == ["liberation sans", "tt interphases pro trl"]
+
+
+def test_missing_fonts_keeps_a_warning_without_a_readable_chain():
+    assert missing_fonts("warning: unknown font family: x\n") == ["x"]
 
 
 @requires_typst
