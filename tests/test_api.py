@@ -881,6 +881,28 @@ async def test_old_template_id_is_stored_as_the_new_one(settings, fake_llm):
 
 
 @requires_typst
+async def test_old_template_id_is_logged_where_it_comes_in(settings, fake_llm, caplog):
+    """Перед снятием алиаса неделю считаем в журнале приходы старого id (ADR 0012)."""
+    from typst_deck.app import create_app
+    from typst_deck.model import Deck
+
+    caplog.set_level("INFO", logger="typst_deck")
+    app = create_app(settings.model_copy(update={"template_aliases": "old-dark:dark"}), llm=fake_llm)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        fake_llm._queue += [Completion("", [ToolCall("c1", "set_template", {"template": "old-dark"}),
+                                            ToolCall("c2", "finish", {"summary": "ok"})])]
+        r = await c.post("/api/agent/create_deck", json={"brief": "Итоги", "template": "old-dark"})
+        assert r.status_code == 200
+        d = app.state.store.create(Deck(title="T", slides=[{"type": "final"}]))
+        await c.post(f"/api/decks/{d.id}/template", json={"template": "old-dark"})
+        await c.post(f"/api/decks/{d.id}/template", json={"template": "dark"})  # новый id — не событие
+        await c.get(f"/api/decks/{d.id}")
+    hits = [r.fields for r in caplog.records if r.msg == "template.alias"]
+    assert [(h["old"], h["new"], h["via"]) for h in hits] == [
+        ("old-dark", "dark", "agent.create"), ("old-dark", "dark", "llm"), ("old-dark", "dark", "change")]
+
+
+@requires_typst
 async def test_template_preview_by_old_id_uses_the_cache_of_the_new(settings, fake_llm):
     """Старый id из алиаса не заводит свой кэш превью рядом с действующим."""
     from typst_deck.app import create_app

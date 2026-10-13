@@ -111,6 +111,17 @@ job.done       deck=3a7d4cn2 job=jfcddeur v=2 slides=3 tok_in=18401 tok_out=1346
 http           method=POST path=/api/decks status=202 ms=247
 ```
 
+Старый id шаблона из алиаса пишется событием `template.alias` там, где приходит:
+`via=create` (веб), `agent.create` (бот), `change` (смена шаблона), `llm` (модель
+вызвала `set_template`). Перед снятием алиаса — неделя без событий:
+
+```sh
+journalctl --user -u typst-deck --since -7d | grep template.alias
+```
+
+и перенос колод, ещё хранящих старый id: `python -m typst_deck.migrate_template
+lmru-hr lemana-tech` (ADR 0012).
+
 `TYPST_DECK_LOG_FORMAT=json` даёт те же события построчным JSON для сборщика
 логов. `httpx` и `uvicorn.access` приглушены до WARNING: они дублируют
 `llm.done` и `http`, но без токенов и без времени ответа.

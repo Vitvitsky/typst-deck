@@ -1,10 +1,12 @@
 """Инструменты, которыми LLM правит колоду. Каждый вызов — валидируемый патч."""
 from __future__ import annotations
 
+import logging
 import re
 
 from pydantic import ValidationError
 
+from ..logs import log_event
 from ..model import TEMPLATE_PATTERN, Deck, slide_schema
 from ..slots import check_deck, check_slide, first_few
 
@@ -47,6 +49,9 @@ def tool_specs(template_ids: list[str] | None = None) -> list[dict]:
 
 def format_validation(e: ValidationError) -> str:
     return "; ".join(f"{'.'.join(str(x) for x in err['loc'])}: {err['msg']}" for err in e.errors())
+
+
+log = logging.getLogger(__name__)
 
 
 class ToolExecutor:
@@ -138,7 +143,10 @@ class ToolExecutor:
         return f"OK: слайд {slide_id} теперь на позиции {self.deck.index_of(slide_id) + 1}"
 
     def _set_template(self, template: str) -> str:
-        template = self.aliases.get(template, template)
+        if template in self.aliases:
+            log_event(log, "template.alias", old=template, new=self.aliases[template], via="llm",
+                      deck=self.deck.id)
+            template = self.aliases[template]
         if self.template_ids and template not in self.template_ids:
             return f"ERROR: шаблон «{template}» не найден; доступны: {', '.join(self.template_ids)}"
         if not re.fullmatch(TEMPLATE_PATTERN, template):

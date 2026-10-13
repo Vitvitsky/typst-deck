@@ -413,9 +413,19 @@ class DeckService:
             raise ApiError(422, "validation", str(e))
         return name, data, (ex.text if ex.kind == "text" else None)
 
-    def new_deck_from_brief(self, brief: str, files: list[IngestedFile], template: str = "default") -> tuple[Deck, Job]:
+    def resolve_template(self, template: str, via: str) -> str:
+        """Действующий id шаблона. Старый id из алиаса пишется в журнал событием
+        template.alias: перед снятием алиаса неделю считаем, кто его ещё шлёт (ADR 0012).
+        Только на входе в сервис: reg.get() зовётся на каждый опрос страницы."""
+        new = self.templates.resolve(template)
+        if new != template:
+            log_event(log, "template.alias", old=template, new=new, via=via)
+        return new
+
+    def new_deck_from_brief(self, brief: str, files: list[IngestedFile], template: str = "default",
+                            via: str = "create") -> tuple[Deck, Job]:
         self.require_llm()
-        template = self.templates.resolve(template)
+        template = self.resolve_template(template, via)
         self.template_dir(template)
         first_line = (brief.strip().splitlines() or [""])[0].strip()
         deck = self.store.create(Deck(title=first_line[:120] or "Презентация", template=template))
@@ -522,7 +532,7 @@ class DeckService:
         Пределы нового шаблона проверяются не здесь: переезд даёт предупреждение
         в ответе колоды, а не отказ (спека §7).
         """
-        template = self.templates.resolve(template)
+        template = self.resolve_template(template, "change")
         self.template_dir(template)
         return await self.manual(deck_id, lambda d: setattr(d, "template", template), check_slots=False)
 

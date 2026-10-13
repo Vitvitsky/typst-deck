@@ -38,7 +38,7 @@ async def create_deck(body: CreateIn, s: DeckService = Depends(svc)):
         except (binascii.Error, ValueError):
             raise ApiError(422, "validation", f"файл {f.name}: содержимое не в base64")
         files.append(s.ingest_file(f.name, data))
-    deck, job = s.new_deck_from_brief(body.brief, files, body.template)
+    deck, job = s.new_deck_from_brief(body.brief, files, body.template, via="agent.create")
     await s.jobs.wait(job.id, body.wait_seconds)
     return s.agent_response(deck.id)
 
