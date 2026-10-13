@@ -21,7 +21,10 @@ MM = 2.83465  # мм в пунктах: зоны заданы в мм, positions
 TYPE_PARAMS = ([pytest.param(t, s, id=f"{t.id}-{s}") for p in CORP_PARAMS for t in p.values if t is not None
                 for s in SLIDE_TYPES]
                or [pytest.param(None, None, id="no-corp", marks=pytest.mark.skip(reason=NO_CORP))])
-PAGE_BOTTOM_MM = 381 - 24  # низ поля content-slide канона: ниже — логотип и номер
+# Низ тела content-slide канона: поле 24 мм + зона заголовка 50 мм + отбивка 6 мм +
+# тело 250 мм. Тело обрезано clip — всё, что ниже, теряется молча; граница по полю
+# страницы (357 мм) это пропускала: тезисы image уходили на 336 мм.
+PAGE_BOTTOM_MM = 24 + 50 + 6 + 250
 
 
 @requires_typst
