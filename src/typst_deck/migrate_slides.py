@@ -20,6 +20,12 @@ from .store import write_atomic
 def upgrade_slide(raw: dict) -> dict:
     """Старый слайд → новый. Слайд нового формата возвращается как есть."""
     kind = raw.get("type")
+    if kind == "image" and not raw.get("image") and not raw.get("bullets"):
+        # ни картинки, ни тезисов — остался один заголовок: это разделитель, а не
+        # текстовый слайд (TextSlide требует хотя бы один тезис, и колода не прошла
+        # бы проверку переноса). Убирать слайд нельзя — сдвинулась бы нумерация.
+        return {"id": raw["id"], "type": "section", "title": raw.get("title", ""),
+                "notes": raw.get("notes", "")}
     if kind == "image" and not raw.get("image"):
         # картинки нет — это текстовый слайд; подпись к картинке без картинки не рисовалась
         return {

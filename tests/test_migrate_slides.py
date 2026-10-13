@@ -51,6 +51,26 @@ def test_upgrade_slide_rules():
     assert upgrade_slide(old["title"]) == old["title"], "старые типы не трогаются"
 
 
+def test_image_without_picture_and_bullets_becomes_section():
+    # старый ImageSlide разрешал пустые bullets, новый TextSlide требует хотя бы один:
+    # такой слайд в text сломал бы проверку, и перенос пропустил бы колоду целиком
+    empty = {"id": "s000007", "type": "image", "title": "Пусто", "bullets": [],
+             "image": None, "image_size": "medium", "caption": "", "notes": "н"}
+    section = upgrade_slide(empty)
+    assert section == {"id": "s000007", "type": "section", "title": "Пусто", "notes": "н"}
+    Deck(slides=[section])
+
+
+def test_migrate_keeps_deck_with_empty_image_slide(tmp_path):
+    d = write_deck(tmp_path, "d0000000003", versions=1)
+    raw = LEGACY | {"id": "d0000000003", "slides": LEGACY["slides"] + [
+        {"id": "s000007", "type": "image", "title": "Пусто", "bullets": [],
+         "image": None, "image_size": "medium"}]}
+    (d / "deck.json").write_text(json.dumps(raw, ensure_ascii=False))
+    assert ("d0000000003", 2) in migrate(tmp_path)
+    assert json.loads((d / "deck.json").read_text())["slides"][-1]["type"] == "section"
+
+
 def test_bar_chart_without_unit_names_the_series():
     bar = upgrade_slide({"id": "s1", "type": "bar-chart", "title": "x", "unit": "",
                          "data": [{"label": "A", "value": 1}], "bullets": []})

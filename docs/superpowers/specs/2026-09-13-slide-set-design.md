@@ -160,6 +160,7 @@
 | `title`, `section`, `final` | без изменений |
 | `image` с картинкой | `image` |
 | `image` без картинки | `text` (title, bullets, notes); `caption` без картинки не рисовалась и отбрасывается |
+| `image` без картинки и без тезисов | `section` (title, notes): `text` требует хотя бы один тезис; слайд не удаляется, чтобы не сдвинуть нумерацию |
 | `bar-chart` | `chart` kind `bar`: labels из `data[].label`, одна серия с именем `unit` или «Значение» и значениями `data[].value` |
 | `chart` | `chart` kind `line` |
 
