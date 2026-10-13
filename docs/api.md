@@ -7,7 +7,7 @@
 (с полем `template`), `PATCH /api/decks/{id}` (название), `POST /api/decks/{id}/template`
 (смена шаблона с откатом при ошибке рендера), `DELETE /api/decks/{id}` (в корзину
 `data/trash/`), `POST …/uploads` (материалы из чата), `GET /api/templates`,
-`GET /api/templates/{id}/preview/{n}.svg`, `GET /api/history`,
+`GET /api/templates/{id}/preview/{n}.svg`, `GET /api/templates/{id}/schema` (схема слайда с пределами шаблона — по ней панель проверяет длины до отправки), `GET /api/history`,
 `GET /api/decks/{id}`, `…/slides/{n}.svg`, `…/deck.pdf`, `…/deck.pptx`, `…/positions`,
 `PATCH …/slides/{sid}`, `POST …/slides`, `DELETE …/slides/{sid}`,
 `POST …/slides/{sid}/move`, `POST …/assets`, `GET …/assets/{asset}` (картинка колоды; SVG — в песочнице), `GET …/versions`,

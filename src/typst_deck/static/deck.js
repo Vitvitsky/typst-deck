@@ -1,6 +1,6 @@
 import { api, upload, waitJob, sleep, el, toast, armConfirm, TYPE_RU, FIELD_RU, SIZE_RU, KIND_RU, fileKind, errorText, fmtDate, fmtElapsed, fmtTokens } from "./api.js";
 import { mountShell } from "./shell.js";
-import { PANEL, compositeEditor, changed, merge3, embedUrl, linkError } from "./editors.js";
+import { PANEL, compositeEditor, changed, merge3, embedUrl, linkError, schemaError } from "./editors.js";
 
 const deckId = location.pathname.split("/").filter(Boolean).pop();
 mountShell({ active: "decks", deckId, defaultCollapsed: true });
@@ -73,6 +73,14 @@ async function ensureTemplates() {
   try { state.templates = await api("api/templates"); } catch { state.templates = []; }
   finally { state.templatesLoading = false; }
   renderTplSelect();
+}
+
+// схема слайда с пределами шаблона — для проверки длин до отправки; не пришла —
+// проверяет только сервер, как раньше
+const schemas = new Map();
+async function schemaOf(tid) {
+  if (!schemas.has(tid)) schemas.set(tid, api(`api/templates/${encodeURIComponent(tid)}/schema`).catch(() => { schemas.delete(tid); return null; }));
+  return schemas.get(tid);
 }
 
 function currentTemplateId() {
@@ -265,9 +273,9 @@ function renderRail() {
       el("div", { class: "cap" }, el("span", { class: "n num" }, i + 1), el("span", { class: "t" }, slide.title || TYPE_RU[slide.type])),
       state.changed.has(slide.id) ? el("span", { class: "dot", title: "Изменён моделью" }) : null,
       el("div", { class: "ops" },
-        el("button", { title: "Выше", disabled: i === 0, onclick: (e) => { e.stopPropagation(); move(slide.id, i - 1); } }, "↑"),
-        el("button", { title: "Ниже", disabled: i === deck.slides.length - 1, onclick: (e) => { e.stopPropagation(); move(slide.id, i + 1); } }, "↓"),
-        el("button", { title: "Удалить", class: "danger", onclick: (e) => { e.stopPropagation(); removeSlide(slide); } }, "✕")));
+        el("button", { type: "button", title: "Выше", "aria-label": `Слайд ${i + 1} выше`, disabled: i === 0, onclick: (e) => { e.stopPropagation(); move(slide.id, i - 1); } }, "↑"),
+        el("button", { type: "button", title: "Ниже", "aria-label": `Слайд ${i + 1} ниже`, disabled: i === deck.slides.length - 1, onclick: (e) => { e.stopPropagation(); move(slide.id, i + 1); } }, "↓"),
+        el("button", { type: "button", title: "Удалить", "aria-label": `Удалить слайд ${i + 1}`, class: "danger", onclick: (e) => { e.stopPropagation(); removeSlide(slide); } }, "✕")));
     const go = () => { select(slide.id); const t = $(`slide-${slide.id}`); if (t) t.scrollIntoView({ behavior: "smooth", block: "start" }); };
     item.addEventListener("click", go);
     item.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
@@ -532,6 +540,8 @@ function renderProps(focus) {
         }
       }
       if (!Object.keys(patch).length) { toast("Изменений нет"); return; }
+      const bad = schemaError(await schemaOf(state.info.deck.template), { ...(latest || slide), ...patch });
+      if (bad) throw new Error(bad);
       await applyResult(patchSlide(slide.id, patch));
       // форму сохранили, а ввод во время сохранения её удержал — свежая основа для предупреждения
       if (form.isConnected) {

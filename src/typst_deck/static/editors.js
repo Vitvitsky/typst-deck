@@ -2,7 +2,7 @@
 // проверки: их гоняет node --test (tests/js/editors.test.mjs); ниже — DOM-редакторы.
 // Пределы — те же, что в model.py: сервер проверит всё равно, а здесь человек
 // узнаёт об ошибке до отправки и по-русски, без пути поля.
-import { el, armConfirm, KIND_RU } from "./api.js";
+import { el, armConfirm, KIND_RU, FIELD_RU } from "./api.js";
 
 export const LIMITS = {
   items: [3, 7], blocks: [2, 3], metrics: [2, 4], images: [2, 4], header: [2, 6], rows: [1, 8],
@@ -46,6 +46,59 @@ export function seriesError(series, nLabels) {
     }
   }
   return null;
+}
+
+export const lineLabelsError = (kind, labels) =>
+  kind === "line" && labels.length < 2 ? "Линейному графику нужны хотя бы две подписи по оси" : null;
+
+// подполя вложенных моделей: метрика, блок, ряд, сторона сравнения
+const SUBFIELD_RU = { heading: "Заголовок", name: "Название ряда", value: "Число", label: "Подпись", delta: "Изменение" };
+
+// Первая ошибка длины или числа элементов в слайде по схеме шаблона
+// (GET /api/templates/{id}/schema — схема модели, суженная slots). Неизвестное
+// схеме не судим: последнее слово — за сервером.
+export function schemaError(schema, slide) {
+  if (!schema || !slide) return null;
+  const defs = schema.$defs || {};
+  const deref = (s) => { for (let i = 0; s && s.$ref && i < 20; i++) s = defs[s.$ref.split("/").pop()]; return s; };
+  const root = (schema.oneOf || []).map(deref).find((d) => d?.properties?.type?.const === slide.type);
+  // у двух графиков стороны — графики, а не колонки, как в подписи их рамок
+  const top = slide.type === "dual-chart" ? { left: "Левый график", right: "Правый график" } : {};
+  const name = (path) => path.map((p, i) => typeof p === "number" ? `№ ${p + 1}`
+    : (i === 0 ? top[p] || FIELD_RU[p] : SUBFIELD_RU[p] || FIELD_RU[p]) || p)
+    .join(" · ").replace(/ · (№ \d+)/g, ", $1");
+  const walk = (s, v, path) => {
+    s = deref(s);
+    if (!s || v == null) return null;
+    if (s.anyOf) {
+      const alt = s.anyOf.map(deref).find((a) => a && a.type !== "null");
+      return alt ? walk(alt, v, path) : null;
+    }
+    if (typeof v === "string") {
+      const n = [...v].length;  // знаки, а не UTF-16: так считает pydantic
+      if (s.minLength && n < s.minLength) return `${name(path)}: пусто`;
+      if (s.maxLength != null && n > s.maxLength) return `${name(path)}: ${n} ${plural(n, "знак", "знака", "знаков")} при пределе ${s.maxLength}`;
+      return null;
+    }
+    if (Array.isArray(v)) {
+      if (s.maxItems != null && v.length > s.maxItems) {
+        return `${name(path)}: ${v.length} ${plural(v.length, "элемент", "элемента", "элементов")} при пределе ${s.maxItems}`;
+      }
+      for (let i = 0; i < v.length; i++) {
+        const e = walk(s.items, v[i], [...path, i]);
+        if (e) return e;
+      }
+      return null;
+    }
+    if (typeof v === "object" && s.properties) {
+      for (const [k, sub] of Object.entries(s.properties)) {
+        const e = walk(sub, v[k], [...path, k]);
+        if (e) return e;
+      }
+    }
+    return null;
+  };
+  return root ? walk(root, slide, []) : null;
 }
 
 export const dropBlank = (rows) => rows.filter((r) => Object.values(r).some((v) => String(v ?? "").trim() !== ""));
@@ -164,7 +217,7 @@ function rowsEditor(field, items, columns, limits, what) {
       el("div", { class: "cells" }, ...columns.map((c) => c.long
         ? el("textarea", { "data-key": c.key, rows: 2, placeholder: c.label, "aria-label": `${c.label}, ${i + 1}` }, item[c.key] ?? "")
         : el("input", { type: "text", "data-key": c.key, value: item[c.key] ?? "", placeholder: c.label, "aria-label": `${c.label}, ${i + 1}` }))),
-      el("button", { type: "button", class: "quiet icon sm", title: "Убрать", onclick: () => { const cur = raw(); cur.splice(i, 1); draw(cur); } }, "✕"))),
+      el("button", { type: "button", class: "quiet icon sm", title: "Убрать", "aria-label": `${what}: убрать ${i + 1}`, onclick: () => { const cur = raw(); cur.splice(i, 1); draw(cur); } }, "✕"))),
     list.length < limits[1] ? el("button", { type: "button", class: "sm", onclick: () => draw([...raw(), { ...blank }]) }, "＋ Добавить") : null);
   draw(items);
   return { node: el("div", {}, label(what), box),
@@ -203,7 +256,7 @@ function seriesEditor(series, nLabelsOf, limits) {
         el("input", { type: "text", "data-key": "name", value: s.name, placeholder: "Название ряда", "aria-label": `Название ряда ${i + 1}` }),
         el("input", { type: "text", "data-key": "values", value: formatValues(s.values), placeholder: "Значения через «;», например 12,5; 17",
           "aria-label": `Значения ряда ${i + 1}`, style: "margin-top:4px" })),
-      el("button", { type: "button", class: "quiet icon sm", title: "Убрать ряд", onclick: () => { const cur = raw(); cur.splice(i, 1); draw(cur); } }, "✕"))),
+      el("button", { type: "button", class: "quiet icon sm", title: "Убрать ряд", "aria-label": `Убрать ряд ${i + 1}`, onclick: () => { const cur = raw(); cur.splice(i, 1); draw(cur); } }, "✕"))),
     items.length < limits[1] ? el("button", { type: "button", class: "sm", onclick: () => draw([...raw(), { name: "", values: [] }]) }, "＋ Ряд") : null);
   draw(series);
   return { node: box, read: () => {
@@ -214,14 +267,18 @@ function seriesEditor(series, nLabelsOf, limits) {
   } };
 }
 
-function chartControls(src, limits) {
+function chartControls(src, limits, what = "") {
   const kind = el("select", { "aria-label": "Вид графика" }, ...Object.entries(KIND_RU).map(([k, l]) => el("option", { value: k, selected: src.kind === k }, l)));
   const labels = el("textarea", { rows: 3, placeholder: "По одной на строку", "aria-label": "Подписи по оси" }, src.labels.join("\n"));
   const unit = el("input", { type: "text", value: src.unit || "", "aria-label": "Единица измерения" });
   const series = seriesEditor(src.series, () => lines(labels.value).length, limits);
   return {
     nodes: [label("Вид графика"), kind, label("Подписи по оси"), labels, label("Ряды данных"), series.node, label("Единица измерения"), unit],
-    read: () => ({ kind: kind.value, labels: lines(labels.value), series: series.read(), unit: unit.value.trim() }),
+    read: () => {
+      const e = lineLabelsError(kind.value, lines(labels.value));
+      fail(e && (what ? `${what}: ${e[0].toLowerCase()}${e.slice(1)}` : e));
+      return { kind: kind.value, labels: lines(labels.value), series: series.read(), unit: unit.value.trim() };
+    },
   };
 }
 
@@ -233,7 +290,7 @@ export function chartEditor(slide) {
 export function dualChartEditor(slide) {
   const side = (key, what) => {
     const caption = el("input", { type: "text", value: slide[key].caption, placeholder: "Подпись над графиком", "aria-label": `${what}: подпись` });
-    const c = chartControls(slide[key], LIMITS.sideSeries);
+    const c = chartControls(slide[key], LIMITS.sideSeries, what);
     return { node: el("fieldset", { class: "group" }, el("legend", {}, what), caption, ...c.nodes),
       read: () => ({ caption: caption.value.trim(), ...c.read() }) };
   };
@@ -256,7 +313,7 @@ export function tableEditor(slide) {
       el("div", { class: "scroll" }, el("table", {},
         el("thead", {}, el("tr", {}, ...header.map((h, j) => el("th", {}, cell(h, `Шапка, колонка ${j + 1}`))), el("th", {}))),
         el("tbody", {}, ...rows.map((r, i) => el("tr", {}, ...r.map((c, j) => el("td", {}, cell(c, `Строка ${i + 1}, колонка ${j + 1}`))),
-          el("td", {}, el("button", { type: "button", class: "quiet icon sm", title: "Убрать строку",
+          el("td", {}, el("button", { type: "button", class: "quiet icon sm", title: "Убрать строку", "aria-label": `Убрать строку ${i + 1}`,
             onclick: () => { sync(); rows.splice(i, 1); draw(); } }, "✕"))))))),
       el("div", { class: "row" },
         rows.length < LIMITS.rows[1] ? act("＋ Строка", () => rows.push(header.map(() => ""))) : null,
@@ -310,7 +367,7 @@ export function galleryEditor(slide, ctx) {
       el("img", { src: p.file ? URL.createObjectURL(p.file) : ctx.assetUrl(p.image), alt: "", class: "thumb" }),
       el("input", { type: "text", value: p.caption, placeholder: "Подпись", "aria-label": `Подпись картинки ${i + 1}`,
         oninput: (e) => { p.caption = e.target.value; } }),
-      el("button", { type: "button", class: "quiet icon sm", title: "Убрать картинку", onclick: () => { items.splice(i, 1); draw(); } }, "✕"))),
+      el("button", { type: "button", class: "quiet icon sm", title: "Убрать картинку", "aria-label": `Убрать картинку ${i + 1}`, onclick: () => { items.splice(i, 1); draw(); } }, "✕"))),
     items.length < LIMITS.images[1] ? filePick(".png,.jpg,.jpeg,.svg", "＋ Картинка", (file) => { items.push({ file, caption: "" }); draw(); }) : null);
   draw();
   return { node: el("div", {}, label("Картинки галереи"), box), read: async () => {

@@ -4,11 +4,12 @@
 пакета playwright, его ставит pip:
   podman run --rm --network host -v "$PWD/scripts:/s:ro" mcr.microsoft.com/playwright/python:v1.49.0-noble \\
     sh -c 'pip install -q --break-system-packages playwright==1.49.0 && python /s/ui_panel.py http://127.0.0.1:8011 <id>'
-Колода — свежая, три слайда: text «Тезисы», table с шапкой «Регион, Выручка», metrics «Числа».
+Колода — свежая, три слайда: text «Тезисы», table с шапкой «Регион, Выручка» и двумя строками, metrics «Числа».
 Проверяет: после отказа сервера вторая попытка не шлёт прежнее значение; ↑ в ленте,
 повторный выбор того же слайда и вкладки не стирают несохранённый ввод; колонка с
 текстом убирается со второго нажатия, и подтверждение не «залипает» после 3,5 с;
-устаревшая форма при сохранении не затирает правку, пришедшую с сервера.
+устаревшая форма при сохранении не затирает правку, пришедшую с сервера; длину
+поля панель ловит сама; у ✕ в ленте — подпись для экранного диктора.
 """
 import sys
 
@@ -27,11 +28,14 @@ with sync_playwright() as p:
         page.locator(".thumb-item").nth(i).click()
         page.locator('.tabs button[data-tab="slide"]').click()
 
+    page.locator(".thumb-item").first.hover()  # кнопки ленты показываются при наведении
+    expect(page.get_by_role("button", name="Удалить слайд 1", exact=True)).to_have_count(1)
     open_slide(0)
     title = page.locator("#props input[name=title]")
     title.fill("Очень длинный заголовок " * 20)
     page.locator("#props button[type=submit]").click()
-    expect(page.locator("#props .error")).not_to_be_empty()
+    # длину ловит панель по схеме шаблона, до отправки и по-русски
+    expect(page.locator("#props .error")).to_contain_text("Заголовок: 480 знаков при пределе 120")
     title.fill("Тезисы")
     page.locator("#props button[type=submit]").click()
     expect(page.locator(".toast").last).to_contain_text("Изменений нет")

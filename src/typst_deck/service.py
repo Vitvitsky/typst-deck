@@ -23,7 +23,7 @@ from .logs import log_event
 from .model import Deck, utcnow
 from .pptx import MappingError, export_pptx
 from .render import CompileError, CompileResult, compile_deck, compile_pdf, page_size
-from .slots import check_deck, first_few
+from .slots import apply_to_schema, check_deck, first_few
 from .store import DeckNotFound, DeckStore
 from .templates import SAMPLE_DECK, TemplateBroken, TemplateInfo, TemplateNotFound, TemplateRegistry
 
@@ -78,6 +78,10 @@ class DeckService:
             raise ApiError(422, "validation", f"шаблон «{e.args[0]}» сломан: {e.reason}")
         except TemplateNotFound:
             raise ApiError(422, "validation", f"шаблон «{tid}» не найден")
+
+    def template_schema(self, tid: str) -> dict:
+        """Схема слайда, суженная slots шаблона (та же, что в промпте модели)."""
+        return apply_to_schema(self.template(tid).slots)
 
     def check_templates(self) -> None:
         """Стартовая проверка шаблонов; идёт в фоне, итог — в лог и в /api/health.

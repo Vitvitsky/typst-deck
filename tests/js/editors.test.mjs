@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { LIMITS, lines, parseNumber, parseValues, formatValues, countError, seriesError, dropBlank,
-  tableFrom, columnEmpty, merge3, linkError, embedUrl, startSeconds, changed } from "../../src/typst_deck/static/editors.js";
+  tableFrom, columnEmpty, merge3, linkError, embedUrl, startSeconds, changed, schemaError, lineLabelsError } from "../../src/typst_deck/static/editors.js";
 
 test("числа по-русски", () => {
   assert.equal(parseNumber("12,5"), 12.5);
@@ -126,4 +126,47 @@ test("отметка времени ссылки доходит до плеер�
     "https://rutube.ru/play/embed/0123456789abcdef0123456789abcdef?t=90");
   assert.equal(embedUrl("https://vimeo.com/76979871#t=1m30s"), "https://player.vimeo.com/video/76979871#t=90s");
   assert.equal(embedUrl("https://www.youtube.com/watch?v=gWotBPtsulo"), "https://www.youtube-nocookie.com/embed/gWotBPtsulo");
+});
+
+// схема в том виде, что отдаёт pydantic (и GET /api/templates/{id}/schema): oneOf по $ref,
+// вложенные модели через $ref, необязательное поле — anyOf с null
+const SCHEMA = {
+  oneOf: [{ $ref: "#/$defs/TextSlide" }, { $ref: "#/$defs/ComparisonSlide" }],
+  discriminator: { propertyName: "type", mapping: { text: "#/$defs/TextSlide", comparison: "#/$defs/ComparisonSlide" } },
+  $defs: {
+    TextSlide: { type: "object", properties: {
+      type: { const: "text", type: "string" }, title: { maxLength: 60, type: "string" },
+      bullets: { type: "array", maxItems: 6, items: { type: "string", minLength: 1, maxLength: 10 } },
+      caption: { anyOf: [{ type: "string", maxLength: 5 }, { type: "null" }] } } },
+    ComparisonSlide: { type: "object", properties: {
+      type: { const: "comparison", type: "string" }, left: { $ref: "#/$defs/Side" }, right: { $ref: "#/$defs/Side" } } },
+    Side: { type: "object", properties: { heading: { maxLength: 4, type: "string" },
+      bullets: { type: "array", items: { type: "string", maxLength: 3 } } } },
+  },
+};
+
+test("длины по схеме шаблона — до отправки и по-русски", () => {
+  assert.equal(schemaError(SCHEMA, { type: "text", title: "x".repeat(61), bullets: [] }),
+    "Заголовок: 61 знак при пределе 60");
+  assert.equal(schemaError(SCHEMA, { type: "text", title: "", bullets: ["ок", "очень длинный"] }),
+    "Тезисы, № 2: 13 знаков при пределе 10");
+  assert.equal(schemaError(SCHEMA, { type: "text", title: "", bullets: ["", "a"] }), "Тезисы, № 1: пусто");
+  assert.equal(schemaError(SCHEMA, { type: "text", title: "", bullets: Array(7).fill("a") }),
+    "Тезисы: 7 элементов при пределе 6");
+  assert.equal(schemaError(SCHEMA, { type: "text", title: "", bullets: [], caption: "123456" }),
+    "Подпись к картинке: 6 знаков при пределе 5");
+  assert.equal(schemaError(SCHEMA, { type: "text", title: "", bullets: [], caption: null }), null);
+  assert.equal(schemaError(SCHEMA, { type: "comparison", left: { heading: "", bullets: ["abcd"] }, right: { heading: "", bullets: [] } }),
+    "Левая колонка · Тезисы, № 1: 4 знака при пределе 3");
+  // эмодзи — один знак, как у pydantic, а не две половинки суррогатной пары
+  assert.equal(schemaError(SCHEMA, { type: "text", title: "😀".repeat(60), bullets: [] }), null);
+  // неизвестный тип и пустая схема — не повод отказывать: сервер всё равно проверит
+  assert.equal(schemaError(SCHEMA, { type: "quote", text: "x".repeat(999) }), null);
+  assert.equal(schemaError(null, { type: "text" }), null);
+});
+
+test("линии нужны две подписи", () => {
+  assert.equal(lineLabelsError("line", ["Q1"]), "Линейному графику нужны хотя бы две подписи по оси");
+  assert.equal(lineLabelsError("line", ["Q1", "Q2"]), null);
+  assert.equal(lineLabelsError("bar", ["Q1"]), null);
 });

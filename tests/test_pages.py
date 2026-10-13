@@ -60,3 +60,15 @@ async def test_video_player_is_wired(client):
     ed = (await client.get("/static/editors.js")).text
     assert "function galleryEditor(slide" in ed and "function videoEditor(slide" in ed
     assert "следующем обновлении" not in ed
+
+
+def test_icon_buttons_have_a_spoken_label():
+    """Экранный диктор читает «✕» как «умножить»: у кнопок-значков — aria-label с тем, что убирают."""
+    import re
+    from pathlib import Path
+
+    static = Path(__file__).resolve().parents[1] / "src" / "typst_deck" / "static"
+    for f in static.glob("*.js"):
+        text = f.read_text()
+        for m in re.finditer(r'el\("button", \{(?:[^{}]|\{[^{}]*\})*\}, "[✕↑↓]"\)', text):
+            assert '"aria-label"' in m.group(0), f"{f.name}: {m.group(0)[:120]}"

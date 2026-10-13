@@ -1116,3 +1116,13 @@ async def test_deck_page_does_not_wait_for_a_locked_deck(client, monkeypatch):
     async with store.lock(d.id):
         r = await asyncio.wait_for(client.get(f"/api/decks/{d.id}"), 5)
     assert r.status_code == 200 and r.json()["has_build"] is False and not calls
+
+
+async def test_template_schema_carries_the_template_slots(tight_client):
+    """Панель проверяет длины до отправки по той же схеме, что видит модель."""
+    r = await tight_client.get("/api/templates/tight/schema")
+    assert r.status_code == 200
+    defs = r.json()["$defs"]
+    assert defs["TitleSlide"]["properties"]["title"]["maxLength"] == 60
+    assert defs["TextSlide"]["properties"]["title"]["maxLength"] == 120  # не сужен — глобальный
+    assert (await tight_client.get("/api/templates/nope/schema")).status_code == 422
