@@ -2,7 +2,7 @@
 // проверки: их гоняет node --test (tests/js/editors.test.mjs); ниже — DOM-редакторы.
 // Пределы — те же, что в model.py: сервер проверит всё равно, а здесь человек
 // узнаёт об ошибке до отправки и по-русски, без пути поля.
-import { el, KIND_RU } from "./api.js";
+import { el, armConfirm, KIND_RU } from "./api.js";
 
 export const LIMITS = {
   items: [3, 7], blocks: [2, 3], metrics: [2, 4], images: [2, 4], header: [2, 6], rows: [1, 8],
@@ -49,6 +49,11 @@ export function seriesError(series, nLabels) {
 }
 
 export const dropBlank = (rows) => rows.filter((r) => Object.values(r).some((v) => String(v ?? "").trim() !== ""));
+
+// последняя колонка пуста — в шапке и во всех строках только пробелы
+export function columnEmpty(header, rows) {
+  return [header, ...rows].every((r) => !String(r[r.length - 1] ?? "").trim());
+}
 
 export function tableFrom(header, rows) {
   const body = rows.filter((r) => r.some((c) => String(c).trim()));
@@ -218,7 +223,19 @@ export function tableEditor(slide) {
       el("div", { class: "row" },
         rows.length < LIMITS.rows[1] ? act("＋ Строка", () => rows.push(header.map(() => ""))) : null,
         header.length < LIMITS.header[1] ? act("＋ Колонка", () => { header.push(""); rows.forEach((r) => r.push("")); }) : null,
-        header.length > LIMITS.header[0] ? act("− Колонка", () => { header.pop(); rows.forEach((r) => r.pop()); }) : null));
+        header.length > LIMITS.header[0] ? dropColumn() : null));
+  }
+  // последняя колонка с текстом убирается со второго нажатия: одно случайное
+  // нажатие стирало шапку и ячейки целого столбца
+  function dropColumn() {
+    const drop = () => { sync(); header.pop(); rows.forEach((r) => r.pop()); draw(); };
+    const btn = el("button", { type: "button", class: "sm" }, "− Колонка");
+    btn.addEventListener("click", () => {
+      sync();
+      if (!columnEmpty(header, rows)) armConfirm(btn, "Убрать колонку с текстом?", drop);
+      else drop();
+    });
+    return btn;
   }
   draw();
   return { node: el("div", {}, label("Таблица"), box),

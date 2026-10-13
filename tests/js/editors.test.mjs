@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { LIMITS, lines, parseNumber, parseValues, formatValues, countError, seriesError, dropBlank,
-  tableFrom, linkError, embedUrl, changed } from "../../src/typst_deck/static/editors.js";
+  tableFrom, columnEmpty, linkError, embedUrl, changed } from "../../src/typst_deck/static/editors.js";
 
 test("числа по-русски", () => {
   assert.equal(parseNumber("12,5"), 12.5);
@@ -86,4 +86,10 @@ test("в правку идут только изменённые поля", () =
   const slide = { title: "Т", items: ["а", "б", "в"], left: { heading: "Было", bullets: ["x"] } };
   assert.deepEqual(changed({ items: ["а", "б", "в"], left: { heading: "Было", bullets: ["y"] } }, slide),
     { left: { heading: "Было", bullets: ["y"] } });
+});
+
+test("последняя колонка пуста — убирается без подтверждения", () => {
+  assert.equal(columnEmpty(["Регион", ""], [["Центр", " "], ["Север", ""]]), true);
+  assert.equal(columnEmpty(["Регион", "Выручка"], [["Центр", ""]]), false);
+  assert.equal(columnEmpty(["Регион", ""], [["Центр", "42"]]), false);
 });

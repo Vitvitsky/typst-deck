@@ -47,7 +47,7 @@ async function refresh() {
   if (state.selected && !info.deck.slides.some((s) => s.id === state.selected)) state.selected = null;
   renderStage();
   renderRail();
-  if (state.tab === "slide") renderProps();
+  if (state.tab === "slide") rerenderProps();
   setLock(false);
 }
 
@@ -283,7 +283,7 @@ function select(id) {
 }
 
 // ============ правки
-async function applyResult(promise) {
+async function applyResult(promise, { saved = false } = {}) {
   // пока правка шла, человек мог перейти на другой слайд и начать печатать: его
   // форму уже нарисовал select() — перерисовка стёрла бы ввод
   const sel = state.selected;
@@ -292,7 +292,7 @@ async function applyResult(promise) {
   state.page = info.page || state.page;
   if (info.has_build) state.positions = await api(`api/decks/${deckId}/positions`);
   renderTopbar(); renderStage(); renderRail();
-  if (state.tab === "slide" && state.selected === sel) renderProps();
+  if (state.tab === "slide" && state.selected === sel) rerenderProps({ force: saved });
   return info;
 }
 const patchSlide = (id, patch) => api(`api/decks/${deckId}/slides/${id}`, { method: "PATCH", json: { patch } });
@@ -405,18 +405,19 @@ function openFieldEditor(slide, n, field, zone, page) {
   // составные поля и поля, связанные с ними (подписи графика сверяются с рядами), — во вкладке «Слайд»
   if ((PANEL[slide.type] || []).includes(field)) { switchTab("slide", field); return; }
   closeEditors();
-  const patch = {};
   const form = el("form", { class: "editor" }, el("div", { class: "head" }, el("span", {}, `${FIELD_RU[field] || field} · слайд ${n}`), el("span", { class: "tiny" }, "Enter — сохранить, Esc — отмена")));
   let control = null, img = null;
-  if (field === "image") { img = imageControls(slide, patch); form.append(img); }
+  if (field === "image") { img = imageControls(slide); form.append(img); }
   else { control = fieldControl(slide, field); form.append(control); }
   const err = el("div", { class: "error small" });
   form.append(err, el("div", { class: "actions" }, el("button", { type: "button", onclick: closeEditors }, "Отмена"), el("button", { class: "primary", type: "submit" }, "Сохранить")));
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
+    err.textContent = "";
+    const patch = {};  // заново на каждую попытку: иначе после отказа уйдёт и прежнее значение
     try {
       if (control) patch[field] = readControl(field, control);
-      if (img) await img.collect();
+      if (img) await img.collect(patch);
       const result = await patchSlide(slide.id, patch);
       closeEditors();
       await applyResult(Promise.resolve(result));
@@ -448,17 +449,19 @@ function readControl(field, control) {
 }
 
 // картинка: размер, загрузка, удаление
-function imageControls(slide, patch) {
+function imageControls(slide) {
   const box = el("div", { class: "image-box" });
   const size = fieldControl(slide, "image_size");
   const file = el("input", { type: "file", accept: ".png,.jpg,.jpeg,.svg", "aria-label": "Загрузить картинку" });
   const status = el("div", { class: "muted tiny" }, slide.image ? "Картинка на слайде" : "Картинки нет — загрузите файл");
-  const remove = slide.image ? el("button", { type: "button", class: "sm danger", onclick: () => { patch.image = null; status.textContent = "Картинка будет убрана после сохранения"; } }, "Убрать картинку") : null;
+  let drop = false;
+  const remove = slide.image ? el("button", { type: "button", class: "sm danger", onclick: () => { drop = true; status.textContent = "Картинка будет убрана после сохранения"; box.dispatchEvent(new Event("input", { bubbles: true })); } }, "Убрать картинку") : null;
   box.append(el("label", { class: "f" }, "Размер"), size, el("label", { class: "f" }, slide.image ? "Заменить" : "Загрузить"), file, status);
   if (remove) box.append(remove);
-  box.collect = async () => {
+  box.collect = async (patch) => {
     patch.image_size = size.value;
     if (file.files[0]) patch.image = (await upload(`api/decks/${deckId}/assets`, file.files[0])).asset_id;
+    else if (drop) patch.image = null;
   };
   return box;
 }
@@ -478,7 +481,7 @@ function renderProps(focus) {
   const slide = state.info && state.info.deck.slides.find((s) => s.id === state.selected);
   if (!slide) { box.replaceChildren(el("p", { class: "muted small" }, "Выберите слайд: нажмите на него в центре или в ленте слева.")); return; }
   const n = state.info.deck.slides.indexOf(slide) + 1;
-  const patch = {};
+  let patch = {};
   const form = el("form", {}, el("h3", {}, `Слайд ${n} · ${TYPE_RU[slide.type]}`), el("div", { class: "sub" }, "Меняются только поля — оформление задаёт шаблон колоды (его можно сменить вверху)."));
   const readers = [];
   // text выше author: у цитаты нет заголовка, и панель читалась «Автор, потом Текст»
@@ -503,7 +506,7 @@ function renderProps(focus) {
     readers.push(async () => { const v = readControl(k, c); if (JSON.stringify(v) !== JSON.stringify(slide[k])) patch[k] = v; });
   }
   let img = null;
-  if ("image" in slide) { img = imageControls(slide, patch); form.append(el("label", { class: "f" }, FIELD_RU.image), img); }
+  if ("image" in slide) { img = imageControls(slide); form.append(el("label", { class: "f" }, FIELD_RU.image), img); }
   const err = el("div", { class: "error small" });
   const del = el("button", { type: "button", class: "danger" }, "Удалить слайд");
   del.addEventListener("click", () => armConfirm(del, "Точно удалить?", () => removeSlide(slide)));
@@ -512,15 +515,26 @@ function renderProps(focus) {
     e.preventDefault();
     const save = form.querySelector("button[type=submit]");
     save.disabled = true;  // двойной щелчок не шлёт правку дважды и не грузит файлы галереи повторно
+    err.textContent = "";
+    patch = {};  // заново на каждую попытку: иначе после отказа уйдёт и прежнее значение
     try {
       for (const r of readers) await r();
-      if (img) await img.collect();
+      if (img) await img.collect(patch);
       if (!Object.keys(patch).length) { toast("Изменений нет"); return; }
-      await applyResult(patchSlide(slide.id, patch));
+      await applyResult(patchSlide(slide.id, patch), { saved: true });
       toast("Сохранено");
     } catch (ex) { err.textContent = ex.message; }
     finally { save.disabled = false; }
   });
+  // несохранённый ввод: перерисовка после чужой операции (ответ чата, ↑↓, смена
+  // шаблона) его не стирает — см. rerenderProps
+  form.dataset.slide = slide.id;
+  form.dataset.snapshot = JSON.stringify(slide);
+  const dirty = () => { form.dataset.dirty = "1"; };
+  form.addEventListener("input", dirty);
+  form.addEventListener("change", dirty);
+  // ＋/✕ составных редакторов меняют форму без input; «Сохранить» и «Удалить» — в .actions
+  form.addEventListener("click", (e) => { if (e.target.closest("button") && !e.target.closest(".actions")) dirty(); });
   box.replaceChildren(form);
   if (focus) {
     const target = box.querySelector(`[data-fields~="${focus}"]`);
@@ -531,6 +545,23 @@ function renderProps(focus) {
       if (first) first.focus();
     }
   }
+}
+
+// Панель с несохранённым вводом того же слайда не перерисовывается: иначе ответ
+// чата или ↑↓ в ленте молча стирают набранное. Если слайд за это время изменился
+// (модель, возврат версии), под формой — предупреждение; сохранение отправит только
+// поля, которые человек менял. force — панель перерисовывается после своего сохранения.
+function rerenderProps({ force = false } = {}) {
+  const form = $("props").querySelector("form");
+  const slide = state.info && state.info.deck.slides.find((s) => s.id === state.selected);
+  if (!force && form && form.dataset.dirty && slide && form.dataset.slide === slide.id) {
+    if (JSON.stringify(slide) !== form.dataset.snapshot && !form.querySelector(".stale")) {
+      form.querySelector(".error").before(el("div", { class: "notice warn inline stale" },
+        "Слайд изменился, пока вы правили. «Сохранить» запишет только ваши поля; чтобы увидеть новые значения, выберите слайд заново."));
+    }
+    return;
+  }
+  renderProps();
 }
 
 // ============ чат
