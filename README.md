@@ -113,12 +113,6 @@ scripts/dev.sh                 # http://127.0.0.1:8000 с автоперезаг
 проверить его и подключить, как задать ёмкость слотов и PowerPoint-мастер для
 экспорта в PPTX — [`docs/template-contract.md`](docs/template-contract.md).
 
-На этом сервере подключён Lemana Tech (`lemana-tech`) из
-`~/projects/lmru--hr-analytics--design-template`; старый id `lmru-hr`
-разрешается алиасом `TYPST_DECK_TEMPLATE_ALIASES`. Канон смонтирован в сервис
-живым каталогом: правка его файлов сразу видна пользователям, порядок правки —
-[`docs/operations.md`](docs/operations.md#правка-канона).
-
 ## Устройство репозитория
 
 ```
