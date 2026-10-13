@@ -187,9 +187,9 @@ warning: unknown font family: liberation sans
 
 
 def test_missing_fonts_drops_fallbacks_of_a_found_family():
-    # DejaVu найден — его запасные молчат; беду второй цепочки показывает её первое
-    # семейство, а Liberation Sans там же — запасное и у найденного DejaVu
-    assert missing_fonts(STDERR) == ["absent one", "tt interphases pro"]
+    # DejaVu найден — его запасные молчат; во второй цепочке первого нет, и её
+    # Liberation Sans — уже не шум: текст там уйдёт в шрифт по умолчанию
+    assert missing_fonts(STDERR) == ["absent one", "liberation sans", "tt interphases pro"]
 
 
 def test_missing_fonts_reads_chains_kept_in_variables():
@@ -204,6 +204,24 @@ def test_missing_fonts_reads_chains_kept_in_variables():
     src = '#let body-font = ("TT Interphases Pro", "TT Interphases Pro Trl", "Liberation Sans")'
     assert missing_fonts(stderr, src) == []
     assert missing_fonts(stderr) == ["liberation sans", "tt interphases pro trl"]
+
+
+def test_missing_fonts_judges_each_place_on_its_own():
+    """Семейство — запасное в одной цепочке и единственное в другом месте: молчит
+    только там, где за ним стоит найденное первое."""
+    stderr = """warning: unknown font family: nope fallback
+  ┌─ a.typ:1:16
+  │
+1 │ #set text(font: ("DejaVu Sans", "Nope Fallback"))
+  │                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unknown font family: nope fallback
+  ┌─ a.typ:3:12
+  │
+3 │ #text(font: "Nope Fallback")[World]
+  │             ^^^^^^^^^^^^^^^
+"""
+    assert missing_fonts(stderr) == ["nope fallback"]
 
 
 def test_missing_fonts_keeps_a_warning_without_a_readable_chain():

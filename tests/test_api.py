@@ -1117,6 +1117,7 @@ async def test_deck_page_does_not_wait_for_a_locked_deck(client, monkeypatch):
     async with store.lock(d.id):
         r = await asyncio.wait_for(client.get(f"/api/decks/{d.id}"), 5)
     assert r.status_code == 200 and r.json()["has_build"] is False and not calls
+    assert r.json()["build_stale"] is True, "страница заглянет позже"
 
 
 async def test_template_schema_carries_the_template_slots(tight_client):
@@ -1185,7 +1186,14 @@ def test_template_fingerprint_ignores_git(tmp_path):
     (tmp_path / ".git" / "index").write_text("y")
     assert template_fingerprint(tmp_path, ttl=0) == a
     (tmp_path / "new.typ").write_text("z")
-    assert template_fingerprint(tmp_path, ttl=0) != a
+    b = template_fingerprint(tmp_path, ttl=0)
+    assert b != a
+    import os
+    import time as t
+
+    t.sleep(0.01)
+    os.rename(tmp_path / "new.typ", tmp_path / "renamed.typ")  # число, размеры и mtime файлов те же
+    assert template_fingerprint(tmp_path, ttl=0) != b
 
 
 async def test_failed_lazy_build_reason_is_in_the_deck_response(client, monkeypatch):

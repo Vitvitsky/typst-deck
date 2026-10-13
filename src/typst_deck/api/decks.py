@@ -62,13 +62,14 @@ async def create(body: CreateBody, s: DeckService = Depends(svc)):
 
 @router.get("")
 async def list_decks(s: DeckService = Depends(svc)):
-    return s.list_decks()
+    return await s.list_decks()
 
 
 @router.get("/{deck_id}")
 async def get(deck_id: str, s: DeckService = Depends(svc)):
-    await s.ensure_build(deck_id)
-    return s.deck_response(deck_id)
+    fresh = await s.ensure_build(deck_id)
+    # устаревшие превью, которые сейчас пересобирает фон, — странице заглянуть позже
+    return s.deck_response(deck_id) | {"build_stale": not fresh}
 
 
 @router.patch("/{deck_id}")

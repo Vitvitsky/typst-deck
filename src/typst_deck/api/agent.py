@@ -63,7 +63,8 @@ async def render_deck(body: RenderIn, s: DeckService = Depends(svc)):
             raise ApiError(413, "too_large", f"файл {f.name} больше {s.settings.max_upload_mb} МБ")
         files[f.name] = data
     deck_id = await s.render_ready(body.deck, body.template, files, body.deck_id)
-    return s.agent_response(deck_id)
+    # ответ — про эту сборку: прежний провал генерации моделью к ней не относится
+    return s.agent_response(deck_id) | {"status": "ready", "last_error": None}
 
 
 @router.post("/revise_deck")

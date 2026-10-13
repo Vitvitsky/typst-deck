@@ -2,6 +2,7 @@ import asyncio
 import base64
 
 from tests.conftest import requires_typst
+from typst_deck.model import Deck
 from typst_deck.llm.client import Completion, ToolCall
 
 pytestmark = requires_typst
@@ -150,3 +151,48 @@ async def test_render_deck_rewrites_an_existing_deck(client):
     deck = client.app.state.store.load(did)
     assert (deck.title, deck.template, deck.version) == ("Т2", "dark", 2)
     assert (await client.post("/api/agent/render_deck", json={"deck_id": "nope", "deck": {"slides": []}})).status_code == 404
+
+
+async def test_render_deck_without_slides_is_a_field_error(client):
+    r = await client.post("/api/agent/render_deck", json={"deck": {"slides": []}})
+    assert r.status_code == 422
+    assert r.json()["error"]["fields"][0]["path"] == "slides"
+    assert (await client.get("/api/decks")).json() == []
+
+
+async def test_render_deck_reports_ready_after_a_failed_generation(client, fake_llm):
+    """Агент чинит колоду после провала модели: ответ render_deck — про эту сборку."""
+    r = await client.post("/api/agent/create_deck", json={"brief": "x", "wait_seconds": 30})
+    assert r.json()["status"] == "failed"  # очередь fake_llm пуста — генерация падает
+    r = await client.post("/api/agent/render_deck", json={"deck_id": r.json()["deck_id"],
+                                                          "deck": {"slides": [{"type": "final"}]}})
+    assert r.status_code == 200 and r.json()["status"] == "ready" and r.json()["last_error"] is None
+
+
+async def test_render_deck_refuses_a_deck_id_outside_decks(client):
+    """id колоды — не путь: «../trash/…» вёл в корзину, мимо decks/."""
+    store = client.app.state.store
+    gone = store.delete(store.create(Deck(title="Т", slides=[{"type": "final"}])).id)
+    r = await client.post("/api/agent/render_deck", json={"deck_id": f"../trash/{gone.name}",
+                                                          "deck": {"slides": [{"type": "final"}]}})
+    assert r.status_code == 404
+    assert (await client.get(f"/api/agent/decks/..%2Ftrash%2F{gone.name}")).status_code == 404
+
+
+async def test_failed_rewrite_leaves_no_new_pictures(client, monkeypatch):
+    from tests.conftest import PNG_1PX as png
+    from typst_deck.api.common import ApiError
+    from typst_deck.service import DeckService
+
+    r = await client.post("/api/agent/render_deck", json={"deck": {"slides": [{"type": "final"}]}})
+    did = r.json()["deck_id"]
+
+    async def boom(self, deck):
+        raise ApiError(500, "render", "typst упал")
+
+    monkeypatch.setattr(DeckService, "render", boom)
+    r = await client.post("/api/agent/render_deck", json={"deck_id": did, "deck": {"slides": [
+        {"type": "image", "title": "К", "image": "a.png"}]}, "files": [{"name": "a.png", "content_base64": _b64(png)}]})
+    assert r.status_code == 500
+    assert client.app.state.store.assets(did) == []
+    assert [x.type for x in client.app.state.store.load(did).slides] == ["final"], "откат, как у manual"

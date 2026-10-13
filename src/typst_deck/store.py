@@ -14,6 +14,9 @@ ASSET_EXT = {".png", ".jpg", ".jpeg", ".svg"}
 SAFE_NAME = re.compile(r"[^\w.\- ]", re.UNICODE)
 
 
+DECK_ID = re.compile(r"[a-z0-9]{1,40}")
+
+
 class DeckNotFound(KeyError):
     pass
 
@@ -42,6 +45,9 @@ class DeckStore:
 
     # --- пути и блокировки
     def deck_dir(self, deck_id: str) -> Path:
+        # id колоды — не путь: «../trash/…» из запроса вёл бы мимо decks/
+        if not DECK_ID.fullmatch(deck_id):
+            raise DeckNotFound(deck_id)
         return self.data_dir / "decks" / deck_id
 
     def exists(self, deck_id: str) -> bool:

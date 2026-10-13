@@ -50,8 +50,8 @@ async function refresh() {
   renderRail();
   if (state.tab === "slide") rerenderProps();
   setLock(false);
-  // превью ещё собирается (колоду держит фон или правка) — заглянуть позже
-  if (info.deck.slides.length && !info.has_build && !info.build_error && !state.buildPoll) {
+  // превью ещё собирается или пересобирается (колоду держит фон или правка) — заглянуть позже
+  if (info.deck.slides.length && (!info.has_build || info.build_stale) && !info.build_error && !state.buildPoll) {
     state.buildPoll = setTimeout(() => { state.buildPoll = null; refresh(); }, 2000);
   }
 }

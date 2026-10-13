@@ -85,6 +85,7 @@ FONT_WARNING = re.compile(r"unknown font family: ([^\n]+)")
 SOURCE_LINE = re.compile(r"^\s*\d+ │(.*)$", re.M)
 STRING_TUPLE = re.compile(r'\(\s*"[^"\\]+"(?:\s*,\s*"[^"\\]+")+\s*,?\s*\)')
 QUOTED = re.compile(r'"([^"\\]+)"')
+SINGLE_FONT = re.compile(r'font:\s*"([^"\\]+)"')
 FRAME = str.maketrans("│╭╰─", "    ")
 
 
@@ -92,18 +93,26 @@ def missing_fonts(stderr: str, sources: str = "") -> list[str]:
     """Семейства, о которых стоит сказать. typst предупреждает о каждом ненайденном
     семействе цепочки, даже если первое нашлось и запасные не понадобились: у Lemana
     «TT Interphases Pro Trl» и «Liberation Sans» топили в /api/health настоящую беду.
-    Цепочки — кортежи строк из строк исходника под предупреждениями и из sources
-    (.typ шаблона: цепочку часто держат в переменной). Запасное семейство молчит, если
-    у его цепочки первое семейство найдено, то есть о нём предупреждения нет."""
+
+    Каждое предупреждение судится по своему месту: цепочка — кортеж строк или
+    font: "X" в строках исходника под ним. Там лишь переменная (font: body-font) —
+    цепочки берутся из sources, .typ шаблона. Запасное семейство молчит, если первое
+    семейство его цепочки найдено, то есть о нём предупреждения нет."""
     blocks = [(m.group(1).strip(), b) for b in re.split(r"(?m)^(?=warning: )", stderr)
               if (m := FONT_WARNING.match(b.removeprefix("warning: ")))]
     warned = {fam for fam, _ in blocks}
-    # многострочная цепочка: у второй строки фрагмента свои рамки «│ ╭ ╰»
-    snippets = (" ".join(SOURCE_LINE.findall(b)).translate(FRAME) for _, b in blocks)
-    text = sources + "\n" + "\n".join(snippets)
-    chains = [[f.lower() for f in QUOTED.findall(t)] for t in STRING_TUPLE.findall(text)]
-    covered = {f for c in chains if c[0] not in warned for f in c[1:]}
-    return sorted(warned - covered)
+    chains = lambda text: [[f.lower() for f in QUOTED.findall(t)] for t in STRING_TUPLE.findall(text)]
+    from_sources = chains(sources)
+    out = set()
+    for fam, b in blocks:
+        # многострочная цепочка: у второй строки фрагмента свои рамки «│ ╭ ╰»
+        snippet = " ".join(SOURCE_LINE.findall(b)).translate(FRAME)
+        # цепочка на месте — кортеж или одно семейство (font: "X"); иначе переменная
+        single = [[f.lower()] for f in SINGLE_FONT.findall(snippet)]
+        here = (chains(snippet) + single) or from_sources
+        if not any(fam in c[1:] and c[0] not in warned for c in here):
+            out.add(fam)
+    return sorted(out)
 
 
 def template_sources(path: Path) -> str:

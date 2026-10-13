@@ -43,7 +43,8 @@ FINGERPRINTS: dict[str, tuple[float, str]] = {}
 
 
 def template_fingerprint(path: Path, ttl: float = 10.0) -> str:
-    """Отпечаток файлов шаблона: число, сумма размеров и последний mtime. Канон
+    """Отпечаток файлов шаблона: число, сумма размеров и последний mtime файлов и
+    каталогов. Канон
     примонтирован вживую и правится без рестарта; .git пропускается — его файлы
     меняются от git status и fetch, а не от правки шаблона."""
     key = str(path)
@@ -53,6 +54,10 @@ def template_fingerprint(path: Path, ttl: float = 10.0) -> str:
     n = size = newest = 0
     for root, dirs, files in os.walk(path, followlinks=True):
         dirs[:] = [d for d in dirs if d != ".git"]
+        try:  # mtime каталога ловит переименование и удаление файла
+            newest = max(newest, os.stat(root).st_mtime_ns)
+        except OSError:
+            pass
         for f in files:
             try:
                 st = os.stat(os.path.join(root, f))
@@ -292,12 +297,22 @@ class DeckService:
             "pages": json.loads(pp.read_text()) if (pp := build / "pages.json").exists() else [],
         }
 
-    def list_decks(self) -> list[dict]:
+    async def list_decks(self) -> list[dict]:
         """Каталог. Колоды без свежей сборки ставятся в фоновую очередь: превью
         появляются без открытия каждой колоды, а typst идёт по одной колоде за раз,
-        а не двадцатью сразу при открытии списка."""
-        out = []
+        а не двадцатью сразу при открытии списка. Обход — файловый, в потоке:
+        сотня колод не держит цикл событий."""
+        out, stale = await asyncio.to_thread(self._scan_decks)
+        for deck_id in stale:
+            self._build_in_background(deck_id)
+        for item in out:
+            item["building"] = item["id"] in self._building
+        return out
+
+    def _scan_decks(self) -> tuple[list[dict], list[str]]:
+        out, stale = [], []
         pptx: dict[str, bool] = {}  # шаблон → есть ли мастер; реестр читает template.json на каждый get
+        stamps: dict[str, str | None] = {}
         for d in self.store.list_decks():
             active, last = self.jobs.active_for(d.id), self.jobs.last_for(d.id)
             status = "generating" if active else ("failed" if last and last.status == "failed" else "ready")
@@ -305,22 +320,21 @@ class DeckService:
                 pptx[d.template] = self._has_pptx(d.template)
             build = self.store.deck_dir(d.id) / "build"
             error = self.build_error(d)
-            if d.slides and not active and error is None and not self.build_fresh(d):
-                self._build_in_background(d.id)
+            if d.slides and not active and not self._retry_later(d) and not self.build_fresh(d, stamps):
+                stale.append(d.id)
             pages = json.loads(pp.read_text()) if (pp := build / "pages.json").exists() else []
             out.append({
                 "id": d.id, "title": d.title, "slide_count": len(d.slides), "version": d.version,
                 "created_at": d.created_at.isoformat(), "updated_at": d.updated_at.isoformat(),
                 "status": status,
                 "has_build": (build / "slide-1.svg").exists(),
-                "building": d.id in self._building,
                 "build_error": error,
                 # версия миниатюры — хеш первой страницы: пересборка без новой версии
                 # колоды (метка, канон) меняет адрес, и браузер не держит старую год
                 "thumb": pages[0] if pages else None,
                 "pptx": pptx[d.template],
             })
-        return out
+        return out, stale
 
     def _build_in_background(self, deck_id: str) -> None:
         if deck_id in self._building:
@@ -392,26 +406,37 @@ class DeckService:
                           str(t.path.resolve()), str(t.fonts), template_fingerprint(t.path)])
         return hashlib.blake2b(raw.encode(), digest_size=8).hexdigest()
 
-    def build_fresh(self, deck: Deck) -> bool:
+    def build_fresh(self, deck: Deck, stamps: dict[str, str | None] | None = None) -> bool:
         """Сборка есть и собрана тем же, чем собралась бы сейчас. Шаблон пропал или
-        сломан — пересобрать всё равно не выйдет: годится любая имеющаяся."""
+        сломан — пересобрать всё равно не выйдет: годится любая имеющаяся.
+        stamps — метки по шаблонам на один обход списка: reg.get() читает
+        template.json и сканирует корни шаблонов, на сотню колод это заметно."""
         build = self.store.deck_dir(deck.id) / "build"
         if not (build / "slide-1.svg").exists():
             return False
-        try:
-            t = self.templates.get(deck.template)
-        except TemplateNotFound:
+        stamps = {} if stamps is None else stamps
+        if deck.template not in stamps:
+            try:
+                stamps[deck.template] = self.build_stamp(self.templates.get(deck.template))
+            except TemplateNotFound:
+                stamps[deck.template] = None
+        if stamps[deck.template] is None:
             return True
         stamp = build / "stamp.txt"
-        return stamp.exists() and stamp.read_text() == self.build_stamp(t)
+        return stamp.exists() and stamp.read_text() == stamps[deck.template]
 
     def build_error(self, deck: Deck) -> str | None:
         failed = self._lazy_failed.get(deck.id)
         return failed[2] if failed and failed[0] == deck.version else None
 
+    def _retry_later(self, deck: Deck) -> bool:
+        """Провал ленивой сборки этой версии свежий — повторять рано (LAZY_RETRY_S)."""
+        failed = self._lazy_failed.get(deck.id)
+        return bool(failed and failed[0] == deck.version and time.monotonic() - failed[1] < self.LAZY_RETRY_S)
+
     LAZY_RETRY_S = 300
 
-    async def ensure_build(self, deck_id: str, *, for_pdf: bool = False) -> None:
+    async def ensure_build(self, deck_id: str, *, for_pdf: bool = False) -> bool:
         """Сборки нет или она устарела (build_fresh) — собрать при первом обращении:
         перенос колод (migrate_slides) сносит устаревший build/, выкатка и правка
         канона меняют метку, и без этого колода стояла бы без превью или со старыми,
@@ -423,23 +448,24 @@ class DeckService:
         чтобы каждый опрос страницы не гонял typst заново под блокировкой. Повтор —
         после правки колоды (новая версия) или через LAZY_RETRY_S: канон правят
         вживую, без рестарта. PDF (for_pdf=True) ждёт блокировку и отдаёт ошибку
-        сборки как есть — с причиной, а не 404."""
+        сборки как есть — с причиной, а не 404.
+
+        False — сборка не свежая и сейчас не собрана (её держит фон или правка,
+        либо она упала): странице есть смысл заглянуть позже."""
         if await asyncio.to_thread(self.build_fresh, self.load(deck_id)):
-            return
+            return True
         lock = self.store.lock(deck_id)
         if not for_pdf and lock.locked():
-            return  # колоду сейчас правят или собирают — не висеть на этом
+            return False  # колоду сейчас правят или собирают — не висеть на этом
         async with lock:
             # под блокировкой: колоду могли опустошить, а модель — начать сборку
             deck = self.load(deck_id)
             if await asyncio.to_thread(self.build_fresh, deck):  # мог успеть параллельный запрос
-                return
+                return True
             if not deck.slides or self.jobs.active_for(deck_id):
-                return
-            failed = self._lazy_failed.get(deck_id)
-            if (not for_pdf and failed and failed[0] == deck.version
-                    and time.monotonic() - failed[1] < self.LAZY_RETRY_S):
-                return
+                return True  # ждать нечего: собирать нечего, или соберёт модель
+            if not for_pdf and self._retry_later(deck):
+                return False
             try:
                 await self.render(deck)
             except Exception as e:
@@ -449,8 +475,9 @@ class DeckService:
                           level=logging.WARNING)
                 if for_pdf:
                     raise
-            else:
-                self._lazy_failed.pop(deck_id, None)
+                return False
+            self._lazy_failed.pop(deck_id, None)
+            return True
 
     async def pdf(self, deck_id: str) -> Path:
         """PDF по требованию: собирается при первом скачивании и лежит в build/
@@ -569,6 +596,9 @@ class DeckService:
             deck = Deck.model_validate({**body, "template": template})
         except ValidationError as e:
             raise ApiError(422, "validation", format_validation(e), fields=_fields(e))
+        if not deck.slides:
+            raise ApiError(422, "validation", "slides: нужен хотя бы один слайд",
+                           fields=[{"path": "slides", "message": "нужен хотя бы один слайд"}])
         known = set(self.store.assets(deck_id)) if deck_id else set()
         refs, errors = _picture_refs(deck), []
         for path, name in refs:
@@ -585,8 +615,13 @@ class DeckService:
         aids = {name: self.store.add_asset(target, name, files[name]) for name in {n for _, n in refs} if name in files}
         _set_pictures(deck, aids)
         if deck_id is not None:
-            await self.manual(deck_id, lambda d: (setattr(d, "title", deck.title), setattr(d, "template", template),
-                                                  setattr(d, "slides", deck.slides)), check_slots=False)
+            try:
+                await self.manual(deck_id, lambda d: (setattr(d, "title", deck.title), setattr(d, "template", template),
+                                                      setattr(d, "slides", deck.slides)), check_slots=False)
+            except ApiError:
+                for aid in aids.values():  # откат колоды не оставляет и её новых картинок
+                    self.store.asset_path(deck_id, aid).unlink(missing_ok=True)
+                raise
         else:
             self.store.create(deck)
             async with self.store.lock(target):
