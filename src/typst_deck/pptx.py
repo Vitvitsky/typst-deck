@@ -15,8 +15,9 @@ import json
 import re
 import tempfile
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Callable, Literal
 
 from lxml import etree
 from PIL import Image
@@ -31,26 +32,31 @@ from pptx.oxml.ns import qn
 from pptx.util import Emu, Mm, Pt
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from .model import Deck
+from .model import SLIDE_TYPES, Deck
 from .render import CompileError, inside_template, rasterize_svg
 
 MM = 36000  # EMU в миллиметре
-SLIDE_TYPES = ("title", "section", "image", "bar-chart", "chart", "final")
 # Поля, которые обязаны лежать в заполнителях, — в порядке модели: он же задаёт
-# порядок абзацев, когда несколько полей делят один заполнитель. Остальное
-# (тезисы, картинка, подпись, график) идёт в зону body, notes — в заметки.
+# порядок абзацев, когда несколько полей делят один заполнитель. Типам, которых
+# здесь нет, нужен только заголовок. Остальное идёт в зону body, notes — в заметки.
 PH_FIELDS = {
     "title": ("title", "subtitle", "author", "department"),
     "section": ("title", "subtitle"),
-    "image": ("title",),
-    "bar-chart": ("title",),
-    "chart": ("title",),
     "final": ("title", "contact"),
+    "quote": (),
 }
-BODY_KEYS = {"image": ("body", "image_width", "gap"),
-             "bar-chart": ("body", "text_width", "gap"),
-             "chart": ("body", "text_width", "gap")}
-OPTIONAL_KEYS = {"bar-chart": ("heading",), "chart": ("heading",)}
+# Ключи зоны тела: у типа из этого словаря они обязательны, у прочих запрещены.
+BODY_KEYS = {
+    "agenda": ("body",), "text": ("body",), "quote": ("body",),
+    "table": ("body",), "video": ("body",),
+    "image": ("body", "image_width", "gap"),
+    "columns": ("body", "gap"),  # только без ph.blocks — см. _body_keys
+    "comparison": ("body", "gap"), "dual-chart": ("body", "gap"),
+    "metrics": ("body", "gap"), "gallery": ("body", "gap"),
+    "chart": ("body", "text_width", "gap"),
+}
+OPTIONAL_KEYS = {"chart": ("heading",)}
+BLOCKS = 3  # столько блоков допускает ColumnsSlide.blocks (max_length в model.py)
 
 CAPTION_STRIP = 15   # мм под подпись к картинке
 CAPTION_SCALE = 0.7  # кегль подписи от кегля тезисов
@@ -72,9 +78,11 @@ class _Strict(BaseModel):
 
 
 class TextStyle(_Strict):
-    size: float = Field(gt=0)  # кегль тезисов, пт
-    bullet: Hex                # цвет маркера тезисов
-    caption: Hex               # цвет подписи к картинке
+    size: float = Field(gt=0)    # кегль тезисов, пт
+    bullet: Hex                  # цвет маркера тезисов и номеров повестки
+    caption: Hex                 # цвет подписей: картинки, автора цитаты, метрики
+    quote: float = Field(gt=0)   # кегль цитаты, пт
+    metric: float = Field(gt=0)  # кегль крупного числа метрики, пт
 
 
 class ChartStyle(_Strict):
@@ -82,14 +90,32 @@ class ChartStyle(_Strict):
     negative: Hex                             # столбцы с отрицательным значением
 
 
+class TrendStyle(_Strict):
+    up: Hex    # изменение метрики со знаком «+»
+    down: Hex  # изменение со знаком «-» или тире
+
+
+class TableStyle(_Strict):
+    size: float = Field(gt=0)  # кегль ячеек, пт
+    header_fill: Hex           # заливка шапки
+    stripe_fill: Hex           # заливка чётных строк («зебра»)
+    rule: Hex                  # цвет тонких линий
+
+
 class SlideMap(_Strict):
     layout: str                                   # имя макета мастера (<p:cSld name>)
-    ph: dict[str, int]                            # поле → idx заполнителя; у заголовка 0
+    # поле → idx заполнителя; у заголовка 0. Список — только у columns.blocks
+    ph: dict[str, int | list[int]]
     body: tuple[float, float, float, float] | None = None  # зона тела x, y, w, h в мм
     image_width: dict[Literal["small", "medium", "large"], Percent] | None = None
     text_width: Percent | None = None
     gap: float | None = Field(default=None, ge=0)  # зазор между колонками, мм
     heading: str | None = None                     # заголовок колонки тезисов у графиков
+
+
+SlideType = Literal["title", "agenda", "section", "text", "image", "columns", "comparison",
+                    "quote", "chart", "dual-chart", "metrics", "table", "gallery", "video", "final"]
+assert set(SlideType.__args__) == set(SLIDE_TYPES), "pptx.SlideType разошёлся с model.SLIDE_TYPES"
 
 
 class Mapping(_Strict):
@@ -98,17 +124,37 @@ class Mapping(_Strict):
     font: str | None = Field(default=None, min_length=1)
     text: TextStyle
     chart: ChartStyle
-    slides: dict[Literal["title", "section", "image", "bar-chart", "chart", "final"], SlideMap]
+    trend: TrendStyle
+    table: TableStyle
+    slides: dict[SlideType, SlideMap]
+
+
+def ph_fields(stype: str) -> tuple[str, ...]:
+    return PH_FIELDS.get(stype, ("title",))
+
+
+def _body_keys(stype: str, sm: SlideMap) -> tuple[str, ...]:
+    if stype == "columns" and "blocks" in sm.ph:
+        return ()  # блоки в заполнителях мастера — зона и зазор не нужны
+    return BODY_KEYS.get(stype, ())
 
 
 def _completeness(m: Mapping) -> list[str]:
-    """Правила полноты спеки §4.3, которые не выражаются типами."""
+    """Правила полноты спеки §7, которые не выражаются типами."""
     problems = [f"slides: нет типа {t}" for t in SLIDE_TYPES if t not in m.slides]
     for stype, sm in m.slides.items():
-        need = PH_FIELDS[stype]
+        need = ph_fields(stype)
+        allowed_ph = need + (("blocks",) if stype == "columns" else ())
         problems += [f"slides.{stype}.ph: нет поля {f}" for f in need if f not in sm.ph]
-        problems += [f"slides.{stype}.ph: поле {f} не кладётся в заполнитель" for f in sm.ph if f not in need]
-        body = BODY_KEYS.get(stype, ())
+        for f, v in sm.ph.items():
+            if f not in allowed_ph:
+                problems.append(f"slides.{stype}.ph: поле {f} не кладётся в заполнитель")
+            elif f == "blocks":
+                if not isinstance(v, list) or len(v) < BLOCKS:
+                    problems.append(f"slides.{stype}.ph.blocks: нужно не меньше {BLOCKS} заполнителей")
+            elif isinstance(v, list):
+                problems.append(f"slides.{stype}.ph.{f}: ожидается один idx, а не список")
+        body = _body_keys(stype, sm)
         allowed = body + OPTIONAL_KEYS.get(stype, ())
         for key in ("body", "image_width", "text_width", "gap", "heading"):
             value = getattr(sm, key)
@@ -127,7 +173,7 @@ def _completeness(m: Mapping) -> list[str]:
             if not (body_h > CAPTION_STRIP):
                 problems.append(f"slides.image.body: высота {body_h:g} мм не больше "
                                  f"полосы подписи {CAPTION_STRIP} мм")
-        if stype in ("bar-chart", "chart") and sm.body is not None and sm.text_width is not None and sm.gap is not None:
+        if stype == "chart" and sm.body is not None and sm.text_width is not None and sm.gap is not None:
             body_w = sm.body[2]
             if not (body_w * (100 - sm.text_width) / 100 - sm.gap > 0):
                 problems.append(f"slides.{stype}: при text_width {sm.text_width:g} % и gap {sm.gap:g} мм "
@@ -196,8 +242,10 @@ def open_master(template_dir: Path, m: Mapping):
             continue
         have = {ph.placeholder_format.idx for ph in layout.placeholders
                 if ph.placeholder_format.type not in _NOT_COPIED}
-        problems += [f"slides.{stype}.ph.{f}: в макете «{sm.layout}» нет заполнителя idx {i}"
-                     for f, i in sm.ph.items() if i not in have]
+        for f, i in sm.ph.items():
+            for idx in (i if isinstance(i, list) else [i]):
+                if idx not in have:
+                    problems.append(f"slides.{stype}.ph.{f}: в макете «{sm.layout}» нет заполнителя idx {idx}")
         if sm.body is not None:
             x, y, bw, bh = sm.body
             if bw <= 0 or bh <= 0 or x < 0 or y < 0 or x + bw > w + 0.5 or y + bh > h + 0.5:
@@ -265,16 +313,33 @@ def _set_font(prs, font: str) -> None:
         _retype_part(part, font)
 
 
-def _fill(slide, s, sm: SlideMap) -> None:
+@dataclass
+class Ctx:
+    """Всё, что нужно функции тела слайда; собирается в export_pptx на каждый слайд."""
+    slide: object
+    s: object
+    sm: SlideMap
+    m: Mapping
+    assets: Path
+    tmp: Path
+    typst_bin: str
+    warnings: list[str]
+    n: int
+
+
+def _fill(slide, s, sm: SlideMap, keep: frozenset[int] | set[int] = frozenset()) -> None:
     """Поля — в заполнители по idx; пустые и несопоставленные заполнители удаляются,
-    иначе при правке в PowerPoint видна подсказка макета («Уровень текста 1…»)."""
+    иначе при правке в PowerPoint видна подсказка макета («Уровень текста 1…»).
+    keep — заполнители, которые уже заполнила функция тела (блоки columns)."""
     groups: dict[int, list[str]] = {}
-    for f in PH_FIELDS[s.type]:
+    for f in ph_fields(s.type):
         value = clean(getattr(s, f) or "")
         if value.strip():
             groups.setdefault(sm.ph[f], []).append(value)
     for ph in list(slide.placeholders):
         idx = ph.placeholder_format.idx
+        if idx in keep:
+            continue
         texts = groups.get(idx)
         if not texts:
             ph._element.getparent().remove(ph._element)
@@ -365,17 +430,18 @@ def _caption(slide, text: str, x: int, y: int, w: int, style: TextStyle) -> None
         r.font.color.rgb = RGBColor.from_string(style.caption.upper())
 
 
-def _image_file(s, assets_dir: Path, tmp: Path, typst_bin: str, warnings: list[str], n: int) -> Path | None:
-    """Файл картинки слайда; SVG — растром. Пропавшая или нерастеризуемая — None и предупреждение,
+def _image_file(name: str, assets_dir: Path, tmp: Path, typst_bin: str,
+                warnings: list[str], n: int) -> Path | None:
+    """Файл картинки; SVG — растром. Пропавшая или нерастеризуемая — None и предупреждение,
     как у PDF: слайд собирается без неё."""
-    if not s.image:
+    if not name:
         return None
-    if Path(s.image).name != s.image:  # «/», «..»-путь или абсолютный путь — за пределы assets/
-        warnings.append(f"слайд {n}: картинка {s.image} не найдена")
+    if Path(name).name != name:  # «/», «..»-путь или абсолютный путь — за пределы assets/
+        warnings.append(f"слайд {n}: картинка {name} не найдена")
         return None
-    src = Path(assets_dir) / s.image
+    src = Path(assets_dir) / name
     if not src.is_file():
-        warnings.append(f"слайд {n}: картинка {s.image} не найдена")
+        warnings.append(f"слайд {n}: картинка {name} не найдена")
         return None
     if src.suffix.lower() != ".svg":
         try:
@@ -384,22 +450,24 @@ def _image_file(s, assets_dir: Path, tmp: Path, typst_bin: str, warnings: list[s
         except OSError:  # в т.ч. PIL.UnidentifiedImageError — подтип OSError
             fmt = None
         if fmt not in {"PNG", "JPEG", "GIF", "BMP", "TIFF"}:
-            warnings.append(f"слайд {n}: картинка {s.image} не читается")
+            warnings.append(f"слайд {n}: картинка {name} не читается")
             return None
         return src
     try:
         return rasterize_svg(src, tmp / f"{src.stem}.png", typst_bin)
     except CompileError as e:
-        warnings.append(f"слайд {n}: SVG {s.image} не растеризуется: {e}")
+        warnings.append(f"слайд {n}: SVG {name} не растеризуется: {e}")
         return None
 
 
-def _image_body(slide, s, sm: SlideMap, style: TextStyle, img: Path | None) -> None:
+def _image_body(c: Ctx) -> set[int]:
+    slide, s, sm, style = c.slide, c.s, c.sm, c.m.text
+    img = _image_file(s.image, c.assets, c.tmp, c.typst_bin, c.warnings, c.n)
     box = _mm_box(sm.body)
     if img is None:
         if s.bullets:
             _bullets(slide, box, s.bullets, style)
-        return
+        return set()
     # картинка — ровно image_width % зоны справа, тезисы слева — остаток за вычетом зазора (спека §5.3)
     x, y, w, h = box
     iw = int(w * sm.image_width[s.image_size] / 100)
@@ -412,6 +480,7 @@ def _image_body(slide, s, sm: SlideMap, style: TextStyle, img: Path | None) -> N
     bottom = _picture(slide, img, (x, y, w, h - strip))
     if s.caption:
         _caption(slide, s.caption, x, bottom + int(2 * MM), w, style)
+    return set()
 
 
 def _number_format(unit: str) -> str:
@@ -473,15 +542,18 @@ def _line_chart(slide, s, box, cs: ChartStyle) -> None:
         series.marker.format.line.color.rgb = color
 
 
-def _chart_body(slide, s, sm: SlideMap, m: Mapping) -> None:
-    box = _mm_box(sm.body)
-    draw = _bar_chart if s.type == "bar-chart" else _line_chart
-    if not s.bullets:
-        draw(slide, s, box, m.chart)
-        return
-    text_box, chart_box = _columns(box, sm.text_width, sm.gap)
-    _bullets(slide, text_box, s.bullets, m.text, heading=sm.heading)
-    draw(slide, s, chart_box, m.chart)
+def _chart_body(c: Ctx) -> set[int]:
+    box = _mm_box(c.sm.body)
+    if not c.s.bullets:
+        _line_chart(c.slide, c.s, box, c.m.chart)
+        return set()
+    text_box, chart_box = _columns(box, c.sm.text_width, c.sm.gap)
+    _bullets(c.slide, text_box, c.s.bullets, c.m.text, heading=c.sm.heading)
+    _line_chart(c.slide, c.s, chart_box, c.m.chart)
+    return set()
+
+
+BODIES: dict[str, Callable[[Ctx], set[int]]] = {"image": _image_body, "chart": _chart_body}
 
 
 def export_pptx(deck: Deck, template_dir: Path, mapping_rel: object, assets_dir: Path,
@@ -502,12 +574,10 @@ def export_pptx(deck: Deck, template_dir: Path, mapping_rel: object, assets_dir:
             sm = m.slides[s.type]
             layout = layouts[sm.layout]
             slide = prs.slides.add_slide(layout)
-            _fill(slide, s, sm)
+            body = BODIES.get(s.type)
+            keep = body(Ctx(slide, s, sm, m, Path(assets_dir), Path(tmp), typst_bin, warnings, n)) if body else set()
+            _fill(slide, s, sm, keep)
             _slide_number(slide, layout, n)
-            if s.type == "image":
-                _image_body(slide, s, sm, m.text, _image_file(s, assets_dir, Path(tmp), typst_bin, warnings, n))
-            elif s.type in ("bar-chart", "chart"):
-                _chart_body(slide, s, sm, m)
             if s.notes.strip():
                 slide.notes_slide.notes_text_frame.text = clean(s.notes)
         if m.font:

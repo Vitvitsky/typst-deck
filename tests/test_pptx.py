@@ -322,7 +322,30 @@ BROKEN = {
     "image-body-too-short": (lambda m: m["slides"]["image"].update(body=[20, 80, 600, 10]),
         "высота 10 мм не больше полосы подписи 15 мм"),
     "zone-outside": (lambda m: m["slides"]["chart"].update(body=[600, 80, 200, 260]), "выходит за слайд"),
+    "missing-new-type": (lambda m: m["slides"].pop("metrics"), "нет типа metrics"),
+    "old-type": (lambda m: m["slides"].update({"bar-chart": m["slides"]["chart"]}), "bar-chart"),
+    "no-trend": (lambda m: m.pop("trend"), "trend"),
+    "no-table-style": (lambda m: m.pop("table"), "table"),
+    "no-quote-size": (lambda m: m["text"].pop("quote"), "text.quote"),
+    "quote-title-ph": (lambda m: m["slides"]["quote"]["ph"].update(title=0), "title не кладётся"),
+    "no-gap": (lambda m: m["slides"]["metrics"].pop("gap"), "slides.metrics: нет gap"),
+    "blocks-not-columns": (lambda m: m["slides"]["text"]["ph"].update(blocks=[1, 2, 3]), "blocks не кладётся"),
+    "blocks-too-few": (lambda m: m["slides"]["columns"].update(
+        layout="Comparison", ph={"title": 0, "blocks": [1, 2]}, body=None, gap=None),
+        "нужно не меньше 3 заполнителей"),
+    "blocks-and-zone": (lambda m: m["slides"]["columns"].update(
+        layout="Comparison", ph={"title": 0, "blocks": [1, 2, 3]}),
+        "slides.columns: body у этого типа не бывает"),
+    "blocks-idx-missing": (lambda m: m["slides"]["columns"].update(
+        layout="Comparison", ph={"title": 0, "blocks": [1, 2, 9]}, body=None, gap=None),
+        "нет заполнителя idx 9"),
+    "title-as-list": (lambda m: m["slides"]["text"]["ph"].update(title=[0]), "ожидается один idx"),
 }
+
+
+def test_columns_on_placeholders_is_a_good_mapping(tmp_path):
+    check(make_pptx_template(tmp_path, mapping_edit=lambda m: m["slides"]["columns"].update(
+        layout="Comparison", ph={"title": 0, "blocks": [1, 2, 3]}, body=None, gap=None)))
 
 
 @pytest.mark.parametrize("case", BROKEN)
