@@ -9,15 +9,19 @@ import json
 import pytest
 from pptx import Presentation
 
-from tests.conftest import CORP_PARAMS, requires_typst
+from tests.conftest import CORP_PARAMS, NO_CORP, requires_typst
 from tests.test_charts import signed_deck
 from typst_deck.contract import check_template, filled_slide, SAMPLE_DECK
-from typst_deck.model import Deck
+from typst_deck.model import SLIDE_TYPES, Deck
 from typst_deck.pptx import export_pptx
 from typst_deck.render import compile_deck
 from typst_deck.slots import check_slide, clamp
 
 MM = 2.83465  # мм в пунктах: зоны заданы в мм, positions отдаёт пункты
+TYPE_PARAMS = ([pytest.param(t, s, id=f"{t.id}-{s}") for p in CORP_PARAMS for t in p.values if t is not None
+                for s in SLIDE_TYPES]
+               or [pytest.param(None, None, id="no-corp", marks=pytest.mark.skip(reason=NO_CORP))])
+PAGE_BOTTOM_MM = 381 - 24  # низ поля content-slide канона: ниже — логотип и номер
 
 
 @requires_typst
@@ -102,3 +106,30 @@ def test_corp_lemana_tech_has_a_master():
     if not lemana:
         pytest.skip("lemana-tech не подключён в TYPST_DECK_TEST_TEMPLATES")
     assert lemana[0].pptx == "typst-deck/pptx.json"
+
+
+@requires_typst
+@pytest.mark.parametrize("t,stype", TYPE_PARAMS)
+def test_corp_type_compiles_on_one_page(t, stype, tmp_path):
+    """Минимальный слайд каждого типа — одна страница: функция контракта есть и не переносит."""
+    from typst_deck.contract import write_sample_assets
+
+    write_sample_assets(tmp_path)
+    slide = next(s for s in SAMPLE_DECK.slides if s.type == stype)
+    r = compile_deck(Deck(slides=[slide]), tmp_path, t.path, fonts_dir=t.fonts)
+    assert len(r.svgs) == 1
+
+
+@requires_typst
+@pytest.mark.parametrize("t,stype", TYPE_PARAMS)
+def test_corp_type_at_declared_limits_stays_on_the_page(t, stype, tmp_path):
+    """Слайд по объявленным пределам шаблона (а без объявления — по глобальным модели):
+    ни одно поле не уходит ниже поля страницы — обрезку clip правило «одна страница» не видит."""
+    from typst_deck.contract import write_sample_assets
+
+    write_sample_assets(tmp_path)
+    slide = filled_slide(stype, t.slots.get(stype, {}))
+    r = compile_deck(Deck(slides=[slide]), tmp_path, t.path, fonts_dir=t.fonts)
+    assert len(r.svgs) == 1
+    worst = max((p["y"] + p["h"] for p in r.positions), default=0)
+    assert worst <= PAGE_BOTTOM_MM * MM, f"{stype}: низ {worst / MM:.1f} мм при поле {PAGE_BOTTOM_MM} мм"
