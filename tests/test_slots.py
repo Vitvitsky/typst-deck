@@ -267,6 +267,10 @@ def test_every_key_clamp_keeps_reaches_the_schema_and_is_enforced():
         else:
             assert "одна строка" in prop.get("description", ""), (stype, field, key)
 
+        if (stype, field, key) == ("video", "url", "lines"):
+            # перевод строки в ссылке отвергает сама модель (VIDEO_URL) раньше слотов:
+            # схема предел показывает, а нарушить его допустимым значением нельзя
+            continue
         value = _shaped(stype, field,
                         _violating(DEFS[stype]["properties"][field], key, BASE[stype].get(field)))
         slide = Deck(slides=[BASE[stype] | {field: value}]).slides[0]

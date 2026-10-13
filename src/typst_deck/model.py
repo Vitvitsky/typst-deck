@@ -1,6 +1,7 @@
 """Модель колоды — источник истины для рендера, LLM и правок."""
 from __future__ import annotations
 
+import re
 import secrets
 from datetime import datetime, timezone
 from typing import Annotated, Literal, Union
@@ -68,6 +69,8 @@ TEMPLATE_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,40}$"
 URL_MAX = 500
 ASSET_NAME_MAX = 120
 POSTER_EXT = (".png", ".jpg", ".jpeg", ".svg")
+# схема, затем хотя бы один знак адреса; пробелы и управляющие символы запрещены
+VIDEO_URL = re.compile(r"^https?://[^\s\x00-\x1f\x7f/?#][^\s\x00-\x1f\x7f]*$", re.IGNORECASE)
 
 
 def new_id(prefix: str = "", n: int = 6) -> str:
@@ -290,6 +293,10 @@ class VideoSlide(SlideBase):
         """Ссылка уходит в PDF и PPTX живой ссылкой, поэтому схема проверяется здесь."""
         if not self.url.lower().startswith(("http://", "https://")):
             raise ValueError("url: ссылка должна начинаться с http:// или https://")
+        if not VIDEO_URL.match(self.url):
+            # пустышка «https://» дала бы мёртвую ссылку, а управляющий символ
+            # роняет экспорт PPTX (lxml не пишет его в XML); правило — как в editors.js
+            raise ValueError("url: нужна ссылка на ролик целиком, без пробелов")
         if self.poster and not self.poster.lower().endswith(POSTER_EXT):
             raise ValueError(f"poster: нужна картинка ({', '.join(POSTER_EXT)}), а не «{self.poster}»")
         return self

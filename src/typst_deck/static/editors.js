@@ -11,10 +11,15 @@ export const LIMITS = {
 
 export const lines = (text) => String(text).split("\n").map((s) => s.trim()).filter(Boolean);
 
-// «12,5», «1 200», «1 200,75»: запятая — десятичная, пробелы внутри числа — разряды
+// «12,5», «1 200», «1 200,75», «−3»: запятая — десятичная, пробел — только между
+// разрядами по три цифры. «1, 2» и «10 20 30» — не число, а не молча 1,2 и 102030:
+// значения ряда раньше вводили через запятую и пробел, и склейка дала бы неверный график.
+const NUM = /^-?(?:\d{1,3}(?:[ \u00a0]\d{3})+|\d+)(?:[.,]\d+)?$/;
 export function parseNumber(s) {
-  const t = String(s).replace(/[\s ]/g, "").replace(",", ".");
-  return t === "" ? NaN : Number(t);
+  const t = String(s).trim().replace(/\u2212/g, "-");
+  if (!NUM.test(t)) return NaN;
+  const v = Number(t.replace(/[ \u00a0]/g, "").replace(",", "."));
+  return Number.isFinite(v) ? v : NaN;
 }
 // значения ряда разделяет «;» — запятая занята десятичной дробью
 export const parseValues = (text) => String(text).split(";").map((s) => s.trim()).filter(Boolean).map(parseNumber);
@@ -50,8 +55,13 @@ export function tableFrom(header, rows) {
   return { header: header.map((h) => h.trim()), rows: body.map((r) => r.map((c) => String(c).trim())) };
 }
 
-export const linkError = (url) => /^https?:\/\/\S+$/i.test(String(url).trim())
-  ? null : "Ссылка должна начинаться с http:// или https://";
+// то же правило, что VIDEO_URL в model.py: схема, адрес, без пробелов и управляющих символов
+export function linkError(url) {
+  const u = String(url).trim();
+  if (/^https?:\/\/$/i.test(u)) return "Вставьте ссылку на ролик целиком: после https:// ничего нет";
+  if (!/^https?:\/\//i.test(u)) return "Ссылка должна начинаться с http:// или https://";
+  return /^https?:\/\/[^\s\x00-\x1f\x7f/?#][^\s\x00-\x1f\x7f]*$/i.test(u) ? null : "Нужна ссылка на ролик целиком, без пробелов";
+}
 
 // Плеер собирается из распознанного id, а не из исходной строки: в iframe не
 // попадает ничего, кроме адреса встраивания известной платформы (ADR 0022).

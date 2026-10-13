@@ -98,6 +98,8 @@ def test_video_is_a_link_with_an_optional_poster():
     {}, {"url": ""}, {"url": "javascript:alert(1)"}, {"url": "data:text/html,x"}, {"url": "//host/v"},
     {"url": "ftp://h/1.mp4"}, {"url": "https://h/" + "x" * 600},
     {"url": "https://h/v", "poster": "clip.mp4"}, {"url": "https://h/v", "video": "a1.mp4"},
+    # ссылка-пустышка новой заготовки, пробел внутри и управляющий символ (последний ронял экспорт PPTX)
+    {"url": "https://"}, {"url": "https://a b"}, {"url": "https://x\x01y"},
 ])
 def test_video_rejects_what_is_not_a_link(bad):
     with pytest.raises(ValidationError):

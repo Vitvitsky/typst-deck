@@ -70,6 +70,27 @@ def main(deck_id: str):
         page.get_by_role("button", name="▶ Смотреть").click()
         expect(page.locator("#player-frame")).to_have_attribute("src", "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ")
         page.get_by_role("button", name="Закрыть").click()
+        # гонка: сохранение ещё идёт, а человек уже перешёл на другой слайд и печатает —
+        # поздняя перерисовка не должна стереть его ввод
+        open_slide("metrics")
+        page.locator("#props input[type=text]").first.fill("Гонка")
+        clear_toasts()
+        page.locator("#props button[type=submit]").click()
+        open_slide("comparison")
+        page.locator("#props input[name=title]").fill("Набираю")
+        expect(page.locator(".toast").last).to_have_text("Сохранено")
+        page.wait_for_timeout(500)
+        expect(page.locator("#props input[name=title]")).to_have_value("Набираю")
+        # новый слайд «Видео» сперва спрашивает ссылку: пустышку модель не примет
+        n_before = page.locator(".thumb-item").count()
+        page.select_option("#addtype", "video")
+        page.locator("#add").click()
+        page.get_by_label("Ссылка на видео").last.fill("https://")
+        page.get_by_role("button", name="Добавить видео").click()
+        expect(page.locator(".rail-add .error")).to_contain_text("после https:// ничего нет")
+        page.get_by_label("Ссылка на видео").last.fill("https://rutube.ru/video/0123456789abcdef0123456789abcdef/")
+        page.get_by_role("button", name="Добавить видео").click()
+        expect(page.locator(".thumb-item")).to_have_count(n_before + 1)
         # клик по зоне составного поля открывает вкладку «Слайд» на его редакторе
         page.locator(f"#slide-{slides[by_type['table']]['id']} .zone").last.click()
         expect(page.locator(".f-group.flash")).to_be_visible()

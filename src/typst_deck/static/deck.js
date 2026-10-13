@@ -1,6 +1,6 @@
 import { api, upload, waitJob, sleep, el, toast, armConfirm, TYPE_RU, FIELD_RU, SIZE_RU, KIND_RU, fileKind, errorText, fmtDate, fmtElapsed, fmtTokens } from "./api.js";
 import { mountShell } from "./shell.js";
-import { PANEL, compositeEditor, changed, embedUrl } from "./editors.js";
+import { PANEL, compositeEditor, changed, embedUrl, linkError } from "./editors.js";
 
 const deckId = location.pathname.split("/").filter(Boolean).pop();
 mountShell({ active: "decks", deckId, defaultCollapsed: true });
@@ -19,7 +19,7 @@ const NEW_SLIDE = {
   metrics: { type: "metrics", title: "Числа", items: [{ value: "12,5 млн", label: "выручка", delta: "+12 %" }, { value: "17", label: "проектов", delta: "" }] },
   table: { type: "table", title: "Таблица", header: ["Регион", "Выручка"], rows: [["Центр", "42"], ["Север", "17"]] },
   gallery: { type: "gallery", title: "Галерея", images: [{ image: null, caption: "" }, { image: null, caption: "" }] },
-  video: { type: "video", title: "Видео", url: "https://", caption: "" },
+  video: { type: "video", title: "Видео", url: "", caption: "" },  // ссылку спрашивает askVideoLink
   final: { type: "final" },
 };
 // image и gallery не проходят валидацию без картинки (модель требует её), поэтому
@@ -284,12 +284,15 @@ function select(id) {
 
 // ============ правки
 async function applyResult(promise) {
+  // пока правка шла, человек мог перейти на другой слайд и начать печатать: его
+  // форму уже нарисовал select() — перерисовка стёрла бы ввод
+  const sel = state.selected;
   const info = await promise;
   state.info = info;
   state.page = info.page || state.page;
   if (info.has_build) state.positions = await api(`api/decks/${deckId}/positions`);
   renderTopbar(); renderStage(); renderRail();
-  if (state.tab === "slide") renderProps();
+  if (state.tab === "slide" && state.selected === sel) renderProps();
   return info;
 }
 const patchSlide = (id, patch) => api(`api/decks/${deckId}/slides/${id}`, { method: "PATCH", json: { patch } });
@@ -305,14 +308,41 @@ async function removeSlide(slide) {
 $("add").addEventListener("click", async () => {
   const type = $("addtype").value;
   try {
-    const slide = type in NEEDS_PICTURE ? await pickPictureSlide(type) : JSON.parse(JSON.stringify(NEW_SLIDE[type]));
-    if (!slide) return;  // выбор файла отменили
+    const slide = type in NEEDS_PICTURE ? await pickPictureSlide(type)
+      : type === "video" ? await videoSlide() : JSON.parse(JSON.stringify(NEW_SLIDE[type]));
+    if (!slide) return;  // выбор файла или ввод ссылки отменили
     const info = await applyResult(api(`api/decks/${deckId}/slides`, { json: { slide, after: state.selected } }));
     const idx = state.selected ? info.deck.slides.findIndex((s) => s.id === state.selected) + 1 : info.deck.slides.length - 1;
     const added = info.deck.slides[idx];
     if (added) { select(added.id); const t = $(`slide-${added.id}`); if (t) t.scrollIntoView({ behavior: "smooth", block: "start" }); switchTab("slide"); }
   } catch (e) { toast(e.message, { error: true }); }
 });
+
+// видео без ссылки модель не примет (ADR 0022): ссылка спрашивается до создания
+// слайда прямо под меню «Добавить», а не заготовкой-пустышкой
+function askVideoLink() {
+  return new Promise((resolve) => {
+    const box = document.querySelector(".rail-add");
+    const keep = [...box.childNodes];
+    const input = el("input", { type: "url", placeholder: "https://… — YouTube, Rutube, VK Видео, Яндекс Диск…", "aria-label": "Ссылка на видео" });
+    const err = el("div", { class: "error small" });
+    const done = (v) => { box.replaceChildren(...keep); resolve(v); };
+    const ok = () => { const e = linkError(input.value); if (e) { err.textContent = e; input.focus(); return; } done(input.value.trim()); };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); ok(); }
+      if (e.key === "Escape") done(null);
+    });
+    box.replaceChildren(input, err, el("div", { class: "row" },
+      el("button", { type: "button", class: "sm primary", onclick: ok }, "Добавить видео"),
+      el("button", { type: "button", class: "sm", onclick: () => done(null) }, "Отмена")));
+    input.focus();
+  });
+}
+
+async function videoSlide() {
+  const url = await askVideoLink();
+  return url ? { ...NEW_SLIDE.video, url } : null;
+}
 
 // GallerySlide.images ограничен 2–4 картинками (model.py) — проверяем ДО
 // загрузки: иначе пять файлов уйдут на сервер через /assets, а слайд всё равно
@@ -480,6 +510,8 @@ function renderProps(focus) {
   form.append(err, el("div", { class: "actions" }, del, el("span", { class: "sp" }), el("button", { class: "primary", type: "submit" }, "Сохранить")));
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
+    const save = form.querySelector("button[type=submit]");
+    save.disabled = true;  // двойной щелчок не шлёт правку дважды и не грузит файлы галереи повторно
     try {
       for (const r of readers) await r();
       if (img) await img.collect();
@@ -487,6 +519,7 @@ function renderProps(focus) {
       await applyResult(patchSlide(slide.id, patch));
       toast("Сохранено");
     } catch (ex) { err.textContent = ex.message; }
+    finally { save.disabled = false; }
   });
   box.replaceChildren(form);
   if (focus) {

@@ -41,6 +41,20 @@ test("пустые строки таблиц и списков выбрасыв�
     { header: ["Регион", "Выручка"], rows: [["Центр", "42"]] });
 });
 
+test("числа не склеиваются молча", () => {
+  for (const bad of ["1, 2", "10 20 30", "1e999", "Infinity", "0x10", "1 20", "12,5,3"]) {
+    assert.ok(Number.isNaN(parseNumber(bad)), bad);
+  }
+  assert.equal(parseNumber("\u22123"), -3);  // типографский минус
+  assert.equal(parseNumber("12.5"), 12.5);
+  assert.equal(parseNumber("12 345 678,9"), 12345678.9);
+});
+
+test("ссылка-пустышка — своя подсказка", () => {
+  assert.equal(linkError("https://"), "Вставьте ссылку на ролик целиком: после https:// ничего нет");
+  assert.match(linkError("https://a b"), /без пробелов/);
+});
+
 test("ссылка видео — только http(s)", () => {
   assert.equal(linkError(" https://disk.yandex.ru/i/abc "), null);
   for (const bad of ["", "javascript:alert(1)", "data:text/html,x", "//host/v", "youtube.com/watch?v=1"]) {
