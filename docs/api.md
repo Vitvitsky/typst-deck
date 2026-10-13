@@ -10,7 +10,7 @@
 `GET /api/templates/{id}/preview/{n}.svg`, `GET /api/history`,
 `GET /api/decks/{id}`, `…/slides/{n}.svg`, `…/deck.pdf`, `…/deck.pptx`, `…/positions`,
 `PATCH …/slides/{sid}`, `POST …/slides`, `DELETE …/slides/{sid}`,
-`POST …/slides/{sid}/move`, `POST …/assets`, `GET …/versions`,
+`POST …/slides/{sid}/move`, `POST …/assets`, `GET …/assets/{asset}` (картинка колоды; SVG — в песочнице), `GET …/versions`,
 `POST …/revert`, `POST …/messages`, `GET …/chat`, `GET /api/jobs/{id}`.
 
 Для чат-бота (синхронные, ждут генерацию до `wait_seconds`):
