@@ -1,5 +1,6 @@
 import { api, upload, waitJob, sleep, el, toast, armConfirm, TYPE_RU, FIELD_RU, SIZE_RU, KIND_RU, fileKind, errorText, fmtDate, fmtElapsed, fmtTokens } from "./api.js";
 import { mountShell } from "./shell.js";
+import { PANEL, compositeEditor, changed } from "./editors.js";
 
 const deckId = location.pathname.split("/").filter(Boolean).pop();
 mountShell({ active: "decks", deckId, defaultCollapsed: true });
@@ -351,12 +352,15 @@ function closeEditors() {
 }
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeEditors(); });
 
-// составные поля — пока правятся как JSON во вкладке «Слайд»; полноценные
-// редакторы (блоки, колонки, таблица, галерея…) — план C
-const COMPOSITE = ["items", "blocks", "left", "right", "header", "rows", "images"];
+// редакторы составных полей (static/editors.js): загрузка картинок и адреса превью
+const editorCtx = {
+  uploadAsset: async (file) => (await upload(`api/decks/${deckId}/assets`, file)).asset_id,
+  assetUrl: (id) => `api/decks/${deckId}/assets/${encodeURIComponent(id)}`,
+};
 
 function openFieldEditor(slide, n, field, zone, page) {
-  if (COMPOSITE.includes(field)) { switchTab("slide"); return; }
+  // составные поля и поля, связанные с ними (подписи графика сверяются с рядами), — во вкладке «Слайд»
+  if ((PANEL[slide.type] || []).includes(field)) { switchTab("slide", field); return; }
   closeEditors();
   const patch = {};
   const form = el("form", { class: "editor" }, el("div", { class: "head" }, el("span", {}, `${FIELD_RU[field] || field} · слайд ${n}`), el("span", { class: "tiny" }, "Enter — сохранить, Esc — отмена")));
@@ -393,16 +397,10 @@ function fieldControl(slide, field) {
   if (field === "image_size") return el("select", { name: field }, ...Object.entries(SIZE_RU).map(([k, l]) => el("option", { value: k, selected: v === k }, l)));
   // вид графика — выбор, а не поле ввода: модель принимает только bar и line
   if (field === "kind") return el("select", { name: field }, ...Object.entries(KIND_RU).map(([k, l]) => el("option", { value: k, selected: v === k }, l)));
-  if (COMPOSITE.includes(field)) {
-    const t = el("textarea", { name: field, rows: 6, class: "mono" }, JSON.stringify(v ?? [], null, 1));
-    t.title = "Пока правится как JSON — редактор появится в следующем обновлении";
-    return t;
-  }
   return el("input", { type: "text", name: field, value: v ?? "" });
 }
 function readControl(field, control) {
   if (field === "bullets" || field === "labels") return control.value.split("\n").map((s) => s.trim()).filter(Boolean);
-  if (COMPOSITE.includes(field)) return JSON.parse(control.value);
   return control.value;
 }
 
@@ -423,16 +421,16 @@ function imageControls(slide, patch) {
 }
 
 // ============ панель свойств выбранного слайда
-function switchTab(tab) {
+function switchTab(tab, focus) {
   state.tab = tab;
   document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   $("tab-chat").classList.toggle("hidden", tab !== "chat");
   $("tab-slide").classList.toggle("hidden", tab !== "slide");
-  if (tab === "slide") renderProps();
+  if (tab === "slide") renderProps(focus);
 }
 document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => switchTab(b.dataset.tab)));
 
-function renderProps() {
+function renderProps(focus) {
   const box = $("props");
   const slide = state.info && state.info.deck.slides.find((s) => s.id === state.selected);
   if (!slide) { box.replaceChildren(el("p", { class: "muted small" }, "Выберите слайд: нажмите на него в центре или в ленте слева.")); return; }
@@ -446,11 +444,20 @@ function renderProps() {
     "caption", "contact", "url", "poster", "video", "notes"];
   const keys = Object.keys(slide).filter((k) => !["id", "type", "image", "image_size"].includes(k))
     .sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
+  const group = PANEL[slide.type] || [];
+  let groupDone = false;
   for (const k of keys) {
-    if (k === "series" && "labels" in slide) { const t = seriesTable(slide.series, slide.labels.length); form.append(el("label", { class: "f" }, FIELD_RU.series), t); readers.push(() => { const v = t.read(); if (JSON.stringify(v) !== JSON.stringify(slide.series)) patch.series = v; }); continue; }
+    if (group.includes(k)) {
+      if (groupDone) continue;
+      groupDone = true;
+      const ed = compositeEditor(slide, editorCtx);
+      form.append(el("div", { class: "f-group", "data-fields": group.join(" ") }, ed.node));
+      readers.push(async () => Object.assign(patch, changed(await ed.read(), slide)));
+      continue;
+    }
     const c = fieldControl(slide, k);
     form.append(el("label", { class: "f" }, FIELD_RU[k] || k), c);
-    readers.push(() => { const v = readControl(k, c); if (JSON.stringify(v) !== JSON.stringify(slide[k])) patch[k] = v; });
+    readers.push(async () => { const v = readControl(k, c); if (JSON.stringify(v) !== JSON.stringify(slide[k])) patch[k] = v; });
   }
   let img = null;
   if ("image" in slide) { img = imageControls(slide, patch); form.append(el("label", { class: "f" }, FIELD_RU.image), img); }
@@ -461,7 +468,7 @@ function renderProps() {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     try {
-      readers.forEach((r) => r());
+      for (const r of readers) await r();
       if (img) await img.collect();
       if (!Object.keys(patch).length) { toast("Изменений нет"); return; }
       await applyResult(patchSlide(slide.id, patch));
@@ -469,21 +476,15 @@ function renderProps() {
     } catch (ex) { err.textContent = ex.message; }
   });
   box.replaceChildren(form);
-}
-
-function seriesTable(series, nLabels) {
-  const box = el("div", { class: "grid-table" });
-  const render = (items) => {
-    box.replaceChildren(...items.map((s, i) => el("div", { class: "r series" },
-      el("div", {},
-        el("input", { type: "text", value: s.name, placeholder: "Название ряда", "aria-label": "Название ряда" }),
-        el("input", { type: "text", value: s.values.join(", "), placeholder: `${nLabels} значений через запятую`, "aria-label": "Значения", style: "margin-top:4px" })),
-      el("button", { type: "button", class: "quiet icon sm", title: "Убрать ряд", onclick: () => { const cur = box.read(); cur.splice(i, 1); render(cur); } }, "✕"))),
-      el("button", { type: "button", class: "sm", onclick: () => render([...box.read(), { name: "", values: Array(nLabels).fill(0) }]) }, "＋ Ряд"));
-  };
-  box.read = () => [...box.querySelectorAll(".r")].map((r) => { const [n, v] = r.querySelectorAll("input"); return { name: n.value, values: v.value.split(/[,;\s]+/).filter(Boolean).map(Number) }; });
-  render(series);
-  return box;
+  if (focus) {
+    const target = box.querySelector(`[data-fields~="${focus}"]`);
+    if (target) {
+      target.scrollIntoView({ block: "start" });
+      target.classList.add("flash");
+      const first = target.querySelector("input, textarea, select");
+      if (first) first.focus();
+    }
+  }
 }
 
 // ============ чат
