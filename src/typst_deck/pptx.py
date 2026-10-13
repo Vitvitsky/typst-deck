@@ -450,14 +450,14 @@ def _picture(slide, path: Path, box) -> int:
     return y + ph
 
 
-def _caption(slide, text: str, x: int, y: int, w: int, style: TextStyle) -> None:
+def _caption(slide, text: str, x: int, y: int, w: int, style: TextStyle, italic: bool = True) -> None:
     tf = slide.shapes.add_textbox(Emu(x), Emu(y), Emu(w), Emu(int((CAPTION_STRIP - 2) * MM))).text_frame
     tf.word_wrap = True
     p = tf.paragraphs[0]
     p.text = clean(text).replace("\n", " ")
     for r in p.runs:
         r.font.size = Pt(style.size * CAPTION_SCALE)
-        r.font.italic = True
+        r.font.italic = italic
         r.font.color.rgb = RGBColor.from_string(style.caption.upper())
 
 
@@ -519,50 +519,61 @@ def _number_format(unit: str) -> str:
     return f'General" {unit}"' if unit else "General"
 
 
-def _bar_chart(slide, s, box, cs: ChartStyle) -> None:
-    """Гистограмма: цвет столбца по знаку — рост palette[0], падение negative.
+def _chart_data(src) -> CategoryChartData:
+    data = CategoryChartData()
+    data.categories = [clean(lb) for lb in src.labels]
+    for ser in src.series:
+        data.add_series(clean(ser.name), ser.values)
+    return data
+
+
+def _bar_chart(slide, src, box, cs: ChartStyle) -> None:
+    """Гистограмма. Одна серия — цвет столбца по знаку (рост palette[0], падение negative),
+    подписи значений с единицей; несколько — серии по палитре и легенда сверху.
 
     number_format не идёт в CategoryChartData: python-pptx пишет его в
     <c:formatCode> текстовым узлом без экранирования (pptx/chart/xmlwriter.py),
     и «&», «<» в unit ломают XML графика. plot.data_labels.number_format —
     атрибут, его пишет lxml и экранирует сам (спека §5.5)."""
-    unit = clean(s.unit)
-    fmt = _number_format(unit)
-    data = CategoryChartData()
-    data.categories = [clean(d.label) for d in s.data]
-    data.add_series(unit or "Значение", [d.value for d in s.data])
     x, y, w, h = box
-    chart = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Emu(x), Emu(y), Emu(w), Emu(h), data).chart
-    chart.has_legend = False
+    chart = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Emu(x), Emu(y), Emu(w), Emu(h),
+                                   _chart_data(src)).chart
     chart.value_axis.has_major_gridlines = False
     plot = chart.plots[0]
-    plot.has_data_labels = True
-    plot.data_labels.number_format = fmt
-    plot.data_labels.number_format_is_linked = False
-    plot.data_labels.position = XL_LABEL_POSITION.OUTSIDE_END
-    series = plot.series[0]
-    series.invert_if_negative = False
-    for i, d in enumerate(s.data):
-        fill = series.points[i].format.fill
-        fill.solid()
-        fill.fore_color.rgb = RGBColor.from_string((cs.negative if d.value < 0 else cs.palette[0]).upper())
+    if len(src.series) == 1:
+        chart.has_legend = False
+        plot.has_data_labels = True
+        plot.data_labels.number_format = _number_format(clean(src.unit))
+        plot.data_labels.number_format_is_linked = False
+        plot.data_labels.position = XL_LABEL_POSITION.OUTSIDE_END
+        series = plot.series[0]
+        series.invert_if_negative = False
+        for i, v in enumerate(src.series[0].values):
+            fill = series.points[i].format.fill
+            fill.solid()
+            fill.fore_color.rgb = RGBColor.from_string((cs.negative if v < 0 else cs.palette[0]).upper())
+        return
+    chart.has_legend = True
+    chart.legend.position = XL_LEGEND_POSITION.TOP
+    chart.legend.include_in_layout = False
+    for i, series in enumerate(plot.series):
+        series.invert_if_negative = False
+        series.format.fill.solid()
+        series.format.fill.fore_color.rgb = RGBColor.from_string(cs.palette[i % len(cs.palette)].upper())
 
 
-def _line_chart(slide, s, box, cs: ChartStyle) -> None:
+def _line_chart(slide, src, box, cs: ChartStyle) -> None:
     """Линейный график: серии по палитре по кругу, легенда сверху, единица — подпись оси."""
-    data = CategoryChartData()
-    data.categories = [clean(lb) for lb in s.labels]
-    for ser in s.series:
-        data.add_series(clean(ser.name), ser.values)
     x, y, w, h = box
-    chart = slide.shapes.add_chart(XL_CHART_TYPE.LINE_MARKERS, Emu(x), Emu(y), Emu(w), Emu(h), data).chart
+    chart = slide.shapes.add_chart(XL_CHART_TYPE.LINE_MARKERS, Emu(x), Emu(y), Emu(w), Emu(h),
+                                   _chart_data(src)).chart
     chart.has_legend = True
     chart.legend.position = XL_LEGEND_POSITION.TOP
     chart.legend.include_in_layout = False
     chart.value_axis.has_major_gridlines = False
-    if s.unit:
+    if src.unit:
         chart.value_axis.has_title = True
-        chart.value_axis.axis_title.text_frame.text = clean(s.unit)
+        chart.value_axis.axis_title.text_frame.text = clean(src.unit)
     for i, series in enumerate(chart.plots[0].series):
         color = RGBColor.from_string(cs.palette[i % len(cs.palette)].upper())
         series.smooth = False
@@ -573,14 +584,30 @@ def _line_chart(slide, s, box, cs: ChartStyle) -> None:
         series.marker.format.line.color.rgb = color
 
 
+def _draw_chart(slide, src, box, cs: ChartStyle) -> None:
+    """src — ChartSlide или сторона dual-chart: у обоих kind, labels, series, unit."""
+    (_bar_chart if src.kind == "bar" else _line_chart)(slide, src, box, cs)
+
+
 def _chart_body(c: Ctx) -> set[int]:
     box = _mm_box(c.sm.body)
     if not c.s.bullets:
-        _line_chart(c.slide, c.s, box, c.m.chart)
+        _draw_chart(c.slide, c.s, box, c.m.chart)
         return set()
     text_box, chart_box = _columns(box, c.sm.text_width, c.sm.gap)
     _bullets(c.slide, text_box, c.s.bullets, c.m.text, heading=c.sm.heading)
-    _line_chart(c.slide, c.s, chart_box, c.m.chart)
+    _draw_chart(c.slide, c.s, chart_box, c.m.chart)
+    return set()
+
+
+def _dual_chart_body(c: Ctx) -> set[int]:
+    """Два графика рядом; над каждым — подпись стороны полосой CAPTION_STRIP, если она есть."""
+    for side, (x, y, w, h) in zip((c.s.left, c.s.right), _split(_mm_box(c.sm.body), 2, c.sm.gap)):
+        if clean(side.caption).strip():
+            strip = int(CAPTION_STRIP * MM)
+            _caption(c.slide, side.caption, x, y, w, c.m.text, italic=False)
+            y, h = y + strip, h - strip
+        _draw_chart(c.slide, side, (x, y, w, h), c.m.chart)
     return set()
 
 
@@ -641,6 +668,7 @@ def _quote_body(c: Ctx) -> set[int]:
 BODIES: dict[str, Callable[[Ctx], set[int]]] = {
     "agenda": _agenda_body, "text": _text_body, "image": _image_body, "columns": _columns_body,
     "comparison": _comparison_body, "quote": _quote_body, "chart": _chart_body,
+    "dual-chart": _dual_chart_body,
 }
 
 

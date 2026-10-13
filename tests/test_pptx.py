@@ -6,7 +6,7 @@ import pytest
 from lxml import etree
 from PIL import Image
 from pptx import Presentation
-from pptx.enum.chart import XL_LEGEND_POSITION
+from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.oxml.ns import qn
@@ -176,24 +176,59 @@ def test_svg_goes_in_as_png(tdir, tmp_path):
     assert pic.image.content_type == "image/png" and abs(pic.width / pic.height - 3) < 0.05
 
 
-@pytest.mark.xfail(reason="экспорт в PPTX переезжает на новые типы планом B", strict=False)
+def bar(**kw) -> dict:
+    return {"type": "chart", "kind": "bar", "title": "Итоги", "unit": "млн",
+            "labels": ["Центр", "Север", "Юг"], "series": [{"name": "млн", "values": [42, -17, 28]}]} | kw
+
+
 def test_bar_colors_follow_the_sign(tdir):
-    deck = Deck(slides=[{"type": "bar-chart", "title": "Итоги", "unit": "млн",
-                         "data": [{"label": "Центр", "value": 42}, {"label": "Север", "value": -17},
-                                  {"label": "Юг", "value": 28}]}])
-    chart = chart_of(export(tdir, deck).slides[0])
+    chart = chart_of(export(tdir, Deck(slides=[bar()])).slides[0])
     assert colors(chart, ".//c:dPt//a:srgbClr") == ["FFDE00", "FF2E00", "FFDE00"]
     assert chart._chartSpace.xpath(".//c:invertIfNegative[@val='0']")
     assert chart.plots[0].data_labels.number_format == 'General" млн"'
     assert not chart.has_legend
 
 
-@pytest.mark.xfail(reason="экспорт в PPTX переезжает на новые типы планом B", strict=False)
 def test_bar_chart_survives_special_characters_in_unit(tdir):
-    deck = Deck(slides=[{"type": "bar-chart", "title": "Итоги", "unit": "R&D <x>\x01",
-                         "data": [{"label": "Центр", "value": 42}]}])
+    deck = Deck(slides=[bar(unit="R&D <x>\x01", labels=["Центр"], series=[{"name": "R&D", "values": [42]}])])
     chart = chart_of(export(tdir, deck).slides[0])
     assert chart.plots[0].data_labels.number_format == 'General" R&D <x>"'
+
+
+def test_bar_with_several_series_takes_the_palette_and_a_legend(tdir):
+    deck = Deck(slides=[bar(series=[{"name": "2025 & <план>", "values": [1, -2, 3]},
+                                    {"name": "2026", "values": [2, 3, 4]}])])
+    chart = chart_of(export(tdir, deck).slides[0])
+    assert colors(chart, ".//c:ser/c:spPr/a:solidFill/a:srgbClr") == ["FFDE00", "1E1E1E"]
+    assert not chart._chartSpace.xpath(".//c:dPt")  # по знаку красится только одна серия
+    assert chart.has_legend and chart.legend.position == XL_LEGEND_POSITION.TOP
+    assert [s.name for s in chart.plots[0].series] == ["2025 & <план>", "2026"]
+
+
+def test_line_kind_draws_lines(tdir):
+    chart = chart_of(export(tdir, Deck(slides=[bar(kind="line")])).slides[0])
+    assert chart.chart_type == XL_CHART_TYPE.LINE_MARKERS
+
+
+def test_dual_chart_two_charts_with_captions(tdir):
+    side = {"labels": ["Q1", "Q2"], "series": [{"name": "Ряд", "values": [1, 2]}]}
+    deck = Deck(slides=[{"type": "dual-chart", "title": "Т",
+                         "left": side | {"caption": "Динамика & <рост>"},
+                         "right": side | {"caption": "", "kind": "bar", "unit": "%"}}])
+    slide = export(tdir, deck).slides[0]
+    frames = sorted((sh for sh in slide.shapes if sh.has_chart), key=lambda sh: sh.left)
+    assert len(frames) == 2 and all(inside(f) for f in frames)
+    assert frames[0].chart.chart_type == XL_CHART_TYPE.LINE_MARKERS
+    assert frames[1].chart.chart_type == XL_CHART_TYPE.COLUMN_CLUSTERED
+    assert frames[1].left - (frames[0].left + frames[0].width) == 20 * MM
+    [cap] = boxes(slide)  # у правой подписи нет — полосы под неё тоже
+    assert cap.text_frame.text == "Динамика & <рост>" and cap.top < frames[0].top
+    assert frames[1].top == int(ZONE[1] * MM)  # без подписи график начинается с верха зоны
+
+
+def test_chart_with_zero_values_exports(tdir):
+    deck = Deck(slides=[bar(labels=["A"], series=[{"name": "x", "values": [0]}])])
+    assert len(export(tdir, deck).slides) == 1
 
 
 def test_line_series_cycle_the_palette(tdir):
@@ -205,10 +240,8 @@ def test_line_series_cycle_the_palette(tdir):
     assert chart.value_axis.axis_title.text_frame.text == "млн"
 
 
-@pytest.mark.xfail(reason="экспорт в PPTX переезжает на новые типы планом B", strict=False)
 def test_chart_takes_the_zone_or_shares_it_with_bullets(tdir):
-    base = {"type": "bar-chart", "title": "Итоги", "data": [{"label": "A", "value": 1}]}
-    alone, shared = export(tdir, Deck(slides=[base, base | {"bullets": ["Рост"]}])).slides
+    alone, shared = export(tdir, Deck(slides=[bar(), bar(bullets=["Рост"])])).slides
     frame = next(sh for sh in alone.shapes if sh.has_chart)
     assert (frame.left, frame.top, frame.width, frame.height) == tuple(int(v * MM) for v in ZONE)
     [text] = boxes(shared)
