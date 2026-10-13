@@ -50,6 +50,30 @@ export function seriesError(series, nLabels) {
 
 export const dropBlank = (rows) => rows.filter((r) => Object.values(r).some((v) => String(v ?? "").trim() !== ""));
 
+// Трёхстороннее слияние для формы, которая устарела, пока человек правил: base —
+// значение, с которого начали править, mine — из формы, theirs — свежее с сервера
+// (ответ модели, возврат версии). Где человек ничего не менял — остаётся theirs;
+// объекты сливаются по ключам, списки одной длины — по позициям, иначе берётся mine.
+export function merge3(base, mine, theirs) {
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  if (same(mine, base)) return theirs;
+  if (same(theirs, base) || theirs === undefined) return mine;
+  const obj = (x) => x && typeof x === "object" && !Array.isArray(x);
+  if (obj(base) && obj(mine) && obj(theirs)) {
+    const out = {};
+    for (const k of new Set([...Object.keys(theirs), ...Object.keys(mine)])) {
+      const v = merge3(base[k], mine[k], theirs[k]);
+      if (v !== undefined) out[k] = v;
+    }
+    return out;
+  }
+  if (Array.isArray(base) && Array.isArray(mine) && Array.isArray(theirs)
+      && base.length === mine.length && mine.length === theirs.length) {
+    return mine.map((m, i) => merge3(base[i], m, theirs[i]));
+  }
+  return mine;
+}
+
 // последняя колонка пуста — в шапке и во всех строках только пробелы
 export function columnEmpty(header, rows) {
   return [header, ...rows].every((r) => !String(r[r.length - 1] ?? "").trim());
@@ -231,6 +255,7 @@ export function tableEditor(slide) {
     const drop = () => { sync(); header.pop(); rows.forEach((r) => r.pop()); draw(); };
     const btn = el("button", { type: "button", class: "sm" }, "− Колонка");
     btn.addEventListener("click", () => {
+      if (btn.dataset.armed) return;  // второе нажатие подтверждает слушатель armConfirm — убрать один раз
       sync();
       if (!columnEmpty(header, rows)) armConfirm(btn, "Убрать колонку с текстом?", drop);
       else drop();

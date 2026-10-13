@@ -70,9 +70,12 @@ export function armConfirm(btn, label, onConfirm) {
   btn.dataset.armed = "1";
   btn.textContent = label;
   btn.classList.add("confirm");
-  const reset = () => { delete btn.dataset.armed; btn.textContent = orig; btn.classList.remove("confirm"); };
+  // reset снимает и слушатель подтверждения: иначе после 3,5 с кнопка выглядит
+  // обычной, а следующее одно нажатие сразу удаляет (слайд, колоду)
+  const reset = () => { clearTimeout(timer); btn.removeEventListener("click", confirm); delete btn.dataset.armed; btn.textContent = orig; btn.classList.remove("confirm"); };
+  const confirm = () => { reset(); onConfirm(); };
   const timer = setTimeout(reset, 3500);
-  btn.addEventListener("click", () => { clearTimeout(timer); reset(); onConfirm(); }, { once: true });
+  btn.addEventListener("click", confirm);
 }
 
 export const TYPE_RU = {

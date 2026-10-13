@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { LIMITS, lines, parseNumber, parseValues, formatValues, countError, seriesError, dropBlank,
-  tableFrom, columnEmpty, linkError, embedUrl, changed } from "../../src/typst_deck/static/editors.js";
+  tableFrom, columnEmpty, merge3, linkError, embedUrl, changed } from "../../src/typst_deck/static/editors.js";
 
 test("числа по-русски", () => {
   assert.equal(parseNumber("12,5"), 12.5);
@@ -92,4 +92,23 @@ test("последняя колонка пуста — убирается без
   assert.equal(columnEmpty(["Регион", ""], [["Центр", " "], ["Север", ""]]), true);
   assert.equal(columnEmpty(["Регион", "Выручка"], [["Центр", ""]]), false);
   assert.equal(columnEmpty(["Регион", ""], [["Центр", "42"]]), false);
+});
+
+test("слияние устаревшей формы: поверх свежего — только то, что менял человек", () => {
+  // человек правил заголовок левой колонки, модель тем временем — её пункты
+  const base = { heading: "Было", bullets: ["а"] };
+  assert.deepEqual(merge3(base, { heading: "Раньше", bullets: ["а"] }, { heading: "Было", bullets: ["б", "в"] }),
+    { heading: "Раньше", bullets: ["б", "в"] });
+  // человек ничего не менял — остаётся свежее
+  assert.deepEqual(merge3(base, base, { heading: "Новое", bullets: [] }), { heading: "Новое", bullets: [] });
+  // сервер не менял — уходит ввод
+  assert.equal(merge3("Было", "Стало", "Было"), "Стало");
+  // списки одной длины — по позициям: метрики, где человек правил первую, модель вторую
+  const items = [{ value: "1", label: "а" }, { value: "2", label: "б" }];
+  assert.deepEqual(merge3(items, [{ value: "10", label: "а" }, items[1]], [items[0], { value: "2", label: "бб" }]),
+    [{ value: "10", label: "а" }, { value: "2", label: "бб" }]);
+  // разная длина — берётся ввод целиком
+  assert.deepEqual(merge3(["а"], ["а", "б"], ["в"]), ["а", "б"]);
+  // правили одно и то же — побеждает ввод человека
+  assert.equal(merge3("Было", "Моё", "Модели"), "Моё");
 });

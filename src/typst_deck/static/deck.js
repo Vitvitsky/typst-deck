@@ -1,6 +1,6 @@
 import { api, upload, waitJob, sleep, el, toast, armConfirm, TYPE_RU, FIELD_RU, SIZE_RU, KIND_RU, fileKind, errorText, fmtDate, fmtElapsed, fmtTokens } from "./api.js";
 import { mountShell } from "./shell.js";
-import { PANEL, compositeEditor, changed, embedUrl, linkError } from "./editors.js";
+import { PANEL, compositeEditor, changed, merge3, embedUrl, linkError } from "./editors.js";
 
 const deckId = location.pathname.split("/").filter(Boolean).pop();
 mountShell({ active: "decks", deckId, defaultCollapsed: true });
@@ -279,11 +279,11 @@ function select(id) {
   state.selected = id;
   document.querySelectorAll(".pagewrap").forEach((p) => p.classList.toggle("selected", p.id === `slide-${id}`));
   document.querySelectorAll(".thumb-item").forEach((t, i) => t.classList.toggle("selected", state.info.deck.slides[i] && state.info.deck.slides[i].id === id));
-  if (state.tab === "slide") renderProps();
+  if (state.tab === "slide") rerenderProps();
 }
 
 // ============ правки
-async function applyResult(promise, { saved = false } = {}) {
+async function applyResult(promise) {
   // пока правка шла, человек мог перейти на другой слайд и начать печатать: его
   // форму уже нарисовал select() — перерисовка стёрла бы ввод
   const sel = state.selected;
@@ -292,7 +292,7 @@ async function applyResult(promise, { saved = false } = {}) {
   state.page = info.page || state.page;
   if (info.has_build) state.positions = await api(`api/decks/${deckId}/positions`);
   renderTopbar(); renderStage(); renderRail();
-  if (state.tab === "slide" && state.selected === sel) rerenderProps({ force: saved });
+  if (state.tab === "slide" && state.selected === sel) rerenderProps();
   return info;
 }
 const patchSlide = (id, patch) => api(`api/decks/${deckId}/slides/${id}`, { method: "PATCH", json: { patch } });
@@ -459,7 +459,7 @@ function imageControls(slide) {
   box.append(el("label", { class: "f" }, "Размер"), size, el("label", { class: "f" }, slide.image ? "Заменить" : "Загрузить"), file, status);
   if (remove) box.append(remove);
   box.collect = async (patch) => {
-    patch.image_size = size.value;
+    if (size.value !== (slide.image_size || "medium")) patch.image_size = size.value;
     if (file.files[0]) patch.image = (await upload(`api/decks/${deckId}/assets`, file.files[0])).asset_id;
     else if (drop) patch.image = null;
   };
@@ -472,7 +472,7 @@ function switchTab(tab, focus) {
   document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   $("tab-chat").classList.toggle("hidden", tab !== "chat");
   $("tab-slide").classList.toggle("hidden", tab !== "slide");
-  if (tab === "slide") renderProps(focus);
+  if (tab === "slide") rerenderProps({ focus });
 }
 document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => switchTab(b.dataset.tab)));
 
@@ -517,11 +517,28 @@ function renderProps(focus) {
     save.disabled = true;  // двойной щелчок не шлёт правку дважды и не грузит файлы галереи повторно
     err.textContent = "";
     patch = {};  // заново на каждую попытку: иначе после отказа уйдёт и прежнее значение
+    // ввод, набранный пока идёт сохранение, снова поднимет флаг — и ответ его не сотрёт
+    delete form.dataset.dirty;
     try {
       for (const r of readers) await r();
       if (img) await img.collect(patch);
+      // слайд мог измениться, пока человек правил: поверх свежих значений ложится
+      // только то, что он менял сам (merge3), а не устаревшая форма целиком
+      const latest = state.info.deck.slides.find((s) => s.id === slide.id);
+      if (latest) {
+        for (const k of Object.keys(patch)) {
+          patch[k] = merge3(slide[k], patch[k], latest[k]);
+          if (JSON.stringify(patch[k]) === JSON.stringify(latest[k])) delete patch[k];
+        }
+      }
       if (!Object.keys(patch).length) { toast("Изменений нет"); return; }
-      await applyResult(patchSlide(slide.id, patch), { saved: true });
+      await applyResult(patchSlide(slide.id, patch));
+      // форму сохранили, а ввод во время сохранения её удержал — свежая основа для предупреждения
+      if (form.isConnected) {
+        const now = state.info.deck.slides.find((s) => s.id === slide.id);
+        if (now) form.dataset.snapshot = JSON.stringify(now);
+        form.querySelector(".stale")?.remove();
+      }
       toast("Сохранено");
     } catch (ex) { err.textContent = ex.message; }
     finally { save.disabled = false; }
@@ -536,32 +553,38 @@ function renderProps(focus) {
   // ＋/✕ составных редакторов меняют форму без input; «Сохранить» и «Удалить» — в .actions
   form.addEventListener("click", (e) => { if (e.target.closest("button") && !e.target.closest(".actions")) dirty(); });
   box.replaceChildren(form);
-  if (focus) {
-    const target = box.querySelector(`[data-fields~="${focus}"]`);
-    if (target) {
-      target.scrollIntoView({ block: "start" });
-      target.classList.add("flash");
-      const first = target.querySelector("input, textarea, select");
-      if (first) first.focus();
-    }
-  }
+  focusGroup(focus);
 }
 
-// Панель с несохранённым вводом того же слайда не перерисовывается: иначе ответ
-// чата или ↑↓ в ленте молча стирают набранное. Если слайд за это время изменился
-// (модель, возврат версии), под формой — предупреждение; сохранение отправит только
-// поля, которые человек менял. force — панель перерисовывается после своего сохранения.
-function rerenderProps({ force = false } = {}) {
+function focusGroup(focus) {
+  if (!focus) return;
+  const target = $("props").querySelector(`[data-fields~="${focus}"]`);
+  if (!target) return;
+  target.scrollIntoView({ block: "start" });
+  target.classList.remove("flash"); void target.offsetWidth; target.classList.add("flash");
+  const first = target.querySelector("input, textarea, select");
+  if (first) first.focus();
+}
+
+// Панель с несохранённым вводом того же слайда не перерисовывается — ни после чужой
+// операции (ответ чата, ↑↓, смена шаблона), ни после повторного выбора того же слайда
+// или вкладки: иначе набранное молча стирается. Если слайд за это время изменился,
+// под формой — предупреждение и кнопка, которая сбрасывает ввод и показывает новое.
+function rerenderProps({ focus } = {}) {
   const form = $("props").querySelector("form");
   const slide = state.info && state.info.deck.slides.find((s) => s.id === state.selected);
-  if (!force && form && form.dataset.dirty && slide && form.dataset.slide === slide.id) {
+  if (form && form.dataset.dirty && slide && form.dataset.slide === slide.id) {
+    const n = state.info.deck.slides.indexOf(slide) + 1;
+    form.querySelector("h3").textContent = `Слайд ${n} · ${TYPE_RU[slide.type]}`;  // после ↑↓
     if (JSON.stringify(slide) !== form.dataset.snapshot && !form.querySelector(".stale")) {
       form.querySelector(".error").before(el("div", { class: "notice warn inline stale" },
-        "Слайд изменился, пока вы правили. «Сохранить» запишет только ваши поля; чтобы увидеть новые значения, выберите слайд заново."));
+        "Слайд изменился, пока вы правили. «Сохранить» запишет поверх только то, что вы меняли. ",
+        el("button", { type: "button", class: "sm", onclick: () => renderProps() }, "Показать новое, мой ввод сбросить")));
     }
+    focusGroup(focus);
     return;
   }
-  renderProps();
+  renderProps(focus);
 }
 
 // ============ чат
