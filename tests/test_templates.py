@@ -264,3 +264,12 @@ def test_rule_pptx_fails_a_mapping_without_new_types(tmp_path):
     d = make_pptx_template(tmp_path, mapping_edit=lambda m: m["slides"].pop("gallery"))
     [msg] = _rule_pptx(d, {"pptx": "pptx.json"}, "typst", tmp_path / "work")
     assert "нет типа gallery" in msg
+
+
+def test_registry_warns_about_a_broken_chart_rule(tmp_path, caplog):
+    d = tmp_path / "templates" / "rule"
+    d.mkdir(parents=True)
+    (d / "deck.typ").write_text("// stub")
+    (d / "template.json").write_text(json.dumps({"name": "П", "charts": {"columns": {"wide": []}}}))
+    TemplateRegistry(TEMPLATE_DIR, tmp_path / "templates").get("rule")
+    assert "столбцы всегда вертикальны" in caplog.text

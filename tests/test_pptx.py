@@ -633,3 +633,38 @@ def test_broken_master_file_is_named(tmp_path):
     (d / "master.pptx").write_bytes(b"not a zip")
     with pytest.raises(MappingError, match="не открывается"):
         check(d)
+
+
+def _with_rule(tdir, rule):
+    import json
+    p = tdir / "template.json"
+    meta = json.loads(p.read_text())
+    meta["charts"] = rule
+    p.write_text(json.dumps(meta, ensure_ascii=False))
+
+
+def test_bars_turn_horizontal_by_the_template_rule(tdir):
+    """Правило шаблона (charts.columns) — то же, что у PDF: длинные подписи — линейчатая
+    диаграмма, первая категория сверху; короткие — гистограмма, как раньше."""
+    _with_rule(tdir, {"columns": {"full": [[6, 8]], "bullets": [[6, 4]], "dual": [[6, 3]]}})
+    long_ = bar(labels=["Стройматериалы", "Инструмент", "Сантехника"])
+    pres = export(tdir, Deck(slides=[long_, bar(), bar(bullets=["вывод"], labels=list("ABCDE"), series=[{"name": "с", "values": [1, 2, 3, 4, 5]}])]))
+    hbar, short, beside = (chart_of(s) for s in pres.slides)
+    assert hbar.chart_type == XL_CHART_TYPE.BAR_CLUSTERED and hbar.category_axis.reverse_order
+    assert short.chart_type == XL_CHART_TYPE.COLUMN_CLUSTERED                 # «Центр» — 5 знаков, 3 ≤ 8
+    assert beside.chart_type == XL_CHART_TYPE.BAR_CLUSTERED                   # с выводами: 5 > 4
+
+
+def test_dual_chart_side_uses_the_dual_layout(tdir):
+    _with_rule(tdir, {"columns": {"full": [[30, 24]], "dual": [[4, 2]]}})
+    side = {"kind": "bar", "labels": ["Q1", "Q2", "Q3"], "series": [{"name": "Ряд", "values": [1, 2, 3]}]}
+    slide = export(tdir, Deck(slides=[{"type": "dual-chart", "title": "Т", "left": side, "right": side}])).slides[0]
+    assert all(sh.chart.chart_type == XL_CHART_TYPE.BAR_CLUSTERED for sh in slide.shapes if sh.has_chart)
+
+
+def test_broken_rule_keeps_columns_vertical_with_a_warning(tdir):
+    _with_rule(tdir, {"columns": {"wide": []}})
+    warnings = []
+    pres = export(tdir, Deck(slides=[bar(labels=["Стройматериалы"] * 3)]), warnings=warnings)
+    assert chart_of(pres.slides[0]).chart_type == XL_CHART_TYPE.COLUMN_CLUSTERED
+    assert any("charts.columns" in w for w in warnings)

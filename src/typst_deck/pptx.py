@@ -32,6 +32,7 @@ from pptx.oxml.ns import qn
 from pptx.util import Emu, Mm, Pt
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from . import charts
 from .model import SLIDE_TYPES, Deck
 from .render import CompileError, inside_template, numeric_columns, rasterize_svg, trend_of
 
@@ -352,6 +353,8 @@ class Ctx:
     typst_bin: str
     warnings: list[str]
     n: int
+    # правило ориентации столбцов шаблона (charts.columns в template.json) или None
+    rule: dict | None = None
 
 
 def _fill(slide, s, sm: SlideMap, keep: frozenset[int] | set[int] = frozenset()) -> None:
@@ -554,17 +557,23 @@ def _chart_data(src) -> CategoryChartData:
     return data
 
 
-def _bar_chart(slide, src, box, cs: ChartStyle) -> None:
+def _bar_chart(slide, src, box, cs: ChartStyle, horizontal: bool = False) -> None:
     """Гистограмма. Одна серия — цвет столбца по знаку (рост palette[0], падение negative),
     подписи значений с единицей; несколько — серии по палитре и легенда сверху.
 
     number_format не идёт в CategoryChartData: python-pptx пишет его в
     <c:formatCode> текстовым узлом без экранирования (pptx/chart/xmlwriter.py),
     и «&», «<» в unit ломают XML графика. plot.data_labels.number_format —
-    атрибут, его пишет lxml и экранирует сам (спека §5.5)."""
+    атрибут, его пишет lxml и экранирует сам (спека §5.5).
+
+    horizontal — линейчатая диаграмма (подписи категорий строками слева), как решило
+    правило шаблона (charts.py) — то же, что у PDF. Категории сверху вниз в порядке
+    колоды: у линейчатой PowerPoint по умолчанию кладёт первую категорию вниз."""
     x, y, w, h = box
-    chart = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Emu(x), Emu(y), Emu(w), Emu(h),
-                                   _chart_data(src)).chart
+    kind = XL_CHART_TYPE.BAR_CLUSTERED if horizontal else XL_CHART_TYPE.COLUMN_CLUSTERED
+    chart = slide.shapes.add_chart(kind, Emu(x), Emu(y), Emu(w), Emu(h), _chart_data(src)).chart
+    if horizontal:
+        chart.category_axis.reverse_order = True
     chart.value_axis.has_major_gridlines = False
     plot = chart.plots[0]
     if len(src.series) == 1:
@@ -614,19 +623,23 @@ def _line_chart(slide, src, box, cs: ChartStyle) -> None:
         series.marker.format.line.color.rgb = color
 
 
-def _draw_chart(slide, src, box, cs: ChartStyle) -> None:
-    """src — ChartSlide или сторона dual-chart: у обоих kind, labels, series, unit."""
-    (_bar_chart if src.kind == "bar" else _line_chart)(slide, src, box, cs)
+def _draw_chart(slide, src, box, cs: ChartStyle, layout: str = "full", rule: dict | None = None) -> None:
+    """src — ChartSlide или сторона dual-chart: у обоих kind, labels, series, unit.
+    layout — раскладка для правила ориентации столбцов: full, bullets, dual."""
+    if src.kind == "bar":
+        _bar_chart(slide, src, box, cs, horizontal=charts.horizontal(src.labels, layout, rule))
+    else:
+        _line_chart(slide, src, box, cs)
 
 
 def _chart_body(c: Ctx) -> set[int]:
     box = _mm_box(c.sm.body)
     if not c.s.bullets:
-        _draw_chart(c.slide, c.s, box, c.m.chart)
+        _draw_chart(c.slide, c.s, box, c.m.chart, "full", c.rule)
         return set()
     text_box, chart_box = _columns(box, c.sm.text_width, c.sm.gap)
     _bullets(c.slide, text_box, c.s.bullets, c.m.text, heading=c.sm.heading)
-    _draw_chart(c.slide, c.s, chart_box, c.m.chart)
+    _draw_chart(c.slide, c.s, chart_box, c.m.chart, "bullets", c.rule)
     return set()
 
 
@@ -637,7 +650,7 @@ def _dual_chart_body(c: Ctx) -> set[int]:
             strip = int(CAPTION_STRIP * MM)
             _caption(c.slide, side.caption, x, y, w, c.m.text, italic=False)
             y, h = y + strip, h - strip
-        _draw_chart(c.slide, side, (x, y, w, h), c.m.chart)
+        _draw_chart(c.slide, side, (x, y, w, h), c.m.chart, "dual", c.rule)
     return set()
 
 
@@ -823,6 +836,11 @@ def export_pptx(deck: Deck, template_dir: Path, mapping_rel: object, assets_dir:
     """
     warnings = [] if warnings is None else warnings
     m = load_mapping(template_dir, mapping_rel)
+    try:
+        rule = charts.load_rule(template_dir)
+    except ValueError as e:  # сломанное правило — столбцы вертикально, как без него
+        warnings.append(f"template.json: {e}")
+        rule = None
     prs = open_master(template_dir, m)
     layouts = _layouts(prs)
     _drop_slides(prs)
@@ -832,7 +850,7 @@ def export_pptx(deck: Deck, template_dir: Path, mapping_rel: object, assets_dir:
             layout = layouts[sm.layout]
             slide = prs.slides.add_slide(layout)
             body = BODIES.get(s.type)
-            keep = body(Ctx(slide, s, sm, m, Path(assets_dir), Path(tmp), typst_bin, warnings, n)) if body else set()
+            keep = body(Ctx(slide, s, sm, m, Path(assets_dir), Path(tmp), typst_bin, warnings, n, rule)) if body else set()
             _fill(slide, s, sm, keep)
             _slide_number(slide, layout, n)
             if s.notes.strip():

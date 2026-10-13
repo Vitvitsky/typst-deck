@@ -18,6 +18,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import charts
 from .contract import SAMPLE_DECK, check_template
 from .render import inside_template, resolve_fonts
 from .slots import clamp
@@ -139,6 +140,10 @@ class TemplateRegistry:
                 pptx = None
         if tid in self.pptx_off:
             pptx = None
+        try:
+            charts.parse_rule(meta)
+        except ValueError as e:  # PDF и PPTX оба читают правило сами и при поломке ставят столбцы вертикально
+            self._warn(mp, f"{e} — столбцы всегда вертикальны")
         name = meta.get("name") or ("Корпоративный" if tid == "default" else tid)
         return TemplateInfo(tid, name, meta.get("description", ""), path,
                             clamp(meta.get("slots"), tid), fonts, pptx)
